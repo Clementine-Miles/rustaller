@@ -1,0 +1,13 @@
+---
+-
+  title: "Mini root filesystem"
+  branch: v3.24
+  arch: x86_64
+  version: 3.24.2
+  flavor: alpine-minirootfs
+-
+  title: "Standard"
+  branch: v3.24
+  arch: x86_64
+  version: 3.24.2
+  flavor: alpine-standard

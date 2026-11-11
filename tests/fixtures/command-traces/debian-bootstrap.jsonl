@@ -1,0 +1,2 @@
+{"phase":"debian-bootstrap","target":"debian","program":"apk","argv":["add","debootstrap"],"cwd":"/","env_delta":{},"stdin_fixture":"","expected_status":0}
+{"phase":"debian-bootstrap","target":"debian","program":"debootstrap","argv":["--arch=amd64","--variant=minbase","--include=ca-certificates,debconf-utils","trixie","/os","https://deb.debian.org/debian"],"cwd":"/","env_delta":{},"stdin_fixture":"","expected_status":0}

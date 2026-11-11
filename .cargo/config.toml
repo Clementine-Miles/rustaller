@@ -1,0 +1,7 @@
+[alias]
+xtask = "run --package reinstall-xtask --"
+
+[target.x86_64-unknown-linux-musl]
+# Use a fixed-address static executable: static PIE still contains PT_DYNAMIC.
+# The release contract rejects both PT_INTERP and PT_DYNAMIC.
+rustflags = ["-C", "relocation-model=static"]

@@ -1,0 +1,60 @@
+name: Check
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_call:
+    inputs:
+      release_tag:
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.release_tag || github.ref }}
+      - name: Fetch pinned comparison baseline
+        run: git fetch --no-tags --depth=1 https://github.com/bin456789/reinstall.git 98f1e21013233d42750cc2e7a298a0818461d686:refs/rustaller/upstream-baseline
+      - name: Install Rust toolchain
+        run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy --target x86_64-unknown-linux-musl
+      - name: Install test utilities
+        run: sudo apt-get update && sudo apt-get install --yes busybox openssh-client
+      - name: Static checks and isolated tests
+        run: cargo xtask check --skip-shellcheck
+      - name: ShellCheck runtime baseline
+        uses: docker://koalaman/shellcheck:v0.11.0
+        with:
+          args: --severity=warning reinstall.sh trans.sh initrd-network.sh fix-eth-name.sh
+      - name: ShellCheck OpenRC fixture
+        uses: docker://koalaman/shellcheck:v0.11.0
+        with:
+          args: --severity=warning --shell=sh tests/fixtures/fix-eth-name-openrc.initd
+      - name: Build static bundle
+        if: inputs.release_tag == ''
+        run: cargo xtask bundle
+      - name: Build release preview package
+        if: inputs.release_tag != ''
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: cargo xtask dist --tag "$RELEASE_TAG"
+      - name: Smoke test help without installation
+        run: target/x86_64-unknown-linux-musl/release/reinstall --help
+      - name: Upload preview package
+        if: inputs.release_tag != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: release-package
+          path: dist/*
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error

@@ -1,0 +1,11 @@
+# Replace the documentation-only address and token with your own frps settings.
+serverAddr = "192.0.2.10"
+serverPort = 7000
+auth.token = "CHANGE_ME"
+
+[[proxies]]
+name = "ssh"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 22
+remotePort = 2222
