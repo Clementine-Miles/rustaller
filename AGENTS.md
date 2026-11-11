@@ -7,6 +7,8 @@ The upstream comparison baseline is `98f1e21013233d42750cc2e7a298a0818461d686`.
 
 ## Scope and invariants
 
+- rustaller and its workspace tools use GPL-3.0-only. Preserve upstream source notices, attribution and the full LICENSE text.
+
 - Latest user decision: EFI Stub is cancelled. Retain GRUB for SeaBIOS and UEFI, XFS roots and Alpine/OpenRC. EFI-STUB-OPTIONS.md is historical design only.
 
 - 2026-11-02 authorization: Rust automatic roots use XFS and GNU dd-backed target swapfiles; retain Alpine/OpenRC and current GRUB. Rust runtime marker is PERSONAL-LINUX-XFS-20261102-05; the Shell baseline marker below stays unchanged. No dinit or EFI Stub changes in this task.

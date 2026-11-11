@@ -11,7 +11,7 @@ Shell 四资源或固定上游对拍基线。
   Debian、显式网络/账户/主机名配置、原生安装器与可检查的安装配置组织流程。
   本项目借鉴配置完整性与原生工具原则，继续保留 debootstrap 和 Alpine Live；
   不重新引入 Debian Installer 或额外固件重启。
-- [rustaller README](https://github.com/bin456789/reinstall/blob/main/README.md)
+- [reinstall README](https://github.com/bin456789/reinstall/blob/main/README.md)
   与 [trans.sh](https://github.com/bin456789/reinstall/blob/main/trans.sh)：强调
   VPS 特殊路由、磁盘身份、BIOS/EFI、设备驱动及安装环境可恢复性。本项目已有
   MAC 绑定/networkd on-link 路由、磁盘身份检查、恢复 SSH；本轮补齐一个上游

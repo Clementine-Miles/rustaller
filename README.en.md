@@ -1,7 +1,7 @@
 # rustaller — Personal VPS reinstall tool (Linux-only)
 
 A scoped derivative of [bin456789/reinstall](https://github.com/bin456789/reinstall), based on
-`98f1e21013233d42750cc2e7a298a0818461d686`. The upstream GPLv3 license is retained.
+`98f1e21013233d42750cc2e7a298a0818461d686`. rustaller is licensed under GNU GPLv3 (`GPL-3.0-only`); see [LICENSE](LICENSE). Upstream source notices and attribution are retained.
 
 The Rust/musl rewrite has an optional lightweight ratatui interface with hierarchical configuration menus. **Host preparation, authenticated Alpine Live, kexec handoff and the four-target installation driver are connected and include real disk-erasing actions. Full BIOS/UEFI installation acceptance is still in progress; releases remain development previews.**
 The English TUI selects a system before opening its account/SSH, host, kernel, network, DNS, minimal-profile and optional target-swapfile settings. It also provides a separate current-system route, native ssh-keygen, and Save/Discard/Cancel when returning from a changed directory. See the [TUI guide](docs/TUI.md).

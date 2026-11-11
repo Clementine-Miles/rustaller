@@ -94,7 +94,7 @@ cargo xtask dist --tag v0.1.0-preview.1 --output artifacts/github-preview --allo
 
 - `rustaller-x86_64-linux-musl`：唯一入口，嵌入匹配 worker。
 - `SHA256SUMS`：入口、许可证和构建元数据的 SHA-256。
-- `LICENSE`：上游 GPL-3.0 许可证。
+- `LICENSE`：rustaller 统一采用的 GNU GPLv3（`GPL-3.0-only`）完整条款，保留上游源码声明与署名。
 - `build-info.json`：版本、计划 schema、源码提交、是否有未提交修改、TUI、worker 哈希，以及 `installer_complete: false`。
 - `RELEASE-NOTES.md`：用于 Release 正文，不重复作为下载附件。
 

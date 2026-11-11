@@ -1,7 +1,7 @@
 # rustaller — 个人 VPS 重装工具（Linux-only）
 
 基于 [bin456789/reinstall](https://github.com/bin456789/reinstall)，上游基准提交：
-`98f1e21013233d42750cc2e7a298a0818461d686`。保留原项目 GPLv3 许可。
+`98f1e21013233d42750cc2e7a298a0818461d686`。rustaller 统一采用 GNU GPLv3（`GPL-3.0-only`），完整条款见 [LICENSE](LICENSE)；保留上游源码声明与署名。
 
 Rust/musl 版本提供可选的轻量 ratatui 多级配置界面。**主机准备、受验证 Alpine Live、kexec 交接和四系统安装驱动已连接，包含真实清盘操作；四系统 BIOS/UEFI 完整安装验收仍在进行，当前保持开发预览。**
 英文界面先选择系统，再配置账户/SSH、主机名、内核、网络、DNS、minimal 档位和可选目标 swapfile。另有独立的当前系统配置入口、原生 ssh-keygen，以及返回上级时的 Save/Discard/Cancel 草稿选择；详见 [TUI 使用说明](docs/TUI.md)。
