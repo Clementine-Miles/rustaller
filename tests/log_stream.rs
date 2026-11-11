@@ -1,6 +1,6 @@
 use rustaller::command::{CommandOutput, MockRunner};
 use rustaller::worker::args::{WorkerAction, parse_worker_args};
-use rustaller::worker::log_stream::run_log_stream;
+use rustaller::worker::log_stream::{LogStreamError, run_log_stream};
 
 #[test]
 fn worker_parses_only_the_exact_generated_web_log_path_form() {
@@ -43,4 +43,27 @@ fn log_worker_runs_the_legacy_tail_tr_grep_pipeline_only_for_the_requested_path(
     let mut unused = MockRunner::empty();
     run_log_stream(&mut unused, "/A1B2C3D4", "/wrongpath").unwrap();
     assert!(unused.calls().is_empty());
+}
+
+#[test]
+fn log_worker_reports_failed_stages_but_accepts_a_fully_filtered_stream() {
+    for (statuses, accepted) in [
+        ([Some(0), Some(0), Some(1)], true),
+        ([Some(1), Some(0), Some(0)], false),
+        ([Some(0), Some(1), Some(0)], false),
+        ([Some(0), Some(0), Some(2)], false),
+        ([None, Some(0), Some(0)], false),
+        ([Some(0), None, Some(0)], false),
+        ([Some(0), Some(0), None], false),
+    ] {
+        let mut runner = MockRunner::new(
+            statuses.map(|status| CommandOutput::new(status, Vec::new(), Vec::new())),
+        );
+        let result = run_log_stream(&mut runner, "/A1B2C3D4", "/A1B2C3D4");
+        if accepted {
+            result.unwrap();
+        } else {
+            assert!(matches!(result, Err(LogStreamError::PipelineFailed)));
+        }
+    }
 }

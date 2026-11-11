@@ -6,6 +6,7 @@ use std::io;
 pub enum LogStreamError {
     InvalidPath,
     Command(io::Error),
+    PipelineFailed,
 }
 
 impl fmt::Display for LogStreamError {
@@ -15,6 +16,7 @@ impl fmt::Display for LogStreamError {
             Self::Command(error) => {
                 write!(f, "Cannot start websocket log filter pipeline: {error}")
             }
+            Self::PipelineFailed => f.write_str("Websocket log filter pipeline failed"),
         }
     }
 }
@@ -48,9 +50,14 @@ pub fn run_log_stream<R: CommandRunner>(
         .stdin(CommandInput::Null)
         .stdout_mode(OutputMode::Stream)
         .stderr_mode(OutputMode::Stream);
-    runner
+    let output = runner
         .run_pipeline(&[tail, tr, grep])
         .map_err(LogStreamError::Command)?;
+    // grep exits 1 when every line was filtered, which is a valid empty stream.
+    // Other failures (including signalled processes) must reach the worker CLI.
+    if !matches!(output.statuses.as_slice(), [Some(0), Some(0), Some(0 | 1)]) {
+        return Err(LogStreamError::PipelineFailed);
+    }
     Ok(())
 }
 
