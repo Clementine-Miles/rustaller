@@ -1,9 +1,9 @@
 [package]
-name = "reinstall-xtask"
+name = "rustaller-xtask"
 version = "0.1.0"
 edition = "2024"
 publish = false
 
 [dependencies]
-reinstall-rs = { path = "..", default-features = false }
+rustaller = { path = "..", default-features = false }
 sha2 = { version = "0.10", default-features = false }

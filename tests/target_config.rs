@@ -1,7 +1,7 @@
-use reinstall_rs::command::{CommandInput, OutputMode};
-use reinstall_rs::model::{BootMode, InstallPlan, Target};
-use reinstall_rs::postinstall::KernelChoice;
-use reinstall_rs::targets::{debian, packages};
+use rustaller::command::{CommandInput, OutputMode};
+use rustaller::model::{BootMode, InstallPlan, Target};
+use rustaller::postinstall::KernelChoice;
+use rustaller::targets::{debian, packages};
 use std::path::Path;
 
 fn plan(target: Target) -> InstallPlan {

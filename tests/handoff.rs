@@ -1,13 +1,13 @@
-use reinstall_rs::command::{CommandOutput, MockRunner};
-use reinstall_rs::deployment::{DeploymentManifest, DiskIdentity, NetworkInterface};
-use reinstall_rs::host::handoff::{
+use rustaller::command::{CommandOutput, MockRunner};
+use rustaller::deployment::{DeploymentManifest, DiskIdentity, NetworkInterface};
+use rustaller::host::handoff::{
     ALPINE_RELEASE_FINGERPRINT, HostDeployment, HostInit, confirmation_for, confirmation_for_plan,
     detect_init, parse_addresses, pinned_primary_key, prepare, read_disk_identity,
     resolve_public_keys, valid_alpine_signature,
 };
-use reinstall_rs::host::sources::AlpineNetboot;
-use reinstall_rs::model::{BootMode, InstallPlan, SecretString, Target};
-use reinstall_rs::worker::initrd_network::AddressFamily;
+use rustaller::host::sources::AlpineNetboot;
+use rustaller::model::{BootMode, InstallPlan, SecretString, Target};
+use rustaller::worker::initrd_network::AddressFamily;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

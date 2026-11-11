@@ -4,7 +4,7 @@ exclude = ["tests/verify"]
 resolver = "3"
 
 [package]
-name = "reinstall-rs"
+name = "rustaller"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-only"
@@ -25,12 +25,12 @@ libc = "0.2"
 path = "src/lib.rs"
 
 [[bin]]
-name = "reinstall"
-path = "src/bin/reinstall.rs"
+name = "rustaller"
+path = "src/bin/rustaller.rs"
 
 [[bin]]
-name = "reinstall-worker"
-path = "src/bin/reinstall-worker.rs"
+name = "rustaller-worker"
+path = "src/bin/rustaller-worker.rs"
 
 [profile.release]
 lto = true

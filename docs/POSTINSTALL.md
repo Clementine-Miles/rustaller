@@ -7,7 +7,7 @@
 普通自动安装的 TUI 表单显示以下字段；CLI 使用：
 
 ```console
-./reinstall debian --confhome https://your.example/reinstall/pinned-version \
+./rustaller debian --confhome https://your.example/reinstall/pinned-version \
   --kernel generic --hostname my-vps --timezone Etc/UTC
 ```
 

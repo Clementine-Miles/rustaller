@@ -1,4 +1,4 @@
-# debi / reinstall 对照审查
+# debi / rustaller 对照审查
 
 本轮读取用户指定的 bohanwood/debi 与 bin456789/reinstall 的 README 和安装
 脚本，通过 GitHub connector 获取；未执行参考项目安装入口，也未修改保留的
@@ -11,7 +11,7 @@ Shell 四资源或固定上游对拍基线。
   Debian、显式网络/账户/主机名配置、原生安装器与可检查的安装配置组织流程。
   本项目借鉴配置完整性与原生工具原则，继续保留 debootstrap 和 Alpine Live；
   不重新引入 Debian Installer 或额外固件重启。
-- [reinstall README](https://github.com/bin456789/reinstall/blob/main/README.md)
+- [rustaller README](https://github.com/bin456789/reinstall/blob/main/README.md)
   与 [trans.sh](https://github.com/bin456789/reinstall/blob/main/trans.sh)：强调
   VPS 特殊路由、磁盘身份、BIOS/EFI、设备驱动及安装环境可恢复性。本项目已有
   MAC 绑定/networkd on-link 路由、磁盘身份检查、恢复 SSH；本轮补齐一个上游
@@ -25,8 +25,8 @@ Shell 四资源或固定上游对拍基线。
 |---|---|
 | debi README.md | 129dcfd2e52c9ada725ba7bbc62f05f37229b43c |
 | debi debi.sh | 10ebcd2141f23271f59eb46e4174539f74fc9293 |
-| reinstall README.md | b22b3a2ea9ec92315424bf3864695be3e8832aa5 |
-| reinstall trans.sh | 345718c2e6e6277fd694f102cd547f3fc15e6bc6 |
+| rustaller README.md | b22b3a2ea9ec92315424bf3864695be3e8832aa5 |
+| rustaller trans.sh | 345718c2e6e6277fd694f102cd547f3fc15e6bc6 |
 
 ## 已修复
 

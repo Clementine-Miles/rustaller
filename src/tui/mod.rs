@@ -4,8 +4,8 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
-use reinstall_rs::host::current::{CurrentConfig, CurrentReport};
-use reinstall_rs::model::InstallPlan;
+use rustaller::host::current::{CurrentConfig, CurrentReport};
+use rustaller::model::InstallPlan;
 use std::io;
 
 mod editor;
@@ -63,10 +63,10 @@ pub fn run(
                         // Restore the real terminal for native passphrase prompts.
                         let result = native_terminal(&mut terminal, || {
                             eprintln!(
-                                "rust-aller: ssh-keygen will ask for the private key passphrase. An empty passphrase has no KDF protection. Back up the key before installation."
+                                "rustaller: ssh-keygen will ask for the private key passphrase. An empty passphrase has no KDF protection. Back up the key before installation."
                             );
-                            reinstall_rs::host::ssh_keygen::generate(
-                                &mut reinstall_rs::command::SystemRunner,
+                            rustaller::host::ssh_keygen::generate(
+                                &mut rustaller::command::SystemRunner,
                                 &options,
                             )
                             .map_err(|e| e.to_string())

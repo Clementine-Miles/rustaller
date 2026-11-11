@@ -1,10 +1,10 @@
-use reinstall_rs::codec::decode_plan;
-use reinstall_rs::host::initrd::{
+use rustaller::codec::decode_plan;
+use rustaller::host::initrd::{
     InitrdError, inject_network_bootstrap, install_worker_and_plan, repack_initrd,
     stage_alpine_initrd, unpack_initrd,
 };
-use reinstall_rs::model::{InstallPlan, SecretString, Target};
-use reinstall_rs::worker::initrd_network::InitrdNetworkConfig;
+use rustaller::model::{InstallPlan, SecretString, Target};
+use rustaller::worker::initrd_network::InitrdNetworkConfig;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -19,7 +19,7 @@ impl Scratch {
             .unwrap()
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "reinstall-initrd-stage-{}-{nonce}",
+            "rustaller-initrd-stage-{}-{nonce}",
             std::process::id()
         ));
         fs::create_dir(&path).unwrap();
@@ -52,7 +52,7 @@ fn worker_elf_header() -> Vec<u8> {
 
 fn worker_bytes() -> Vec<u8> {
     let mut worker = worker_elf_header();
-    worker.extend_from_slice(reinstall_rs::RUNTIME_VERSION.as_bytes());
+    worker.extend_from_slice(rustaller::RUNTIME_VERSION.as_bytes());
     worker
 }
 
@@ -62,9 +62,9 @@ fn unpacks_initrd_with_zcat_and_cpio_in_the_isolated_staging_directory() {
     let archive = scratch.0.join("source-initrd");
     let staging = scratch.0.join("stage");
     fs::write(&archive, b"compressed fixture").unwrap();
-    let mut runner = reinstall_rs::command::MockRunner::new([
-        reinstall_rs::command::CommandOutput::new(Some(0), Vec::new(), Vec::new()),
-        reinstall_rs::command::CommandOutput::new(Some(0), Vec::new(), Vec::new()),
+    let mut runner = rustaller::command::MockRunner::new([
+        rustaller::command::CommandOutput::new(Some(0), Vec::new(), Vec::new()),
+        rustaller::command::CommandOutput::new(Some(0), Vec::new(), Vec::new()),
     ]);
     unpack_initrd(&mut runner, &archive, &staging).unwrap();
     assert!(staging.is_dir());
@@ -86,9 +86,9 @@ fn initrd_unpack_uses_the_last_pipeline_command_status_like_the_shell_baseline()
     let archive = scratch.0.join("source-initrd");
     let staging = scratch.0.join("stage");
     fs::write(&archive, b"compressed fixture").unwrap();
-    let mut runner = reinstall_rs::command::MockRunner::new([
-        reinstall_rs::command::CommandOutput::new(Some(141), Vec::new(), Vec::new()),
-        reinstall_rs::command::CommandOutput::new(Some(0), Vec::new(), Vec::new()),
+    let mut runner = rustaller::command::MockRunner::new([
+        rustaller::command::CommandOutput::new(Some(141), Vec::new(), Vec::new()),
+        rustaller::command::CommandOutput::new(Some(0), Vec::new(), Vec::new()),
     ]);
     assert!(unpack_initrd(&mut runner, &archive, &staging).is_ok());
     assert!(staging.is_dir());
@@ -100,9 +100,9 @@ fn failed_unpack_removes_only_its_new_staging_directory() {
     let archive = scratch.0.join("source-initrd");
     let staging = scratch.0.join("stage");
     fs::write(&archive, b"compressed fixture").unwrap();
-    let mut runner = reinstall_rs::command::MockRunner::new([
-        reinstall_rs::command::CommandOutput::new(Some(0), Vec::new(), Vec::new()),
-        reinstall_rs::command::CommandOutput::new(Some(2), Vec::new(), b"bad archive".to_vec()),
+    let mut runner = rustaller::command::MockRunner::new([
+        rustaller::command::CommandOutput::new(Some(0), Vec::new(), Vec::new()),
+        rustaller::command::CommandOutput::new(Some(2), Vec::new(), b"bad archive".to_vec()),
     ]);
     assert!(unpack_initrd(&mut runner, &archive, &staging).is_err());
     assert!(!staging.exists());
@@ -114,10 +114,10 @@ fn repacks_initrd_with_the_legacy_find_cpio_gzip_pipeline_and_atomic_output() {
     let staging = scratch.0.join("stage");
     fs::create_dir(&staging).unwrap();
     let archive = scratch.0.join("repacked-initrd");
-    let mut runner = reinstall_rs::command::MockRunner::new([
-        reinstall_rs::command::CommandOutput::new(Some(0), b"./init\n".to_vec(), Vec::new()),
-        reinstall_rs::command::CommandOutput::new(Some(0), Vec::new(), Vec::new()),
-        reinstall_rs::command::CommandOutput::new(Some(0), b"gzip-output".to_vec(), Vec::new()),
+    let mut runner = rustaller::command::MockRunner::new([
+        rustaller::command::CommandOutput::new(Some(0), b"./init\n".to_vec(), Vec::new()),
+        rustaller::command::CommandOutput::new(Some(0), Vec::new(), Vec::new()),
+        rustaller::command::CommandOutput::new(Some(0), b"gzip-output".to_vec(), Vec::new()),
     ]);
     repack_initrd(&mut runner, &staging, &archive).unwrap();
     assert_eq!(fs::read(&archive).unwrap(), b"gzip-output");
@@ -143,12 +143,12 @@ fn failed_repack_preserves_the_previous_initrd_archive() {
     let scratch = Scratch::new();
     let staging = scratch.0.join("stage");
     fs::create_dir(&staging).unwrap();
-    let archive = scratch.0.join("reinstall-initrd");
+    let archive = scratch.0.join("rustaller-initrd");
     fs::write(&archive, b"previous archive").unwrap();
-    let mut runner = reinstall_rs::command::MockRunner::new([
-        reinstall_rs::command::CommandOutput::new(Some(0), Vec::new(), Vec::new()),
-        reinstall_rs::command::CommandOutput::new(Some(0), Vec::new(), Vec::new()),
-        reinstall_rs::command::CommandOutput::new(Some(1), b"partial output".to_vec(), Vec::new()),
+    let mut runner = rustaller::command::MockRunner::new([
+        rustaller::command::CommandOutput::new(Some(0), Vec::new(), Vec::new()),
+        rustaller::command::CommandOutput::new(Some(0), Vec::new(), Vec::new()),
+        rustaller::command::CommandOutput::new(Some(1), b"partial output".to_vec(), Vec::new()),
     ]);
     assert!(repack_initrd(&mut runner, &staging, &archive).is_err());
     assert_eq!(fs::read(&archive).unwrap(), b"previous archive");
@@ -177,7 +177,7 @@ fn stages_network_hook_worker_and_private_plan_as_one_alpine_initrd_payload() {
     assert!(
         fs::read_to_string(scratch.0.join("init"))
             .unwrap()
-            .contains("/reinstall-worker initrd-network '00:11:22:33:44:55'")
+            .contains("/rustaller-worker initrd-network '00:11:22:33:44:55'")
     );
     assert_eq!(fs::read(paths.worker).unwrap(), worker_bytes());
     assert!(paths.plan.is_file());
@@ -191,7 +191,7 @@ fn invalid_init_script_prevents_any_payload_from_being_staged() {
         stage_alpine_initrd(&scratch.0, &automatic_plan(), &worker_bytes(), &[]),
         Err(InitrdError::ConfigureIpAnchorNotUnique)
     ));
-    assert!(!scratch.0.join("reinstall-worker").exists());
+    assert!(!scratch.0.join("rustaller-worker").exists());
     assert!(!scratch.0.join("configs/install.plan").exists());
 }
 
@@ -199,7 +199,7 @@ fn invalid_init_script_prevents_any_payload_from_being_staged() {
 fn initrd_payload_installs_matching_worker_and_private_versioned_plan() {
     let scratch = Scratch::new();
     let paths = install_worker_and_plan(&scratch.0, &automatic_plan(), &worker_bytes()).unwrap();
-    assert_eq!(paths.worker, scratch.0.join("reinstall-worker"));
+    assert_eq!(paths.worker, scratch.0.join("rustaller-worker"));
     assert_eq!(paths.plan, scratch.0.join("configs/install.plan"));
     assert_eq!(fs::read(&paths.worker).unwrap(), worker_bytes());
     assert_eq!(
@@ -224,7 +224,7 @@ fn initrd_payload_rejects_worker_version_mismatch_before_creating_any_files() {
     let error =
         install_worker_and_plan(&scratch.0, &automatic_plan(), &worker_elf_header()).unwrap_err();
     assert_eq!(error, InitrdError::WorkerVersionMismatch);
-    assert!(!scratch.0.join("reinstall-worker").exists());
+    assert!(!scratch.0.join("rustaller-worker").exists());
     assert!(!scratch.0.join("configs/install.plan").exists());
 }
 
@@ -238,13 +238,13 @@ fn initrd_payload_rejects_a_symlinked_configs_directory() {
     std::os::unix::fs::symlink(&outside, staging.join("configs")).unwrap();
     assert!(install_worker_and_plan(&staging, &automatic_plan(), &worker_bytes()).is_err());
     assert!(!outside.join("install.plan").exists());
-    assert!(!staging.join("reinstall-worker").exists());
+    assert!(!staging.join("rustaller-worker").exists());
 }
 
 #[test]
 fn initrd_payload_refuses_to_replace_an_existing_worker_file() {
     let scratch = Scratch::new();
-    let worker = scratch.0.join("reinstall-worker");
+    let worker = scratch.0.join("rustaller-worker");
     fs::write(&worker, b"preserve existing worker").unwrap();
     assert!(install_worker_and_plan(&scratch.0, &automatic_plan(), &worker_bytes()).is_err());
     assert_eq!(fs::read(&worker).unwrap(), b"preserve existing worker");
@@ -271,7 +271,7 @@ fn alpine_init_network_hook_runs_worker_with_validated_single_nic_arguments() {
             "        # BEGIN PERSONAL-LINUX initrd network worker\n",
             "        depmod\n",
             "        [ -d /sys/module/ipv6 ] || modprobe ipv6\n",
-            "        /reinstall-worker initrd-network '00:11:22:33:44:55' '192.0.2.20/24' '192.0.2.1' '2001:db8::20/64' '2001:db8::1' '2001:db8::21/64'\n",
+            "        /rustaller-worker initrd-network '00:11:22:33:44:55' '192.0.2.20/24' '192.0.2.1' '2001:db8::20/64' '2001:db8::1' '2001:db8::21/64'\n",
             "        MAC_ADDRESS=1\n",
             "        return\n",
             "        # END PERSONAL-LINUX initrd network worker\n",
@@ -291,10 +291,10 @@ fn alpine_init_network_hook_supports_multiple_nics_and_no_static_config() {
     ];
     let patched = inject_network_bootstrap(source, &configs).unwrap();
     assert!(patched.contains(
-        "/reinstall-worker initrd-network '00:11:22:33:44:55' '192.0.2.20/24' '' '' '' ''"
+        "/rustaller-worker initrd-network '00:11:22:33:44:55' '192.0.2.20/24' '' '' '' ''"
     ));
     assert!(patched.contains(
-        "/reinstall-worker initrd-network '00:11:22:33:44:66' '' '' '2001:db8::20/64' '' ''"
+        "/rustaller-worker initrd-network '00:11:22:33:44:66' '' '' '2001:db8::20/64' '' ''"
     ));
     assert!(patched.contains("        MAC_ADDRESS=1\n        return\n"));
     assert_eq!(

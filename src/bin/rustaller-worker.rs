@@ -1,13 +1,13 @@
-use reinstall_rs::command::{SwapSafeRunner, SystemRunner};
-use reinstall_rs::worker::args::{WorkerAction, parse_worker_args};
-use reinstall_rs::worker::firstboot::{InitManager, cleanup_firstboot, run_firstboot};
-use reinstall_rs::worker::initrd_network::run_initrd_network_with_proxy;
-use reinstall_rs::worker::log_stream::run_log_stream;
+use rustaller::command::{SwapSafeRunner, SystemRunner};
+use rustaller::worker::args::{WorkerAction, parse_worker_args};
+use rustaller::worker::firstboot::{InitManager, cleanup_firstboot, run_firstboot};
+use rustaller::worker::initrd_network::run_initrd_network_with_proxy;
+use rustaller::worker::log_stream::run_log_stream;
 use std::path::Path;
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("reinstall-worker: {error}");
+        eprintln!("rustaller-worker: {error}");
         std::process::exit(1);
     }
 }
@@ -16,19 +16,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let action = parse_worker_args(std::env::args().skip(1))?;
     let Some(action) = action else {
         println!(
-            "Usage: reinstall-worker <live-install PLAN MANIFEST|firstboot-fix|cleanup-openrc|cleanup-systemd|initrd-network|log-stream>\n\nRuntime version: {}\nInternal helper for the Rust reinstall installer.",
-            reinstall_rs::RUNTIME_VERSION
+            "Usage: rustaller-worker <live-install PLAN MANIFEST|firstboot-fix|cleanup-openrc|cleanup-systemd|initrd-network|log-stream>\n\nRuntime version: {}\nInternal helper for the Rust rustaller installer.",
+            rustaller::RUNTIME_VERSION
         );
         return Ok(());
     };
 
     let mut runner = SwapSafeRunner::new(SystemRunner);
     match action {
-        WorkerAction::LiveModules => {
-            reinstall_rs::worker::install::prepare_live_modules(&mut runner)?
-        }
+        WorkerAction::LiveModules => rustaller::worker::install::prepare_live_modules(&mut runner)?,
         WorkerAction::LiveInstall { plan, manifest } => {
-            reinstall_rs::worker::install::run_from_files(
+            rustaller::worker::install::run_from_files(
                 &mut runner,
                 Path::new(&plan),
                 Path::new(&manifest),

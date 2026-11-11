@@ -48,7 +48,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: cargo xtask dist --tag "$RELEASE_TAG"
       - name: Smoke test help without installation
-        run: target/x86_64-unknown-linux-musl/release/reinstall --help
+        run: target/x86_64-unknown-linux-musl/release/rustaller --help
       - name: Upload preview package
         if: inputs.release_tag != ''
         uses: actions/upload-artifact@v7.0.2

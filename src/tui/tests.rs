@@ -3,11 +3,11 @@ use super::state::{Action, Authentication, EditSlot, Field, IsoMode, MenuFrame, 
 use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{Terminal, backend::TestBackend};
-use reinstall_rs::codec::encode_plan;
-use reinstall_rs::config::{DnsMode, InstallProfile};
-use reinstall_rs::host::args::{CliOutcome, parse_args};
-use reinstall_rs::model::{BootMode, SecretString};
-use reinstall_rs::postinstall::KernelChoice;
+use rustaller::codec::encode_plan;
+use rustaller::config::{DnsMode, InstallProfile};
+use rustaller::host::args::{CliOutcome, parse_args};
+use rustaller::model::{BootMode, SecretString};
+use rustaller::postinstall::KernelChoice;
 
 fn wizard() -> Wizard {
     Wizard::new(Some("https://assets.example/reinstall".into()))
@@ -188,7 +188,7 @@ fn explicit_back_offers_keep_discard_or_cancel_and_nested_snapshots_preserve_oth
 #[test]
 fn current_system_route_has_no_installation_fields_and_builds_a_separate_noop_or_apply_request() {
     let mut wizard = wizard();
-    wizard.current_target = Ok(reinstall_rs::model::Target::Debian);
+    wizard.current_target = Ok(rustaller::model::Target::Debian);
     press(&mut wizard, KeyCode::Down);
     press(&mut wizard, KeyCode::Enter);
     assert!(wizard.is_current());
@@ -239,7 +239,7 @@ fn current_system_route_has_no_installation_fields_and_builds_a_separate_noop_or
 #[test]
 fn returning_from_current_mode_to_system_selection_preserves_its_draft_without_reusing_its_route() {
     let mut wizard = wizard();
-    wizard.current_target = Ok(reinstall_rs::model::Target::Debian);
+    wizard.current_target = Ok(rustaller::model::Target::Debian);
     press(&mut wizard, KeyCode::Down);
     press(&mut wizard, KeyCode::Enter);
     set(&mut wizard, Field::Hostname, "current-session-host");
@@ -261,16 +261,16 @@ fn returning_from_current_mode_to_system_selection_preserves_its_draft_without_r
 
 #[test]
 fn successful_current_apply_shows_backups_and_updates_the_saved_directory_baselines() {
-    use reinstall_rs::host::current::CurrentReport;
+    use rustaller::host::current::CurrentReport;
     let mut wizard = wizard();
-    wizard.current_target = Ok(reinstall_rs::model::Target::Debian);
+    wizard.current_target = Ok(rustaller::model::Target::Debian);
     press(&mut wizard, KeyCode::Down);
     press(&mut wizard, KeyCode::Enter);
     open(&mut wizard, Page::Host);
     set(&mut wizard, Field::Hostname, "applied-host");
     wizard.complete_current(Ok(CurrentReport {
         changed_files: vec!["etc/hostname".into()],
-        backup_dir: Some("/var/backups/rust-aller-current/example".into()),
+        backup_dir: Some("/var/backups/rustaller-current/example".into()),
         notes: vec!["Network and SSH were not restarted.".into()],
     }));
     let View::Outcome {
@@ -281,7 +281,7 @@ fn successful_current_apply_shows_backups_and_updates_the_saved_directory_baseli
     };
     assert!(*success);
     assert!(message.contains("etc/hostname"));
-    assert!(message.contains("/var/backups/rust-aller-current/example"));
+    assert!(message.contains("/var/backups/rustaller-current/example"));
     press(&mut wizard, KeyCode::Enter);
     press(&mut wizard, KeyCode::Esc);
     raw_key(&mut wizard, KeyCode::Esc);
@@ -297,9 +297,9 @@ fn successful_current_apply_shows_backups_and_updates_the_saved_directory_baseli
 
 #[test]
 fn current_apply_result_redacts_key_sources_and_cancel_never_submits_a_configuration() {
-    use reinstall_rs::host::current::CurrentReport;
+    use rustaller::host::current::CurrentReport;
     let mut wizard = wizard();
-    wizard.current_target = Ok(reinstall_rs::model::Target::Debian);
+    wizard.current_target = Ok(rustaller::model::Target::Debian);
     press(&mut wizard, KeyCode::Down);
     press(&mut wizard, KeyCode::Enter);
     open(&mut wizard, Page::Account);
@@ -586,7 +586,7 @@ fn swap_size_and_new_hostname_are_edited_saved_and_submitted_per_target() {
 
 #[test]
 fn native_key_generator_is_nested_and_only_generated_public_key_enters_the_plan() {
-    use reinstall_rs::host::ssh_keygen::GeneratedKey;
+    use rustaller::host::ssh_keygen::GeneratedKey;
     let mut wizard = wizard();
     choose(&mut wizard, 1);
     wizard.draft_mut().authentication = Authentication::PublicKeys;

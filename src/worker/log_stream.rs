@@ -33,7 +33,7 @@ pub fn run_log_stream<R: CommandRunner>(
         return Ok(());
     }
 
-    let tail = CommandSpec::new("tail", ["-fn+0", "/reinstall.log"])
+    let tail = CommandSpec::new("tail", ["-fn+0", "/rustaller.log"])
         .phase("web-log-stream")
         .stdin(CommandInput::Null)
         .stdout_mode(OutputMode::Stream)

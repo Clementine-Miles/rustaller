@@ -1,10 +1,10 @@
-use reinstall_rs::host::sources::{
+use rustaller::host::sources::{
     ALPINE_RELEASES_URL, ARCH_MIRROR, DEBIAN_RELEASE_URL, GENTOO_STAGE3_INDEX_URL, SourceKind,
     arch_repositories, clearsigned_payload, parse_alpine_netboot, parse_debian_archive,
     parse_gentoo_sha512, parse_gentoo_stage3, source_kind, validate_alpine_checksum,
     validate_debian_inrelease,
 };
-use reinstall_rs::model::Target;
+use rustaller::model::Target;
 
 const SHA256: &str = "0228553464c9588ffeb63ec04d26abb5f79405006b74574034394199af47dab4";
 const ALPINE: &str = "---\n-\n  version: 3.24.3\n  flavor: alpine-minirootfs\n-\n  branch: v3.24\n  arch: x86_64\n  version: 3.24.3\n  flavor: alpine-netboot\n  file: alpine-netboot-3.24.3-x86_64.tar.gz\n  iso: alpine-netboot-3.24.3-x86_64.tar.gz\n  sha256: 0228553464c9588ffeb63ec04d26abb5f79405006b74574034394199af47dab4\n";

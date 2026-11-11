@@ -170,6 +170,8 @@ pub fn canonicalize_iso_source(path: &Path, managed_tmp: &Path) -> Result<PathBu
     if canonical.starts_with(&managed)
         || canonical == Path::new("/reinstall-vmlinuz")
         || canonical == Path::new("/reinstall-initrd")
+        || canonical == Path::new("/rustaller-vmlinuz")
+        || canonical == Path::new("/rustaller-initrd")
     {
         return Err(IsoError::ProtectedSource);
     }
@@ -268,7 +270,7 @@ pub fn render_grub_entry(iso: &PreparedIso) -> String {
         String::from("### BEGIN reinstall.sh ###\nset timeout_style=menu\nset timeout=5\n");
     output.push_str(GRUBENV_HELPER);
     output.push_str(
-        "menuentry \"reinstall (iso)\" --unrestricted {\n    insmod lvm\n    insmod mdraid1x\n    insmod all_video\n    insmod loopback\n    set btrfs_relative_path=n\n",
+        "menuentry \"rustaller (iso)\" --unrestricted {\n    insmod lvm\n    insmod mdraid1x\n    insmod all_video\n    insmod loopback\n    set btrfs_relative_path=n\n",
     );
     output.push_str(&format!(
         "    search --no-floppy --fs-uuid --set=iso_device '{}'\n    set iso_path='{}'\n    set img_dev='/dev/disk/by-uuid/{}'\n    set img_loop='{}'\n    export iso_path img_dev img_loop\n    loopback loop ($iso_device)$iso_path\n    set root=(loop)\n",

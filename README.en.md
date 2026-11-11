@@ -1,4 +1,4 @@
-# Personal VPS reinstall — Linux-only fork
+# rustaller — Personal VPS reinstall tool (Linux-only)
 
 A scoped derivative of [bin456789/reinstall](https://github.com/bin456789/reinstall), based on
 `98f1e21013233d42750cc2e7a298a0818461d686`. The upstream GPLv3 license is retained.
@@ -18,12 +18,12 @@ See [Chinese documentation](README.md), [architecture and asset map](docs/ARCHIT
 
 ```console
 cargo xtask bundle
-./target/x86_64-unknown-linux-musl/release/reinstall
+./target/x86_64-unknown-linux-musl/release/rustaller
 ```
 
 Running without arguments on an interactive terminal opens the English TUI with a centered ASCII RUSTALLER title. See the [release guide](docs/GITHUB-RELEASE.md) for pinned GitHub download commands; the VPS needs no Rust toolchain.
 
-Use `./reinstall debian --inspect` to view the detected disk, firmware and identity confirmation token without installing or executing kexec. Installation requires an SSH public key or password and the complete confirmation token in the native terminal. Non-interactive installation requires explicit `--confirm-erase`. Rust embeds its matching worker and log page, uses official authenticated resources, and does not require a custom `confhome`.
+Use `./rustaller debian --inspect` to view the detected disk, firmware and identity confirmation token without installing or executing kexec. Installation requires an SSH public key or password and the complete confirmation token in the native terminal. Non-interactive installation requires explicit `--confirm-erase`. Rust embeds its matching worker and log page, uses official authenticated resources, and does not require a custom `confhome`.
 
 The source shutdown adapters currently require systemd or openrc-init as PID 1. Unsupported hosts stop rather than falling back to two reboots. Alpine Live rescue uses `hold=1` without automatic partitioning. Rust retains local ISO/netboot.xyz/reset menus and validation components, but their execution is not connected; the Shell baseline below still provides these interfaces.
 

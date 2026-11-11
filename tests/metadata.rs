@@ -1,9 +1,9 @@
-use reinstall_rs::command::{CommandOutput, MockRunner};
-use reinstall_rs::host::sources::{
+use rustaller::command::{CommandOutput, MockRunner};
+use rustaller::host::sources::{
     StableRelease, fetch_stable_release, parse_alpine_release_metadata,
     parse_debian_release_metadata,
 };
-use reinstall_rs::model::Target;
+use rustaller::model::Target;
 
 #[test]
 fn parses_official_stable_metadata_fixtures() {

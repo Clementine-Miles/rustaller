@@ -26,7 +26,7 @@ pub(crate) fn atomic_replace(path: &Path, contents: &[u8], mode: u32) -> io::Res
         .ok_or_else(|| io::Error::other("file has no parent directory"))?;
     for _ in 0..16 {
         let sequence = NEXT_FILE.fetch_add(1, Ordering::Relaxed);
-        let temporary = parent.join(format!(".reinstall.tmp.{}.{sequence}", std::process::id()));
+        let temporary = parent.join(format!(".rustaller.tmp.{}.{sequence}", std::process::id()));
         let mut file = match OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -64,7 +64,7 @@ mod tests {
     impl Directory {
         fn new() -> Self {
             let path = std::env::temp_dir().join(format!(
-                "reinstall-fs-{}-{}",
+                "rustaller-fs-{}-{}",
                 std::process::id(),
                 NEXT_FILE.fetch_add(1, Ordering::Relaxed)
             ));

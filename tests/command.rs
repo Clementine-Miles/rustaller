@@ -1,4 +1,4 @@
-use reinstall_rs::command::{
+use rustaller::command::{
     CommandError, CommandInput, CommandOutput, CommandRunner, CommandSpec, MockRunner, OutputMode,
     SwapSafeRunner, SystemRunner, run_checked,
 };
@@ -114,7 +114,7 @@ fn build_mock_command() -> (Scratch, PathBuf) {
         .expect("clock after epoch")
         .as_nanos();
     let scratch =
-        std::env::temp_dir().join(format!("reinstall-mock-{}-{nonce}", std::process::id()));
+        std::env::temp_dir().join(format!("rustaller-mock-{}-{nonce}", std::process::id()));
     fs::create_dir(&scratch).expect("create unique mock directory");
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/mock-command.rs");
     let binary = scratch.join("mock-command");

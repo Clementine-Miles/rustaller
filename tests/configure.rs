@@ -1,7 +1,7 @@
-use reinstall_rs::model::{InstallPlan, Target};
-use reinstall_rs::postinstall::PostInstallConfig;
-use reinstall_rs::shared::configure::{ConfigurationError, apply_basic_configuration};
-use reinstall_rs::worker::live::{ValidatedLivePlan, validate_live_plan_with_uid};
+use rustaller::model::{InstallPlan, Target};
+use rustaller::postinstall::PostInstallConfig;
+use rustaller::shared::configure::{ConfigurationError, apply_basic_configuration};
+use rustaller::worker::live::{ValidatedLivePlan, validate_live_plan_with_uid};
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
@@ -14,7 +14,7 @@ struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "reinstall-configure-{}-{}",
+            "rustaller-configure-{}-{}",
             std::process::id(),
             NEXT_ROOT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -90,7 +90,7 @@ fn live_plan(
     plan.confhome = Some("https://assets.example/reinstall".into());
     plan.post_install = configuration;
     plan.hold = hold;
-    validate_live_plan_with_uid(plan, "x86_64", 2048, reinstall_rs::RUNTIME_VERSION, 0).unwrap()
+    validate_live_plan_with_uid(plan, "x86_64", 2048, rustaller::RUNTIME_VERSION, 0).unwrap()
 }
 
 fn requested_configuration() -> PostInstallConfig {

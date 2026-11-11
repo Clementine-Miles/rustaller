@@ -1,14 +1,14 @@
-use reinstall_rs::codec::{PlanCodecError, decode_plan, encode_plan};
-use reinstall_rs::config::{DnsConfig, DnsMode, InstallProfile, SystemConfig, SystemConfigError};
-use reinstall_rs::host::args::{CliOutcome, parse_args};
-use reinstall_rs::model::{BootMode, InstallPlan, PlanError, Target};
-use reinstall_rs::shared::configure::apply_basic_configuration;
-use reinstall_rs::shared::dns::apply_target_dns;
-use reinstall_rs::targets::packages::{
+use rustaller::codec::{PlanCodecError, decode_plan, encode_plan};
+use rustaller::config::{DnsConfig, DnsMode, InstallProfile, SystemConfig, SystemConfigError};
+use rustaller::host::args::{CliOutcome, parse_args};
+use rustaller::model::{BootMode, InstallPlan, PlanError, Target};
+use rustaller::shared::configure::apply_basic_configuration;
+use rustaller::shared::dns::apply_target_dns;
+use rustaller::targets::packages::{
     PRESERVED_ROOTS, apply_package_policy, arch_policy, cleanup_plan,
 };
-use reinstall_rs::targets::{debian, packages as profile};
-use reinstall_rs::worker::live::{ValidatedLivePlan, validate_live_plan_with_uid};
+use rustaller::targets::{debian, packages as profile};
+use rustaller::worker::live::{ValidatedLivePlan, validate_live_plan_with_uid};
 use std::fs;
 use std::net::IpAddr;
 use std::os::unix::fs::symlink;
@@ -20,7 +20,7 @@ struct Scratch(PathBuf);
 impl Scratch {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "reinstall-system-{}-{}",
+            "rustaller-system-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -45,7 +45,7 @@ fn plan(target: Target) -> InstallPlan {
     plan
 }
 fn live(plan: InstallPlan) -> ValidatedLivePlan {
-    validate_live_plan_with_uid(plan, "x86_64", 2048, reinstall_rs::RUNTIME_VERSION, 0).unwrap()
+    validate_live_plan_with_uid(plan, "x86_64", 2048, rustaller::RUNTIME_VERSION, 0).unwrap()
 }
 fn dns() -> DnsConfig {
     DnsConfig {
@@ -162,7 +162,7 @@ fn minimal_cli_options_roundtrip_and_old_plan_schemas_fail_closed() {
         2_u16,
         3_u16,
         4_u16,
-        reinstall_rs::model::CURRENT_SCHEMA_VERSION + 1,
+        rustaller::model::CURRENT_SCHEMA_VERSION + 1,
     ] {
         let mut bytes = b"RINSTALL\0".to_vec();
         bytes.extend_from_slice(&schema.to_le_bytes());
@@ -245,7 +245,7 @@ fn static_dns_updates_networkd_and_replaces_resolver_link_without_following_it()
         assert!(network.contains("DHCP=yes"));
         assert!(network.contains("DNS=1.1.1.1"));
         assert!(network.contains("DNS=2606:4700:4700::1111"));
-        assert_eq!(network.matches("# BEGIN rust-aller target DNS").count(), 1);
+        assert_eq!(network.matches("# BEGIN rustaller target DNS").count(), 1);
         assert!(network.contains("[IPv6AcceptRA]\nUseDNS=no\nUseDomains=no"));
         fs::rename(
             scratch.0.join("etc/systemd/network/10-eth0.network"),
@@ -329,7 +329,7 @@ fn native_minimal_package_policies_preserve_boot_crypto_databases_and_licenses()
         }
         match target {
             Target::Debian => assert!(
-                fs::read_to_string(scratch.0.join("etc/dpkg/dpkg.cfg.d/99-rust-aller-minimal"))
+                fs::read_to_string(scratch.0.join("etc/dpkg/dpkg.cfg.d/99-rustaller-minimal"))
                     .unwrap()
                     .contains("path-include=/usr/share/doc/*/copyright")
             ),
@@ -338,7 +338,7 @@ fn native_minimal_package_policies_preserve_boot_crypto_databases_and_licenses()
                 assert!(value.contains("SigLevel = Required DatabaseOptional"));
                 assert!(value.find("NoExtract").unwrap() < value.find("[core]").unwrap());
                 assert_eq!(
-                    value.matches("# BEGIN rust-aller minimal packages").count(),
+                    value.matches("# BEGIN rustaller minimal packages").count(),
                     1
                 );
             }

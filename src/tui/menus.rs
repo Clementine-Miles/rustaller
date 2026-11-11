@@ -3,11 +3,11 @@ use super::state::{
     Action, Authentication, CHOICES, EditSlot, Entry, IsoMode, Page, Setting, Wizard, boot_label,
     hold_label, iso_label, optional_label, yes_no,
 };
-use reinstall_rs::config::{AddressPreference, CongestionControl, Ipv6Policy, QueueDiscipline};
-use reinstall_rs::config::{DnsMode, InstallProfile};
-use reinstall_rs::host::ssh_keygen::{self, KeyType};
-use reinstall_rs::model::{BootMode, Target};
-use reinstall_rs::postinstall::KernelChoice;
+use rustaller::config::{AddressPreference, CongestionControl, Ipv6Policy, QueueDiscipline};
+use rustaller::config::{DnsMode, InstallProfile};
+use rustaller::host::ssh_keygen::{self, KeyType};
+use rustaller::model::{BootMode, Target};
+use rustaller::postinstall::KernelChoice;
 
 impl Wizard {
     pub fn entries(&self) -> Vec<Entry> {

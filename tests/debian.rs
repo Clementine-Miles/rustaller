@@ -1,6 +1,6 @@
-use reinstall_rs::command::{CommandOutput, MockRunner};
-use reinstall_rs::model::BootMode;
-use reinstall_rs::targets::debian::{
+use rustaller::command::{CommandOutput, MockRunner};
+use rustaller::model::BootMode;
+use rustaller::targets::debian::{
     apt_package_list, apt_sources_text, bootstrap_rootfs, debian_kernel_package, grub_selections,
     install_apt_packages, install_grub, preseed_grub, write_apt_sources, write_fstab,
 };
@@ -17,7 +17,7 @@ impl Scratch {
             .expect("clock after epoch")
             .as_nanos();
         let path =
-            std::env::temp_dir().join(format!("reinstall-debian-{}-{nonce}", std::process::id()));
+            std::env::temp_dir().join(format!("rustaller-debian-{}-{nonce}", std::process::id()));
         fs::create_dir(&path).expect("create scratch directory");
         Self(path)
     }
@@ -167,7 +167,7 @@ fn grub_preseed_preserves_bios_and_nvram_safe_uefi_inputs() {
     assert_eq!(runner.calls()[0].args[1], "debconf-set-selections");
     assert_eq!(
         runner.calls()[0].stdin,
-        reinstall_rs::command::CommandInput::Bytes(grub_selections(BootMode::Efi, "").unwrap())
+        rustaller::command::CommandInput::Bytes(grub_selections(BootMode::Efi, "").unwrap())
     );
 }
 

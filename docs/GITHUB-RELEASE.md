@@ -13,7 +13,7 @@
 ## 当前结构与裁剪
 
 ```text
-src/bin/reinstall.rs        CLI / 可选 TUI → 共用预检、磁盘确认与安装入口
+src/bin/rustaller.rs        CLI / 可选 TUI → 共用预检、磁盘确认与安装入口
 src/tui/                   目录/字段/导航/计划分离；安装预检与独立本机密钥生成工具
 src/host/                  主机检查、引导、ISO 组件
 src/worker/                initrd、Live 检查、首启修正、日志组件
@@ -69,7 +69,7 @@ TUI 增量为 299,104 字节（约 292 KiB）；TUI host 比 2026-10-25 多级�
 
 ```console
 cargo xtask bundle
-./target/x86_64-unknown-linux-musl/release/reinstall
+./target/x86_64-unknown-linux-musl/release/rustaller
 ```
 
 无参数且 stdin/stdout 都连接终端时进入 TUI；`--help` 和现有 CLI 参数继续可用。CLI-only 构建使用 `cargo xtask bundle --no-tui`。四个自动目标的匹配 HTTPS 资源根可通过 `REINSTALL_CONFHOME` 预填；配置草稿本身不执行安装；提交后先预检，要求完整磁盘身份确认，再下载并认证资源、kexec 进入 Live 和安装。
@@ -92,7 +92,7 @@ cargo xtask dist --tag v0.1.0-preview.1 --output artifacts/github-preview --allo
 
 输出包含：
 
-- `reinstall-x86_64-linux-musl`：唯一入口，嵌入匹配 worker。
+- `rustaller-x86_64-linux-musl`：唯一入口，嵌入匹配 worker。
 - `SHA256SUMS`：入口、许可证和构建元数据的 SHA-256。
 - `LICENSE`：上游 GPL-3.0 许可证。
 - `build-info.json`：版本、计划 schema、源码提交、是否有未提交修改、TUI、worker 哈希，以及 `installer_complete: false`。
@@ -102,7 +102,7 @@ cargo xtask dist --tag v0.1.0-preview.1 --output artifacts/github-preview --allo
 
 你已创建 `Clementine-Miles/rustaller`。希望 VPS 免登录 curl 下载时，应使用公开仓库的公开 Release；私有仓库下载需要认证。GitHub Pages 不参与二进制分发。以下首次推送示例以远程仓库为空为前提；若已有 README/许可证等提交，先核对历史并整合，不强制覆盖。
 
-源码压缩包不包含 `.git`、编译产物或虚拟机测试资料，可以上传到你的仓库。解压后，将 `rust-aller/` **里面的内容**放到仓库根目录，保留 `.github`、`.cargo`、`.gitignore` 等隐藏文件；不要再套一层 `rust-aller/`。已有远程仓库时先 clone，再复制并审阅差异，不强制覆盖历史。
+源码压缩包不包含 `.git`、编译产物或虚拟机测试资料，可以上传到你的仓库。解压后，将 `rustaller/` **里面的内容**放到仓库根目录，保留 `.github`、`.cargo`、`.gitignore` 等隐藏文件；不要再套一层 `rustaller/`。已有远程仓库时先 clone，再复制并审阅差异，不强制覆盖历史。
 
 对拍测试依赖固定上游提交 `98f1e21013233d42750cc2e7a298a0818461d686`。GitHub Check 工作流现在会自动获取这个对象，新仓库无需包含上游全部历史。源码包解压后，本地测试前在该仓库执行：
 
@@ -149,7 +149,7 @@ Release preview 工作流对该 tag 重新检查和打包，再创建一个 draf
 公开 `v0.1.0-preview.1` 预览 Release 后，在 VPS 终端执行；该地址在版本和附件公开前不可用：
 
 ```sh
-curl -fL 'https://github.com/Clementine-Miles/rustaller/releases/download/v0.1.0-preview.1/reinstall-x86_64-linux-musl' -o reinstall && chmod 700 reinstall && ./reinstall
+curl -fL 'https://github.com/Clementine-Miles/rustaller/releases/download/v0.1.0-preview.1/rustaller-x86_64-linux-musl' -o rustaller && chmod 700 rustaller && ./rustaller
 ```
 
 这会打开英文 TUI；提交自动安装配置并确认磁盘身份后会执行真实清盘安装。下载到文件后执行可以保留交互终端；Rust ELF 不通过 `curl | sh` 执行。安装需要 root，完整安装矩阵尚未验收，当前仅为开发预览。
@@ -157,7 +157,7 @@ curl -fL 'https://github.com/Clementine-Miles/rustaller/releases/download/v0.1.0
 完整安装流程验收通过并发布正式版本后，稳定入口可以固定为：
 
 ```sh
-curl -fL 'https://github.com/Clementine-Miles/rustaller/releases/latest/download/reinstall-x86_64-linux-musl' -o reinstall && chmod 700 reinstall && ./reinstall
+curl -fL 'https://github.com/Clementine-Miles/rustaller/releases/latest/download/rustaller-x86_64-linux-musl' -o rustaller && chmod 700 rustaller && ./rustaller
 ```
 
 若要检查完整性，按原附件名下载入口及 `SHA256SUMS`，再运行 `sha256sum --check --ignore-missing SHA256SUMS`。源码、许可证和构建信息同时保留在 GitHub。

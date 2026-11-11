@@ -1,8 +1,8 @@
-use reinstall_rs::command::{CommandOutput, MockRunner};
-use reinstall_rs::model::{BootMode, InstallPlan, Target};
-use reinstall_rs::shared::storage::mount_target;
-use reinstall_rs::shared::storage::{DiskLayout, PartitionEnvironment, refresh_partition_table};
-use reinstall_rs::worker::live::validate_live_plan_with_uid;
+use rustaller::command::{CommandOutput, MockRunner};
+use rustaller::model::{BootMode, InstallPlan, Target};
+use rustaller::shared::storage::mount_target;
+use rustaller::shared::storage::{DiskLayout, PartitionEnvironment, refresh_partition_table};
+use rustaller::worker::live::validate_live_plan_with_uid;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -15,7 +15,7 @@ impl Scratch {
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "reinstall-storage-cleanup-{}-{nonce}",
+            "rustaller-storage-cleanup-{}-{nonce}",
             std::process::id()
         ));
         fs::create_dir(&root).unwrap();
@@ -27,10 +27,10 @@ impl Drop for Scratch {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
-fn plan() -> reinstall_rs::worker::live::ValidatedLivePlan {
+fn plan() -> rustaller::worker::live::ValidatedLivePlan {
     let mut plan = InstallPlan::new(Target::Debian);
     plan.confhome = Some("https://assets.example/reinstall".into());
-    validate_live_plan_with_uid(plan, "x86_64", 512, reinstall_rs::RUNTIME_VERSION, 0).unwrap()
+    validate_live_plan_with_uid(plan, "x86_64", 512, rustaller::RUNTIME_VERSION, 0).unwrap()
 }
 fn success(count: usize) -> Vec<CommandOutput> {
     (0..count)

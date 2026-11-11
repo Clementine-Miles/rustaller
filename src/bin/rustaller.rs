@@ -1,9 +1,9 @@
-use reinstall_rs::command::SystemRunner;
-use reinstall_rs::host::args::{CliOutcome, parse_args};
+use rustaller::command::SystemRunner;
+use rustaller::host::args::{CliOutcome, parse_args};
 #[cfg(feature = "tui")]
-use reinstall_rs::host::current::{CurrentConfig, CurrentReport, apply_current};
-use reinstall_rs::host::handoff;
-use reinstall_rs::model::InstallPlan;
+use rustaller::host::current::{CurrentConfig, CurrentReport, apply_current};
+use rustaller::host::handoff;
+use rustaller::model::InstallPlan;
 use std::io::{self, BufRead, IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -15,18 +15,18 @@ static NEXT_WORKSPACE: AtomicU64 = AtomicU64::new(0);
 mod tui;
 
 #[cfg(all(not(debug_assertions), not(has_embedded_worker)))]
-compile_error!("release host builds must use `cargo xtask bundle` to embed reinstall-worker");
+compile_error!("release host builds must use `cargo xtask bundle` to embed rustaller-worker");
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("reinstall: {error}");
+        eprintln!("rustaller: {error}");
         std::process::exit(2);
     }
 }
 
 fn run() -> Result<(), String> {
-    if reinstall_rs::worker_bytes().is_empty() {
-        return Err("matching reinstall-worker is not embedded".into());
+    if rustaller::worker_bytes().is_empty() {
+        return Err("matching rustaller-worker is not embedded".into());
     }
     let args: Vec<String> = std::env::args().skip(1).collect();
     let confhome = std::env::var("REINSTALL_CONFHOME").ok();
@@ -37,14 +37,14 @@ fn run() -> Result<(), String> {
             #[cfg(not(feature = "tui"))]
             return Err("interactive TUI is not available in this development build".into());
         }
-        println!("{}", reinstall_rs::host::args::HELP);
+        println!("{}", rustaller::host::args::HELP);
         return Err("a target is required".into());
     }
 
     let outcome = parse_args(&args, confhome.as_deref()).map_err(|error| error.to_string())?;
     match outcome {
         CliOutcome::Help => {
-            println!("{}", reinstall_rs::host::args::HELP);
+            println!("{}", rustaller::host::args::HELP);
             Ok(())
         }
         CliOutcome::Plan(plan) => run_plan(&plan),
@@ -122,7 +122,7 @@ fn run_install(
         &deployment,
         &confirmation,
         &workspace,
-        reinstall_rs::worker_bytes(),
+        rustaller::worker_bytes(),
     )
     .map_err(|error| error.to_string())?;
     if plan.hold == Some(0) {

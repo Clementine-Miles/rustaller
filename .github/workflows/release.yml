@@ -43,5 +43,5 @@ jobs:
           --draft --prerelease
           --title "$RELEASE_TAG (development preview)"
           --notes-file dist/RELEASE-NOTES.md
-          dist/reinstall-x86_64-linux-musl
+          dist/rustaller-x86_64-linux-musl
           dist/SHA256SUMS dist/LICENSE dist/build-info.json

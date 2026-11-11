@@ -2,12 +2,12 @@ use super::editor::{Editor, TextValue};
 pub(super) use super::fields::Field;
 use super::fields::TCP_FIELDS;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use reinstall_rs::config::{AddressPreference, CongestionControl, Ipv6Policy, QueueDiscipline};
-use reinstall_rs::config::{DnsMode, InstallProfile};
-use reinstall_rs::host::current::{CurrentConfig, CurrentReport, detect_current_target};
-use reinstall_rs::host::ssh_keygen::{self, GeneratedKey, KeyType, KeygenOptions};
-use reinstall_rs::model::{BootMode, InstallPlan, Target};
-use reinstall_rs::postinstall::KernelChoice;
+use rustaller::config::{AddressPreference, CongestionControl, Ipv6Policy, QueueDiscipline};
+use rustaller::config::{DnsMode, InstallProfile};
+use rustaller::host::current::{CurrentConfig, CurrentReport, detect_current_target};
+use rustaller::host::ssh_keygen::{self, GeneratedKey, KeyType, KeygenOptions};
+use rustaller::model::{BootMode, InstallPlan, Target};
+use rustaller::postinstall::KernelChoice;
 
 pub(super) const CHOICES: [(&str, &str); 8] = [
     ("Alpine Linux", "alpine"),

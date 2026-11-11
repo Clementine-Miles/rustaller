@@ -1,6 +1,6 @@
-use reinstall_rs::host::args::{CliOutcome, parse_args};
-use reinstall_rs::model::{BootMode, Target};
-use reinstall_rs::postinstall::KernelChoice;
+use rustaller::host::args::{CliOutcome, parse_args};
+use rustaller::model::{BootMode, Target};
+use rustaller::postinstall::KernelChoice;
 
 fn parse(args: &[&str]) -> CliOutcome {
     parse_args(args.iter().copied(), None).expect("valid CLI arguments")

@@ -1,4 +1,4 @@
-use reinstall_rs::worker::args::{WorkerAction, parse_worker_args};
+use rustaller::worker::args::{WorkerAction, parse_worker_args};
 
 #[test]
 fn worker_accepts_only_known_actions_and_validates_initrd_arguments() {

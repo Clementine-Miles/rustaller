@@ -8,7 +8,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const ENTRY_NAME: &str = "reinstall-x86_64-linux-musl";
+pub const ENTRY_NAME: &str = "rustaller-x86_64-linux-musl";
 
 pub struct SourceRevision {
     pub commit: String,
@@ -16,7 +16,7 @@ pub struct SourceRevision {
 }
 
 pub fn validate_tag(tag: &str) -> Result<(), String> {
-    let expected = format!("v{}", reinstall_rs::PACKAGE_VERSION);
+    let expected = format!("v{}", rustaller::PACKAGE_VERSION);
     let valid = tag == expected
         || tag
             .strip_prefix(&format!("{expected}-"))
@@ -78,7 +78,7 @@ pub fn package(
     let host = fs::read(&artifacts.host).map_err(|e| e.to_string())?;
     let worker = fs::read(&artifacts.worker).map_err(|e| e.to_string())?;
     for bytes in [&host, &worker] {
-        verify_x86_64_elf(bytes, true, reinstall_rs::RUNTIME_VERSION).map_err(|e| e.to_string())?;
+        verify_x86_64_elf(bytes, true, rustaller::RUNTIME_VERSION).map_err(|e| e.to_string())?;
     }
     if host.len() <= worker.len() || !contains_bytes(&host, &worker) {
         return Err("release host does not embed the exact matching worker".into());
@@ -89,9 +89,9 @@ pub fn package(
     }
     let info = format!(
         "{{\n  \"schema_version\": 1,\n  \"tag\": \"{tag}\",\n  \"package_version\": \"{}\",\n  \"runtime_version\": \"{}\",\n  \"plan_schema_version\": {},\n  \"target\": \"{}\",\n  \"installer_complete\": false,\n  \"tui\": {},\n  \"source_commit\": \"{}\",\n  \"source_dirty\": {},\n  \"host_bytes\": {},\n  \"worker_bytes\": {},\n  \"worker_sha256\": \"{}\"\n}}\n",
-        reinstall_rs::PACKAGE_VERSION,
-        reinstall_rs::RUNTIME_VERSION,
-        reinstall_rs::model::CURRENT_SCHEMA_VERSION,
+        rustaller::PACKAGE_VERSION,
+        rustaller::RUNTIME_VERSION,
+        rustaller::model::CURRENT_SCHEMA_VERSION,
         crate::bundle::TARGET,
         artifacts.tui,
         source.commit,
@@ -105,7 +105,7 @@ pub fn package(
         artifacts.tui,
         source.commit,
         source.dirty,
-        reinstall_rs::RUNTIME_VERSION
+        rustaller::RUNTIME_VERSION
     );
     let files = [
         (ENTRY_NAME, host.as_slice(), 0o755),
@@ -125,7 +125,7 @@ pub fn package(
         .duration_since(UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_nanos();
-    let staging = parent.join(format!(".reinstall-dist-{}-{nonce}", std::process::id()));
+    let staging = parent.join(format!(".rustaller-dist-{}-{nonce}", std::process::id()));
     fs::create_dir(&staging).map_err(|e| e.to_string())?;
     let result = (|| -> std::io::Result<()> {
         fs::set_permissions(&staging, fs::Permissions::from_mode(0o700))?;
@@ -170,7 +170,7 @@ mod tests {
     impl Scratch {
         fn new() -> Self {
             let path = std::env::temp_dir().join(format!(
-                "reinstall-dist-{}-{}",
+                "rustaller-dist-{}-{}",
                 std::process::id(),
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -197,7 +197,7 @@ mod tests {
         bytes[54..56].copy_from_slice(&56u16.to_le_bytes());
         bytes[56..58].copy_from_slice(&1u16.to_le_bytes());
         bytes[64..68].copy_from_slice(&1u32.to_le_bytes());
-        bytes.extend_from_slice(reinstall_rs::RUNTIME_VERSION.as_bytes());
+        bytes.extend_from_slice(rustaller::RUNTIME_VERSION.as_bytes());
         bytes
     }
     fn artifacts(scratch: &Scratch) -> BundleArtifacts {

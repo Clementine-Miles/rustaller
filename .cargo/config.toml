@@ -1,5 +1,5 @@
 [alias]
-xtask = "run --package reinstall-xtask --"
+xtask = "run --package rustaller-xtask --"
 
 [target.x86_64-unknown-linux-musl]
 # Use a fixed-address static executable: static PIE still contains PT_DYNAMIC.

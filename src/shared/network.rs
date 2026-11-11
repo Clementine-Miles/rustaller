@@ -9,8 +9,8 @@ use crate::model::Target;
 use crate::worker::live::ValidatedLivePlan;
 use std::path::Path;
 
-const BEGIN: &str = "# BEGIN rust-aller target network";
-const END: &str = "# END rust-aller target network";
+const BEGIN: &str = "# BEGIN rustaller target network";
+const END: &str = "# END rustaller target network";
 
 /// The future target adapter must enable these native OpenRC boot services.
 #[derive(Debug, Default, Eq, PartialEq)]
@@ -40,8 +40,8 @@ pub fn apply_network_configuration(
     if !sysctl.is_empty() {
         stage(
             root,
-            "etc/sysctl.d/90-rust-aller-network.conf",
-            format!("# rust-aller target-only network policy\n{sysctl}"),
+            "etc/sysctl.d/90-rustaller-network.conf",
+            format!("# rustaller target-only network policy\n{sysctl}"),
             &mut files,
         )?;
     }
@@ -49,7 +49,7 @@ pub fn apply_network_configuration(
         let path = if plan.target == Target::Alpine {
             "etc/modules"
         } else {
-            "etc/modules-load.d/90-rust-aller-network.conf"
+            "etc/modules-load.d/90-rustaller-network.conf"
         };
         let full = root.join(path);
         validate_planned_file(&full)?;

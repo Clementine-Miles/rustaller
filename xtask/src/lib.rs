@@ -137,28 +137,28 @@ mod tests {
         bytes[54..56].copy_from_slice(&56u16.to_le_bytes());
         bytes[56..58].copy_from_slice(&1u16.to_le_bytes());
         bytes[64..68].copy_from_slice(&program_type.to_le_bytes());
-        bytes.extend_from_slice(reinstall_rs::RUNTIME_VERSION.as_bytes());
+        bytes.extend_from_slice(rustaller::RUNTIME_VERSION.as_bytes());
         bytes
     }
 
     #[test]
     fn accepts_static_x86_64_elf_with_matching_runtime_marker() {
-        assert!(verify_x86_64_elf(&fake_elf(1), true, reinstall_rs::RUNTIME_VERSION).is_ok());
+        assert!(verify_x86_64_elf(&fake_elf(1), true, rustaller::RUNTIME_VERSION).is_ok());
     }
 
     #[test]
     fn rejects_dynamic_interpreter_and_wrong_architecture() {
-        assert!(verify_x86_64_elf(&fake_elf(2), true, reinstall_rs::RUNTIME_VERSION).is_err());
-        assert!(verify_x86_64_elf(&fake_elf(3), true, reinstall_rs::RUNTIME_VERSION).is_err());
+        assert!(verify_x86_64_elf(&fake_elf(2), true, rustaller::RUNTIME_VERSION).is_err());
+        assert!(verify_x86_64_elf(&fake_elf(3), true, rustaller::RUNTIME_VERSION).is_err());
         let mut wrong_arch = fake_elf(1);
         wrong_arch[18..20].copy_from_slice(&0x3eu16.wrapping_sub(1).to_le_bytes());
-        assert!(verify_x86_64_elf(&wrong_arch, true, reinstall_rs::RUNTIME_VERSION).is_err());
+        assert!(verify_x86_64_elf(&wrong_arch, true, rustaller::RUNTIME_VERSION).is_err());
     }
 
     #[test]
     fn rejects_truncation_missing_load_segment_and_version_mismatch() {
-        assert!(verify_x86_64_elf(b"\x7fELF", true, reinstall_rs::RUNTIME_VERSION).is_err());
-        assert!(verify_x86_64_elf(&fake_elf(4), true, reinstall_rs::RUNTIME_VERSION).is_err());
+        assert!(verify_x86_64_elf(b"\x7fELF", true, rustaller::RUNTIME_VERSION).is_err());
+        assert!(verify_x86_64_elf(&fake_elf(4), true, rustaller::RUNTIME_VERSION).is_err());
         assert!(verify_x86_64_elf(&fake_elf(1), true, "some-other-version").is_err());
     }
 }

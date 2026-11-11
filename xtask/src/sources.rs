@@ -1,8 +1,8 @@
 //! Read-only online source audit. Metadata is bounded; large payloads use HEAD.
 //! This intentionally does not install keyrings or claim cryptographic trust.
 
-use reinstall_rs::command::{CommandInput, CommandRunner, CommandSpec, OutputMode, SystemRunner};
-use reinstall_rs::host::sources::{self, SourceError};
+use rustaller::command::{CommandInput, CommandRunner, CommandSpec, OutputMode, SystemRunner};
+use rustaller::host::sources::{self, SourceError};
 
 const METADATA_LIMIT: usize = 1_048_576;
 
@@ -152,7 +152,7 @@ fn request<R: CommandRunner>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reinstall_rs::command::{CommandOutput, MockRunner};
+    use rustaller::command::{CommandOutput, MockRunner};
 
     #[test]
     fn audit_transport_keeps_tls_limits_and_never_gets_payloads() {

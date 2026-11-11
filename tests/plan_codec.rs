@@ -1,8 +1,8 @@
-use reinstall_rs::codec::{PlanCodecError, decode_plan, encode_plan};
-use reinstall_rs::model::{
+use rustaller::codec::{PlanCodecError, decode_plan, encode_plan};
+use rustaller::model::{
     BootMode, CURRENT_SCHEMA_VERSION, InstallPlan, IsoOptions, PlanError, SecretString, Target,
 };
-use reinstall_rs::postinstall::KernelChoice;
+use rustaller::postinstall::KernelChoice;
 
 #[test]
 fn plan_round_trip_preserves_all_modes_and_private_fields() {

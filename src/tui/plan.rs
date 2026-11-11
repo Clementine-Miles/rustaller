@@ -3,12 +3,12 @@ use super::state::{
     Authentication, CHOICES, IsoMode, Page, Wizard, boot_label, hold_label, iso_label,
     optional_label, valid_public_key_source, valid_username, yes_no,
 };
-use reinstall_rs::config::NetworkConfig;
-use reinstall_rs::config::{DnsConfig, DnsMode, InstallProfile};
-use reinstall_rs::host::args::{CliError, CliOutcome, parse_args};
-use reinstall_rs::host::current::CurrentConfig;
-use reinstall_rs::host::ssh_keygen::{self, KeyType, KeygenOptions};
-use reinstall_rs::model::{InstallPlan, SecretString};
+use rustaller::config::NetworkConfig;
+use rustaller::config::{DnsConfig, DnsMode, InstallProfile};
+use rustaller::host::args::{CliError, CliOutcome, parse_args};
+use rustaller::host::current::CurrentConfig;
+use rustaller::host::ssh_keygen::{self, KeyType, KeygenOptions};
+use rustaller::model::{InstallPlan, SecretString};
 
 impl Wizard {
     pub fn build_plan(&self) -> Result<Box<InstallPlan>, String> {
@@ -149,7 +149,7 @@ impl Wizard {
         }
         plan.validate().map_err(|error| error.to_string())?;
         if let Some(iso) = plan.iso.as_ref() {
-            reinstall_rs::host::iso::validate_iso_options(iso).map_err(|_| {
+            rustaller::host::iso::validate_iso_options(iso).map_err(|_| {
                 "Invalid ISO path/boot configuration; check absolute paths and arguments".to_owned()
             })?;
         }

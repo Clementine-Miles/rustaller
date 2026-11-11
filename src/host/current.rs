@@ -24,8 +24,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const LIMIT: usize = 1024 * 1024;
-const BEGIN: &str = "# BEGIN rust-aller current system";
-const END: &str = "# END rust-aller current system";
+const BEGIN: &str = "# BEGIN rustaller current system";
+const END: &str = "# END rustaller current system";
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Default, Eq, PartialEq)]
@@ -323,7 +323,7 @@ fn apply_checked<R: CommandRunner>(
         }
     }
     let backup_rel = PathBuf::from(format!(
-        "var/backups/rust-aller-current/{}-{}-{}",
+        "var/backups/rustaller-current/{}-{}-{}",
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -334,7 +334,7 @@ fn apply_checked<R: CommandRunner>(
     directory.mkdir_exclusive(&backup_rel, 0o700)?;
     let backup_dir = root.join(&backup_rel);
     let mut manifest = String::from(
-        "# rust-aller current-system backup; regular files stored with private permissions\n",
+        "# rustaller current-system backup; regular files stored with private permissions\n",
     );
     for file in &files {
         let backup = backup_rel.join(&file.relative);
@@ -485,8 +485,8 @@ fn prepare_network(
     if !sysctl.is_empty() {
         stage(
             directory,
-            "etc/sysctl.d/90-rust-aller-current-network.conf",
-            format!("# rust-aller current-system network policy\n{sysctl}").into_bytes(),
+            "etc/sysctl.d/90-rustaller-current-network.conf",
+            format!("# rustaller current-system network policy\n{sysctl}").into_bytes(),
             None,
             false,
             files,
@@ -496,7 +496,7 @@ fn prepare_network(
         let name = if facts.target == Target::Alpine {
             "etc/modules"
         } else {
-            "etc/modules-load.d/90-rust-aller-current-network.conf"
+            "etc/modules-load.d/90-rustaller-current-network.conf"
         };
         let body = format!("{}\n", modules.join("\n"));
         stage(
@@ -548,8 +548,8 @@ fn prepare_network(
                 let value = replace_managed_block(
                     &existing,
                     body,
-                    "# BEGIN rust-aller current DNS",
-                    "# END rust-aller current DNS",
+                    "# BEGIN rustaller current DNS",
+                    "# END rustaller current DNS",
                     true,
                 )
                 .map_err(|e| CurrentError::InvalidConfiguration(e.to_string()))?;
@@ -565,8 +565,8 @@ fn prepare_network(
                 let value = replace_managed_block(
                     &text_for(directory, path, files)?,
                     &body,
-                    "# BEGIN rust-aller current DNS",
-                    "# END rust-aller current DNS",
+                    "# BEGIN rustaller current DNS",
+                    "# END rustaller current DNS",
                     false,
                 )
                 .map_err(|e| CurrentError::InvalidConfiguration(e.to_string()))?;
@@ -622,8 +622,8 @@ fn prepare_ssh<R: CommandRunner>(
         let clean = replace_managed_block(
             &original,
             "",
-            "# BEGIN rust-aller SSH",
-            "# END rust-aller SSH",
+            "# BEGIN rustaller SSH",
+            "# END rustaller SSH",
             false,
         )
         .map_err(|_| CurrentError::SshValidationFailed)?;
@@ -643,8 +643,8 @@ fn prepare_ssh<R: CommandRunner>(
         let text = replace_managed_block(
             &lines,
             &format!("Port {port}\n"),
-            "# BEGIN rust-aller SSH",
-            "# END rust-aller SSH",
+            "# BEGIN rustaller SSH",
+            "# END rustaller SSH",
             true,
         )
         .map_err(|_| CurrentError::SshValidationFailed)?;
@@ -894,7 +894,7 @@ struct PrivateDirectory(PathBuf);
 impl PrivateDirectory {
     fn new() -> Result<Self, CurrentError> {
         let path = std::env::temp_dir().join(format!(
-            "rust-aller-current-{}-{}",
+            "rustaller-current-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -1049,7 +1049,7 @@ impl RootDirectory {
     ) -> Result<(), CurrentError> {
         let (parent, name) = self.parent(path, true, owner)?;
         let temporary = cstring(OsStr::new(&format!(
-            ".rust-aller-current-{}-{}",
+            ".rustaller-current-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         )))?;
@@ -1104,7 +1104,7 @@ impl RootDirectory {
     fn networkd_paths(&self) -> Result<Vec<PathBuf>, CurrentError> {
         // Holding the directory descriptor prevents replacement by a symlink
         // between listing and subsequent descriptor-based file inspection.
-        let path = Path::new("etc/systemd/network/.rust-aller-check");
+        let path = Path::new("etc/systemd/network/.rustaller-check");
         let (parent, _) = self
             .parent(path, false, None)
             .map_err(|_| CurrentError::UnsupportedNetworkManager)?;
@@ -1142,12 +1142,12 @@ impl RootDirectory {
         let relative = home
             .strip_prefix("/")
             .map_err(|_| CurrentError::InvalidAccount)?;
-        let (directory, _) = self.parent(&relative.join(".rust-aller-check"), false, None)?;
+        let (directory, _) = self.parent(&relative.join(".rustaller-check"), false, None)?;
         let metadata = directory.metadata()?;
         if metadata.uid() != uid || metadata.mode() & 0o022 != 0 {
             return Err(CurrentError::InvalidAccount);
         }
-        let ssh = relative.join(".ssh/.rust-aller-check");
+        let ssh = relative.join(".ssh/.rustaller-check");
         match self.parent(&ssh, false, None) {
             Ok((directory, _)) => {
                 let metadata = directory.metadata()?;

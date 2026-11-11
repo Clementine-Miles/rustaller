@@ -2,7 +2,7 @@ use crate::config::{DnsMode, InstallProfile};
 use crate::model::{BootMode, InstallPlan, IsoOptions, PlanError, Target};
 use std::fmt;
 
-pub const HELP: &str = r#"Usage: reinstall [OPTIONS] TARGET
+pub const HELP: &str = r#"Usage: rustaller [OPTIONS] TARGET
 
 Targets:
   alpine       Latest stable Alpine Linux
@@ -11,7 +11,7 @@ Targets:
   gentoo       Gentoo Linux
   netboot.xyz  Start the netboot.xyz installer
   iso          Boot a local Linux ISO without formatting disks
-  reset        Remove the previously installed reinstall boot entry
+  reset        Remove the previously installed rustaller boot entry
 
 Options:
   --username USERNAME           Target account name

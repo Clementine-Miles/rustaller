@@ -1,4 +1,4 @@
-use reinstall_xtask::{bundle, check, dist, sources, vm};
+use rustaller_xtask::{bundle, check, dist, sources, vm};
 use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;

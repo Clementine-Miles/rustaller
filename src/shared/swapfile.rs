@@ -91,7 +91,7 @@ pub fn prepare_swapfile<R: CommandRunner>(
     {
         return Err(SwapfileError::ExistingSwapfile);
     }
-    let swappiness = root.join("etc/sysctl.d/90-rust-aller-swap.conf");
+    let swappiness = root.join("etc/sysctl.d/90-rustaller-swap.conf");
     if plan.system.swap.swappiness.is_some() {
         validate_planned_file(&swappiness)?;
     }
@@ -141,7 +141,7 @@ pub fn prepare_swapfile<R: CommandRunner>(
         return Err(SwapfileError::InsufficientSpace);
     }
     let temporary = root.join(format!(
-        ".rust-aller-swap-{}-{}",
+        ".rustaller-swap-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
@@ -194,7 +194,7 @@ pub fn prepare_swapfile<R: CommandRunner>(
         if let Some(value) = plan.system.swap.swappiness {
             super::dns::publish_files(vec![super::dns::ConfigFile {
                 path: swappiness,
-                contents: format!("# rust-aller target swap\nvm.swappiness = {value}\n")
+                contents: format!("# rustaller target swap\nvm.swappiness = {value}\n")
                     .into_bytes(),
             }])?;
         }

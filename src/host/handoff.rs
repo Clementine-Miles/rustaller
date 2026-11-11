@@ -693,8 +693,8 @@ fn prepare_with_transport<R: CommandRunner>(
     })
 }
 
-const LIVE_SERVICE: &str = "#!/sbin/openrc-run\nname=\"rustaller Live installer\"\ndescription=\"Install the identity-bound target from the private Rust plan\"\ncommand=/reinstall-worker\ncommand_args=\"live-install /configs/install.plan /configs/deployment.manifest\"\ncommand_background=yes\npidfile=/run/rustaller-installer.pid\noutput_log=/var/log/rustaller.log\nerror_log=/var/log/rustaller.log\ndepend() {\n    need modloop\n}\n";
-const LIVE_MODULE_SERVICE: &str = "#!/sbin/openrc-run\nname=\"verified rustaller Live modules\"\ndepend() {\n    before hwdrivers modules\n}\nstart() {\n    /reinstall-worker live-modules\n}\n";
+const LIVE_SERVICE: &str = "#!/sbin/openrc-run\nname=\"rustaller Live installer\"\ndescription=\"Install the identity-bound target from the private Rust plan\"\ncommand=/rustaller-worker\ncommand_args=\"live-install /configs/install.plan /configs/deployment.manifest\"\ncommand_background=yes\npidfile=/run/rustaller-installer.pid\noutput_log=/var/log/rustaller.log\nerror_log=/var/log/rustaller.log\ndepend() {\n    need modloop\n}\n";
+const LIVE_MODULE_SERVICE: &str = "#!/sbin/openrc-run\nname=\"verified rustaller Live modules\"\ndepend() {\n    before hwdrivers modules\n}\nstart() {\n    /rustaller-worker live-modules\n}\n";
 
 fn live_package_world(plan: &InstallPlan) -> String {
     // Alpine 3.24 util-linux is an empty compatibility metapackage. The Live

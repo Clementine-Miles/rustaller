@@ -1,4 +1,4 @@
-# 个人 VPS 重装工具（Linux-only 裁剪版）
+# rustaller — 个人 VPS 重装工具（Linux-only）
 
 基于 [bin456789/reinstall](https://github.com/bin456789/reinstall)，上游基准提交：
 `98f1e21013233d42750cc2e7a298a0818461d686`。保留原项目 GPLv3 许可。
@@ -25,12 +25,12 @@ Rust/musl 版本提供可选的轻量 ratatui 多级配置界面。**主机准�
 
 ```console
 cargo xtask bundle
-./target/x86_64-unknown-linux-musl/release/reinstall
+./target/x86_64-unknown-linux-musl/release/rustaller
 ```
 
 无参数且连接交互终端时进入英文 TUI，首页显示居中的 ASCII RUSTALLER 标题。GitHub 固定版本下载命令见 [发布指南](docs/GITHUB-RELEASE.md)；目标 VPS 不需要 Rust 工具链。
 
-CLI 可先执行 `./reinstall debian --inspect` 查看目标磁盘、固件模式和确认令牌；它不执行安装或 kexec。实际安装必须提供 SSH 公钥或密码，并在原生终端完整输入磁盘身份确认令牌；非交互执行需要显式 `--confirm-erase`。Rust 内嵌匹配 worker 和日志页面，默认使用官方签名资源，不要求自建 `confhome`。
+CLI 可先执行 `./rustaller debian --inspect` 查看目标磁盘、固件模式和确认令牌；它不执行安装或 kexec。实际安装必须提供 SSH 公钥或密码，并在原生终端完整输入磁盘身份确认令牌；非交互执行需要显式 `--confirm-erase`。Rust 内嵌匹配 worker 和日志页面，默认使用官方签名资源，不要求自建 `confhome`。
 
 原系统的实际 kexec 适配器目前支持 systemd 或 openrc-init 作为 PID 1；不支持时停止，不自动退回两次重启流程。Alpine Live 救援使用 `hold=1`，不自动分区。Rust 的本地 ISO、netboot.xyz 和 reset 菜单/校验组件保留，实际交接尚未连接；以下 Shell 基线仍提供这些接口。
 

@@ -1,12 +1,10 @@
-use reinstall_rs::command::{
-    CommandOutput, CommandRunner, CommandSpec, MockRunner, PipelineOutput,
-};
-use reinstall_rs::config::{CongestionControl, Ipv6Policy, NetworkConfig, QueueDiscipline};
-use reinstall_rs::config::{DnsConfig, DnsMode};
-use reinstall_rs::host::current::{
+use rustaller::command::{CommandOutput, CommandRunner, CommandSpec, MockRunner, PipelineOutput};
+use rustaller::config::{CongestionControl, Ipv6Policy, NetworkConfig, QueueDiscipline};
+use rustaller::config::{DnsConfig, DnsMode};
+use rustaller::host::current::{
     CurrentConfig, CurrentError, CurrentFacts, apply_current_at, detect_target_at,
 };
-use reinstall_rs::model::Target;
+use rustaller::model::Target;
 use std::fs;
 use std::io;
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
@@ -56,7 +54,7 @@ impl Scratch {
         .unwrap();
     }
     fn backups_absent(&self) -> bool {
-        !self.0.join("var/backups/rust-aller-current").exists()
+        !self.0.join("var/backups/rustaller-current").exists()
     }
 }
 impl Drop for Scratch {
@@ -201,7 +199,7 @@ fn hostname_timezone_backups_preserve_original_owner_mode_and_links_and_apply_id
     assert!(second.changed_files.is_empty());
     assert!(second.backup_dir.is_none());
     assert_eq!(
-        fs::read_dir(root.0.join("var/backups/rust-aller-current"))
+        fs::read_dir(root.0.join("var/backups/rustaller-current"))
             .unwrap()
             .count(),
         1
@@ -252,7 +250,7 @@ fn dns_and_mtu_edits_compose_without_changing_host_resolver_or_running_services(
     assert!(network.contains("MTUBytes=1450"));
     assert!(network.contains("UseDNS=no"));
     assert!(
-        root.read("etc/modules-load.d/90-rust-aller-current-network.conf")
+        root.read("etc/modules-load.d/90-rustaller-current-network.conf")
             .contains("tcp_bbr")
     );
     let repeated = apply_current_at(&mut runner, &root.0, &config, &selected).unwrap();
@@ -376,7 +374,7 @@ fn ssh_port_and_existing_account_keys_are_validated_then_backed_up_and_persisted
             .contains("Port 22")
     );
     let sshd = root.read("etc/ssh/sshd_config");
-    assert!(sshd.starts_with("# BEGIN rust-aller SSH\nPort 2222\n"));
+    assert!(sshd.starts_with("# BEGIN rustaller SSH\nPort 2222\n"));
     assert!(!sshd.contains("Port 22\n"));
     assert!(sshd.contains("Match User backup"));
     let keys = root.read("home/alice/.ssh/authorized_keys");
@@ -517,9 +515,9 @@ fn concurrent_external_edit_is_detected_before_backups_or_configuration_publicat
 fn backup_directory_must_not_be_writable_by_other_users() {
     let root = Scratch::new();
     root.write("etc/hostname", "old\n");
-    fs::create_dir_all(root.0.join("var/backups/rust-aller-current")).unwrap();
+    fs::create_dir_all(root.0.join("var/backups/rustaller-current")).unwrap();
     fs::set_permissions(
-        root.0.join("var/backups/rust-aller-current"),
+        root.0.join("var/backups/rustaller-current"),
         fs::Permissions::from_mode(0o777),
     )
     .unwrap();
@@ -534,7 +532,7 @@ fn backup_directory_must_not_be_writable_by_other_users() {
     ));
     assert_eq!(root.read("etc/hostname"), "old\n");
     assert_eq!(
-        fs::read_dir(root.0.join("var/backups/rust-aller-current"))
+        fs::read_dir(root.0.join("var/backups/rustaller-current"))
             .unwrap()
             .count(),
         0

@@ -1,8 +1,8 @@
-use reinstall_rs::command::{CommandOutput, CommandSpec, MockRunner};
-use reinstall_rs::model::{BootMode, InstallPlan, Target};
-use reinstall_rs::shared::storage::mount_target;
-use reinstall_rs::shared::storage::{DiskLayout, PartitionEnvironment, create_partitions};
-use reinstall_rs::worker::live::validate_live_plan_with_uid;
+use rustaller::command::{CommandOutput, CommandSpec, MockRunner};
+use rustaller::model::{BootMode, InstallPlan, Target};
+use rustaller::shared::storage::mount_target;
+use rustaller::shared::storage::{DiskLayout, PartitionEnvironment, create_partitions};
+use rustaller::worker::live::validate_live_plan_with_uid;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -16,7 +16,7 @@ impl Scratch {
             .unwrap()
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "reinstall-storage-trace-{}-{nonce}",
+            "rustaller-storage-trace-{}-{nonce}",
             std::process::id()
         ));
         fs::create_dir(&path).unwrap();
@@ -54,7 +54,7 @@ fn trace_record(spec: &CommandSpec, target: Target) -> String {
         .map(|(key, value)| format!("{:?}:{:?}", key.to_str().unwrap(), value.to_str().unwrap()))
         .collect::<Vec<_>>()
         .join(",");
-    assert_eq!(spec.stdin, reinstall_rs::command::CommandInput::Null);
+    assert_eq!(spec.stdin, rustaller::command::CommandInput::Null);
     format!(
         "{{\"phase\":\"live-storage\",\"target\":\"{target}\",\"program\":{:?},\"argv\":[{args}],\"cwd\":{:?},\"env_delta\":{{{env}}},\"stdin_fixture\":\"\",\"expected_status\":0}}\n",
         spec.program.to_str().unwrap(),
@@ -119,7 +119,7 @@ fn all_targets_partition_mount_and_refresh_match_two_isolated_shell_runs() {
             let mut plan = InstallPlan::new(target);
             plan.confhome = Some("https://assets.example/reinstall".into());
             let plan =
-                validate_live_plan_with_uid(plan, "x86_64", 4096, reinstall_rs::RUNTIME_VERSION, 0)
+                validate_live_plan_with_uid(plan, "x86_64", 4096, rustaller::RUNTIME_VERSION, 0)
                     .unwrap();
             let layout = DiskLayout::new(
                 &plan,

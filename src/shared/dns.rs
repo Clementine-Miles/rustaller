@@ -12,8 +12,8 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 const MAX_CONFIG_SIZE: u64 = 1024 * 1024;
-const BEGIN: &str = "# BEGIN rust-aller target DNS";
-const END: &str = "# END rust-aller target DNS";
+const BEGIN: &str = "# BEGIN rustaller target DNS";
+const END: &str = "# END rustaller target DNS";
 
 pub(crate) struct ConfigFile {
     pub path: PathBuf,

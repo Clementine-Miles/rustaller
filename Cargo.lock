@@ -370,7 +370,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "reinstall-rs"
+name = "rustaller"
 version = "0.1.0"
 dependencies = [
  "crossterm",
@@ -379,10 +379,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "reinstall-xtask"
+name = "rustaller-xtask"
 version = "0.1.0"
 dependencies = [
- "reinstall-rs",
+ "rustaller",
  "sha2",
 ]
 

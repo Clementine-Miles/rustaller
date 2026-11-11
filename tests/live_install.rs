@@ -1,15 +1,15 @@
-use reinstall_rs::deployment::{
+use rustaller::deployment::{
     DeploymentManifest, DiskIdentity, NetworkInterface, decode_manifest, encode_manifest,
 };
-use reinstall_rs::host::sources::{GENTOO_ARCHIVE, GentooStage3};
-use reinstall_rs::model::{BootMode, InstallPlan, Target};
-use reinstall_rs::targets::install::{
+use rustaller::host::sources::{GENTOO_ARCHIVE, GentooStage3};
+use rustaller::model::{BootMode, InstallPlan, Target};
+use rustaller::targets::install::{
     gentoo_sha512, valid_gentoo_signature, validate_install_options, write_network,
 };
-use reinstall_rs::worker::install::{
+use rustaller::worker::install::{
     parse_unmounted_descendants, reject_target_swaps, same_physical_disk, validate_live_root,
 };
-use reinstall_rs::worker::live::validate_live_plan_with_uid;
+use rustaller::worker::live::validate_live_plan_with_uid;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -166,7 +166,7 @@ fn all_four_targets_validate_before_mutation_and_reject_unresolved_public_key_so
             plan(target),
             "x86_64",
             4096,
-            reinstall_rs::RUNTIME_VERSION,
+            rustaller::RUNTIME_VERSION,
             0,
         )
         .unwrap();
@@ -175,7 +175,7 @@ fn all_four_targets_validate_before_mutation_and_reject_unresolved_public_key_so
     let mut invalid = plan(Target::Debian);
     invalid.ssh_keys = vec!["/root/client.pub".into()];
     let selected =
-        validate_live_plan_with_uid(invalid, "x86_64", 4096, reinstall_rs::RUNTIME_VERSION, 0)
+        validate_live_plan_with_uid(invalid, "x86_64", 4096, rustaller::RUNTIME_VERSION, 0)
             .unwrap();
     assert!(validate_install_options(&selected, &manifest()).is_err());
     let mut invalid = plan(Target::Alpine);
@@ -193,7 +193,7 @@ fn alpine_dual_stack_static_configuration_survives_mac_based_interface_rename() 
     assert!(text.contains("iface ens3 inet static"));
     assert!(text.contains("iface ens3 inet6 static"));
     assert!(text.contains("via fe80::1 onlink dev ens3"));
-    let rewritten = reinstall_rs::worker::firstboot::rewrite_ifupdown(&text, |mac| {
+    let rewritten = rustaller::worker::firstboot::rewrite_ifupdown(&text, |mac| {
         assert_eq!(mac, "52:54:00:11:22:33");
         Some("eth0".into())
     });

@@ -115,7 +115,7 @@ impl DnsConfig {
         if self.mode == DnsMode::Auto {
             return Ok(None);
         }
-        let mut text = "# Managed by rust-aller: explicit target DNS\n".to_owned();
+        let mut text = "# Managed by rustaller: explicit target DNS\n".to_owned();
         if !self.search_domains.is_empty() {
             text.push_str(&format!("search {}\n", self.search_domains.join(" ")));
         }

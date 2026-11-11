@@ -71,7 +71,7 @@ impl fmt::Display for BootError {
 impl std::error::Error for BootError {}
 
 pub fn entry_name(distro: &str, release: &str, hold: Option<u8>) -> String {
-    let mut name = format!("reinstall ({distro}");
+    let mut name = format!("rustaller ({distro}");
     if !release.is_empty() {
         name.push(' ');
         name.push_str(release);

@@ -147,7 +147,7 @@ pub fn install_firstboot_service<R: CommandRunner>(
     {
         return Err(FirstbootError::WorkerVersionMismatch);
     }
-    let worker = root.join("usr/local/bin/reinstall-worker");
+    let worker = root.join("usr/local/bin/rustaller-worker");
     fs::create_dir_all(worker.parent().expect("worker path has parent"))
         .map_err(FirstbootError::Filesystem)?;
     atomic_replace(&worker, worker_elf).map_err(FirstbootError::Filesystem)?;
@@ -262,7 +262,7 @@ pub fn cleanup_firstboot<R: CommandRunner>(
             remove_if_exists(&root.join(path)).map_err(FirstbootError::Filesystem)?;
         }
     }
-    remove_if_exists(&root.join("usr/local/bin/reinstall-worker"))
+    remove_if_exists(&root.join("usr/local/bin/rustaller-worker"))
         .map_err(FirstbootError::Filesystem)
 }
 
@@ -512,6 +512,6 @@ fn remove_if_exists(path: &Path) -> io::Result<()> {
     }
 }
 
-const SYSTEMD_FIRSTBOOT_SERVICE: &str = "[Unit]\nDescription=Fix Eth Name\nConditionPathExists=/usr/local/bin/reinstall-worker\n\nAfter=dbus.service\n\nBefore=networking.service\nBefore=systemd-networkd.service\n\nBefore=network.target\n\n[Service]\nType=oneshot\n\nStandardOutput=journal+console\nStandardError=journal+console\n\nExecStart=/usr/local/bin/reinstall-worker firstboot-fix\nExecStartPost=/usr/local/bin/reinstall-worker cleanup-systemd\n\n[Install]\nWantedBy=multi-user.target\n";
+const SYSTEMD_FIRSTBOOT_SERVICE: &str = "[Unit]\nDescription=Fix Eth Name\nConditionPathExists=/usr/local/bin/rustaller-worker\n\nAfter=dbus.service\n\nBefore=networking.service\nBefore=systemd-networkd.service\n\nBefore=network.target\n\n[Service]\nType=oneshot\n\nStandardOutput=journal+console\nStandardError=journal+console\n\nExecStart=/usr/local/bin/rustaller-worker firstboot-fix\nExecStartPost=/usr/local/bin/rustaller-worker cleanup-systemd\n\n[Install]\nWantedBy=multi-user.target\n";
 
-const OPENRC_FIRSTBOOT_SERVICE: &str = "#!/sbin/openrc-run\n# shellcheck shell=sh\n\n# shellcheck disable=SC2034 # OpenRC reads this variable.\nDescription=\"Fix Eth Name\"\n\n# https://gitlab.alpinelinux.org/alpine/aports/-/blob/master/main/openrc/networking.initd\n# https://gitlab.alpinelinux.org/alpine/aports/-/blob/master/main/dhcpcd/dhcpcd.initd\ndepend() {\n    need localmount\n    want dev-settle\n\n    after bootmisc hwdrivers modules\n    before net networking dhcpcd\n}\n\nstart() {\n    ebegin \"Fix Eth Name\"\n    /usr/local/bin/reinstall-worker firstboot-fix\n    eend $?\n}\n\nstart_post() {\n    /usr/local/bin/reinstall-worker cleanup-openrc\n}\n";
+const OPENRC_FIRSTBOOT_SERVICE: &str = "#!/sbin/openrc-run\n# shellcheck shell=sh\n\n# shellcheck disable=SC2034 # OpenRC reads this variable.\nDescription=\"Fix Eth Name\"\n\n# https://gitlab.alpinelinux.org/alpine/aports/-/blob/master/main/openrc/networking.initd\n# https://gitlab.alpinelinux.org/alpine/aports/-/blob/master/main/dhcpcd/dhcpcd.initd\ndepend() {\n    need localmount\n    want dev-settle\n\n    after bootmisc hwdrivers modules\n    before net networking dhcpcd\n}\n\nstart() {\n    ebegin \"Fix Eth Name\"\n    /usr/local/bin/rustaller-worker firstboot-fix\n    eend $?\n}\n\nstart_post() {\n    /usr/local/bin/rustaller-worker cleanup-openrc\n}\n";

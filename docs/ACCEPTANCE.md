@@ -148,7 +148,7 @@ cargo xtask vm-acceptance install \
   --base /absolute/path/to/source-prepared.qcow2 --sha512 PREPARED_SOURCE_SHA512 \
   --key /absolute/path/to/test-private-key \
   --public-key /absolute/path/to/test-public-key.pub \
-  --installer /absolute/path/to/reinstall-x86_64-linux-musl \
+  --installer /absolute/path/to/rustaller-x86_64-linux-musl \
   --target all --firmware both --timeout 3600 \
   --output /absolute/path/to/new-install-results
 ```

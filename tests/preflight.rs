@@ -1,10 +1,10 @@
-use reinstall_rs::command::{CommandOutput, MockRunner};
-use reinstall_rs::host::preflight::{
+use rustaller::command::{CommandOutput, MockRunner};
+use rustaller::host::preflight::{
     HostFacts, PreflightError, detect_ram_mb, effective_uid, parse_dmidecode_memory,
     parse_lshw_memory, parse_lsmem_memory, parse_memtotal_fallback, root_mount_is_tmpfs,
     validate_host,
 };
-use reinstall_rs::model::Target;
+use rustaller::model::Target;
 
 #[test]
 fn host_preflight_checks_architecture_root_container_and_ram() {

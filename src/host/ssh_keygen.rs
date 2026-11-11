@@ -137,7 +137,7 @@ pub fn generate<R: CommandRunner>(
         return Err(KeygenError::UnsafePath);
     }
     let directory = parent.join(format!(
-        ".rust-aller-keygen-{}-{}",
+        ".rustaller-keygen-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
@@ -217,5 +217,5 @@ pub fn date_comment() -> String {
         .and_then(|out| String::from_utf8(out.stdout).ok())
         .map(|text| text.trim().to_owned())
         .filter(|text| text.len() == 8 && text.bytes().all(|b| b.is_ascii_digit()))
-        .unwrap_or_else(|| "rust-aller".into())
+        .unwrap_or_else(|| "rustaller".into())
 }

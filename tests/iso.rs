@@ -1,8 +1,8 @@
-use reinstall_rs::command::{CommandOutput, MockRunner};
-use reinstall_rs::host::iso::{
+use rustaller::command::{CommandOutput, MockRunner};
+use rustaller::host::iso::{
     IsoError, canonicalize_iso_source, prepare_local_iso, render_grub_entry, validate_iso_options,
 };
-use reinstall_rs::model::IsoOptions;
+use rustaller::model::IsoOptions;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,7 +16,7 @@ impl Scratch {
             .unwrap()
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "reinstall-iso-{label}-{}-{nonce}",
+            "rustaller-iso-{label}-{}-{nonce}",
             std::process::id()
         ));
         fs::create_dir(&path).unwrap();
@@ -31,7 +31,7 @@ impl Drop for Scratch {
 }
 
 fn test_mount_dir(scratch: &Scratch) -> (PathBuf, PathBuf) {
-    let managed = scratch.0.join("reinstall-tmp");
+    let managed = scratch.0.join("rustaller-tmp");
     let check = managed.join("iso-check");
     fs::create_dir_all(&check).unwrap();
     (managed, check)
@@ -112,14 +112,14 @@ fn canonical_iso_source_must_be_readable_nonempty_and_outside_managed_paths() {
     let scratch = Scratch::new("source");
     let image = scratch.0.join("live.iso");
     fs::write(&image, b"not really an ISO, but a nonempty local source").unwrap();
-    let resolved = canonicalize_iso_source(&image, &scratch.0.join("reinstall-tmp")).unwrap();
+    let resolved = canonicalize_iso_source(&image, &scratch.0.join("rustaller-tmp")).unwrap();
     assert_eq!(resolved, fs::canonicalize(image).unwrap());
 
     let empty = scratch.0.join("empty.iso");
     fs::write(&empty, []).unwrap();
-    assert!(canonicalize_iso_source(&empty, &scratch.0.join("reinstall-tmp")).is_err());
+    assert!(canonicalize_iso_source(&empty, &scratch.0.join("rustaller-tmp")).is_err());
 
-    let managed = scratch.0.join("reinstall-tmp");
+    let managed = scratch.0.join("rustaller-tmp");
     fs::create_dir(&managed).unwrap();
     let protected = managed.join("live.iso");
     fs::write(&protected, b"iso").unwrap();
@@ -220,8 +220,8 @@ fn read_only_preflight_rejects_encryption_and_windows_media_without_skipping_unm
         prepare_local_iso(
             &mut encrypted_runner,
             &options(&encrypted_image.to_string_lossy()),
-            &encrypted.0.join("reinstall-tmp"),
-            &encrypted.0.join("reinstall-tmp/iso-check"),
+            &encrypted.0.join("rustaller-tmp"),
+            &encrypted.0.join("rustaller-tmp/iso-check"),
         ),
         Err(IsoError::EncryptedStorage)
     ));

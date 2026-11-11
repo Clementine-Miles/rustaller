@@ -1,5 +1,5 @@
-use reinstall_rs::model::{InstallPlan, Target};
-use reinstall_rs::postinstall::{KernelChoice, PostInstallConfig, PostInstallError};
+use rustaller::model::{InstallPlan, Target};
+use rustaller::postinstall::{KernelChoice, PostInstallConfig, PostInstallError};
 
 #[test]
 fn official_kernel_matrix_preserves_defaults_and_rejects_cross_distribution_choices() {

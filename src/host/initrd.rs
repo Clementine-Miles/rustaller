@@ -218,7 +218,7 @@ pub fn install_worker_and_plan(
     ensure_real_directory(initrd_root, false)?;
     let configs_dir = initrd_root.join("configs");
     ensure_real_directory(&configs_dir, true)?;
-    let worker_path = initrd_root.join("reinstall-worker");
+    let worker_path = initrd_root.join("rustaller-worker");
     let plan_path = configs_dir.join("install.plan");
     write_worker(&worker_path, worker_elf)?;
     let mut plan_file = match PrivatePlanFile::create(&plan_path, plan) {
@@ -319,7 +319,7 @@ fn render_network_hook(configs: &[InitrdNetworkConfig]) -> String {
         "        {START_MARKER}\n        depmod\n        [ -d /sys/module/ipv6 ] || modprobe ipv6\n"
     );
     for config in configs {
-        hook.push_str("        /reinstall-worker initrd-network");
+        hook.push_str("        /rustaller-worker initrd-network");
         for argument in [
             config.mac_addr(),
             config.ipv4_addr(),

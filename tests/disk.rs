@@ -1,5 +1,5 @@
-use reinstall_rs::command::{CommandOutput, MockRunner};
-use reinstall_rs::host::disk::{
+use rustaller::command::{CommandOutput, MockRunner};
+use rustaller::host::disk::{
     DiskError, discover_root_disks, parse_partition_table_id, parse_root_device,
     parse_root_disk_names, read_partition_table_id, select_root_disk, validate_target_disk_path,
 };
@@ -59,7 +59,7 @@ fn target_disk_paths_must_resolve_to_block_devices_under_dev() {
         .unwrap()
         .as_nanos();
     let regular_file = std::env::temp_dir().join(format!(
-        "reinstall-disk-test-{}-{nonce}",
+        "rustaller-disk-test-{}-{nonce}",
         std::process::id()
     ));
     fs::write(&regular_file, b"not a disk").unwrap();

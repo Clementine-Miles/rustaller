@@ -1,19 +1,19 @@
-use reinstall_rs::host::boot::{
+use rustaller::host::boot::{
     BootError, BootExtra, GrubBootEntry, build_cmdline, build_extra_cmdline, build_finalos_cmdline,
     build_nextos_cmdline, entry_name, render_grub_config,
 };
-use reinstall_rs::model::{BootMode, InstallPlan, Target};
+use rustaller::model::{BootMode, InstallPlan, Target};
 use std::collections::BTreeMap;
 
 #[test]
 fn grub_entry_names_and_alpine_live_cmdline_preserve_legacy_fields() {
     assert_eq!(
         entry_name("alpine", "3.22.1", Some(1)),
-        "reinstall (alpine 3.22.1 Live OS)"
+        "rustaller (alpine 3.22.1 Live OS)"
     );
     assert_eq!(
         entry_name("debian", "stable", None),
-        "reinstall (debian stable)"
+        "rustaller (debian stable)"
     );
     assert_eq!(
         build_nextos_cmdline(
@@ -76,9 +76,9 @@ fn finalos_and_extra_cmdline_keep_order_quoting_and_mirrorlist_handling() {
 #[test]
 fn grub_config_renders_a_validated_bios_entry_and_shared_grubenv_helper() {
     let entry = GrubBootEntry {
-        name: "reinstall (debian stable)".into(),
-        kernel_path: "/reinstall-vmlinuz".into(),
-        initrd_path: Some("/reinstall-initrd".into()),
+        name: "rustaller (debian stable)".into(),
+        kernel_path: "/rustaller-vmlinuz".into(),
+        initrd_path: Some("/rustaller-initrd".into()),
         linux_command: "linux".into(),
         initrd_command: "initrd".into(),
         cmdline: "alpine_repo=https://mirror.example/alpine modloop=/boot/modloop-lts console=tty0"
@@ -108,13 +108,13 @@ fn grub_config_renders_a_validated_bios_entry_and_shared_grubenv_helper() {
             "fi\n",
             "set timeout_style=menu\n",
             "set timeout=5\n",
-            "menuentry \"reinstall (debian stable)\" --unrestricted {\n",
+            "menuentry \"rustaller (debian stable)\" --unrestricted {\n",
             "    insmod lvm\n",
             "    set btrfs_relative_path=n\n",
             "    insmod all_video\n",
-            "    search --no-floppy --file --set=root /reinstall-vmlinuz\n",
-            "    linux /reinstall-vmlinuz alpine_repo=https://mirror.example/alpine modloop=/boot/modloop-lts console=tty0\n",
-            "    initrd /reinstall-initrd\n",
+            "    search --no-floppy --file --set=root /rustaller-vmlinuz\n",
+            "    linux /rustaller-vmlinuz alpine_repo=https://mirror.example/alpine modloop=/boot/modloop-lts console=tty0\n",
+            "    initrd /rustaller-initrd\n",
             "}\n",
             "### END reinstall.sh ###\n"
         )
@@ -125,7 +125,7 @@ fn grub_config_renders_a_validated_bios_entry_and_shared_grubenv_helper() {
 fn grub_config_rejects_untrusted_paths_commands_and_config_injection() {
     let entry = GrubBootEntry {
         name: "bad\" entry".into(),
-        kernel_path: "/reinstall-vmlinuz".into(),
+        kernel_path: "/rustaller-vmlinuz".into(),
         initrd_path: None,
         linux_command: "linux".into(),
         initrd_command: "initrd".into(),
@@ -144,7 +144,7 @@ fn grub_config_rejects_untrusted_paths_commands_and_config_injection() {
         render_grub_config(&entry),
         Err(BootError::InvalidBootPath)
     ));
-    entry.kernel_path = "/reinstall-vmlinuz".into();
+    entry.kernel_path = "/rustaller-vmlinuz".into();
     entry.linux_command = "sh".into();
     assert!(matches!(
         render_grub_config(&entry),

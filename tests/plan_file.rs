@@ -1,6 +1,6 @@
-use reinstall_rs::codec::encode_plan;
-use reinstall_rs::model::{InstallPlan, SecretString, Target};
-use reinstall_rs::plan_file::PrivatePlanFile;
+use rustaller::codec::encode_plan;
+use rustaller::model::{InstallPlan, SecretString, Target};
+use rustaller::plan_file::PrivatePlanFile;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -15,7 +15,7 @@ impl Scratch {
             .expect("clock after epoch")
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "reinstall-plan-file-{}-{nonce}",
+            "rustaller-plan-file-{}-{nonce}",
             std::process::id()
         ));
         fs::create_dir(&path).expect("create unique temporary directory");

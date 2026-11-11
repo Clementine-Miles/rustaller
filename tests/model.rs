@@ -1,4 +1,4 @@
-use reinstall_rs::model::{
+use rustaller::model::{
     BootMode, CURRENT_SCHEMA_VERSION, InstallPlan, IsoOptions, SecretString, Target,
     validate_host_arch, validate_ram,
 };

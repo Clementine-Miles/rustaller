@@ -1,7 +1,5 @@
-use reinstall_rs::command::{
-    CommandOutput, CommandRunner, CommandSpec, MockRunner, PipelineOutput,
-};
-use reinstall_rs::worker::initrd_network::{
+use rustaller::command::{CommandOutput, CommandRunner, CommandSpec, MockRunner, PipelineOutput};
+use rustaller::worker::initrd_network::{
     AddressFamily, InitrdNetworkConfig, ProxyEndpoint, address_from_ip_output,
     gateway_from_route_output, interface_for_mac, run_initrd_network,
     run_initrd_network_with_proxy,
@@ -188,7 +186,7 @@ impl Scratch {
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "reinstall-initrd-network-{}-{nonce}",
+            "rustaller-initrd-network-{}-{nonce}",
             std::process::id()
         ));
         fs::create_dir_all(root.join("etc")).unwrap();

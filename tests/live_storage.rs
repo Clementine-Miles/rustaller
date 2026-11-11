@@ -1,14 +1,13 @@
-use reinstall_rs::command::{CommandOutput, MockRunner};
-use reinstall_rs::model::{BootMode, InstallPlan, Target};
-use reinstall_rs::shared::storage::{DiskLayout, create_partitions};
-use reinstall_rs::worker::live::validate_live_plan_with_uid;
+use rustaller::command::{CommandOutput, MockRunner};
+use rustaller::model::{BootMode, InstallPlan, Target};
+use rustaller::shared::storage::{DiskLayout, create_partitions};
+use rustaller::worker::live::validate_live_plan_with_uid;
 
 fn layout(target: Target, mode: BootMode, bytes: u64, disk: &str) -> DiskLayout {
     let mut plan = InstallPlan::new(target);
     plan.confhome = Some("https://assets.example/reinstall".into());
     let validated =
-        validate_live_plan_with_uid(plan, "x86_64", 4096, reinstall_rs::RUNTIME_VERSION, 0)
-            .unwrap();
+        validate_live_plan_with_uid(plan, "x86_64", 4096, rustaller::RUNTIME_VERSION, 0).unwrap();
     DiskLayout::new(&validated, disk, mode, bytes).unwrap()
 }
 
@@ -27,7 +26,7 @@ fn layout_preserves_bios_gpt_boundary_and_nvme_partition_names() {
 
 #[test]
 fn readonly_unknown_and_bios_4kn_volumes_fail_before_any_mutation() {
-    use reinstall_rs::shared::storage::validate_disk_geometry;
+    use rustaller::shared::storage::validate_disk_geometry;
     for (mode, output, accepted) in [
         (BootMode::Bios, "0 512\n", true),
         (BootMode::Efi, "0 512\n", true),
@@ -59,7 +58,7 @@ fn xfs_space_floor_accounts_for_esp_before_partitioning() {
         InstallPlan::new(Target::Alpine),
         "x86_64",
         4096,
-        reinstall_rs::RUNTIME_VERSION,
+        rustaller::RUNTIME_VERSION,
         0,
     )
     .unwrap();
@@ -134,8 +133,7 @@ fn layout_rejects_unvalidated_disk_names_and_conflicting_explicit_disk() {
     plan.confhome = Some("https://assets.example/reinstall".into());
     plan.target_disk = Some("/dev/vda".into());
     let validated =
-        validate_live_plan_with_uid(plan, "x86_64", 1024, reinstall_rs::RUNTIME_VERSION, 0)
-            .unwrap();
+        validate_live_plan_with_uid(plan, "x86_64", 1024, rustaller::RUNTIME_VERSION, 0).unwrap();
     for disk in [
         "../sda",
         "/dev/sda",
@@ -160,7 +158,7 @@ fn rescue_plan_cannot_construct_a_destructive_layout() {
     plan.confhome = Some("https://assets.example/reinstall".into());
     plan.hold = Some(1);
     let plan =
-        validate_live_plan_with_uid(plan, "x86_64", 512, reinstall_rs::RUNTIME_VERSION, 0).unwrap();
+        validate_live_plan_with_uid(plan, "x86_64", 512, rustaller::RUNTIME_VERSION, 0).unwrap();
     assert!(DiskLayout::new(&plan, "vda", BootMode::Bios, 10_000).is_err());
 }
 
@@ -172,7 +170,7 @@ fn successes(count: usize) -> Vec<CommandOutput> {
 
 #[test]
 fn partition_refresh_ignores_partprobe_but_stops_on_partx_failure() {
-    use reinstall_rs::shared::storage::{PartitionEnvironment, refresh_partition_table};
+    use rustaller::shared::storage::{PartitionEnvironment, refresh_partition_table};
     let layout = layout(Target::Debian, BootMode::Bios, 40_000_000_000, "vda");
     let mut responses = successes(10);
     responses[3].status = Some(8); // partprobe is best effort
@@ -202,7 +200,7 @@ fn partition_refresh_ignores_partprobe_but_stops_on_partx_failure() {
 
 #[test]
 fn mdev_start_retries_immediately_once_then_uses_the_shell_delay_order() {
-    use reinstall_rs::shared::storage::refresh_partition_table;
+    use rustaller::shared::storage::refresh_partition_table;
     let layout = layout(Target::Debian, BootMode::Bios, 40_000_000_000, "vda");
     let mut responses = successes(12);
     responses[7].status = Some(7);
@@ -219,7 +217,7 @@ fn mdev_start_retries_immediately_once_then_uses_the_shell_delay_order() {
 
 #[test]
 fn mdev_start_exhaustion_preserves_the_last_exit_status() {
-    use reinstall_rs::shared::storage::refresh_partition_table;
+    use rustaller::shared::storage::refresh_partition_table;
     let layout = layout(Target::Debian, BootMode::Bios, 40_000_000_000, "vda");
     let mut responses = successes(7);
     responses.push(CommandOutput::new(Some(23), vec![], vec![]));
@@ -235,7 +233,7 @@ fn mdev_start_exhaustion_preserves_the_last_exit_status() {
 
 #[test]
 fn package_spawn_failures_follow_the_same_five_attempt_retry_contract() {
-    use reinstall_rs::command::{CommandRunner, CommandSpec, PipelineOutput};
+    use rustaller::command::{CommandRunner, CommandSpec, PipelineOutput};
     struct MissingApk {
         calls: Vec<CommandSpec>,
     }

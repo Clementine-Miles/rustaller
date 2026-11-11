@@ -1,6 +1,6 @@
-use reinstall_rs::command::{CommandOutput, MockRunner};
-use reinstall_rs::worker::args::{WorkerAction, parse_worker_args};
-use reinstall_rs::worker::log_stream::run_log_stream;
+use rustaller::command::{CommandOutput, MockRunner};
+use rustaller::worker::args::{WorkerAction, parse_worker_args};
+use rustaller::worker::log_stream::run_log_stream;
 
 #[test]
 fn worker_parses_only_the_exact_generated_web_log_path_form() {
@@ -25,7 +25,7 @@ fn log_worker_runs_the_legacy_tail_tr_grep_pipeline_only_for_the_requested_path(
     run_log_stream(&mut runner, "/A1B2C3D4", "/A1B2C3D4").unwrap();
     assert_eq!(runner.calls().len(), 3);
     assert_eq!(runner.calls()[0].program, "tail");
-    assert_eq!(runner.calls()[0].args, ["-fn+0", "/reinstall.log"]);
+    assert_eq!(runner.calls()[0].args, ["-fn+0", "/rustaller.log"]);
     assert_eq!(runner.calls()[1].program, "tr");
     assert_eq!(runner.calls()[1].args, ["\r", "\n"]);
     assert_eq!(runner.calls()[2].program, "grep");
@@ -37,7 +37,7 @@ fn log_worker_runs_the_legacy_tail_tr_grep_pipeline_only_for_the_requested_path(
         runner
             .calls()
             .iter()
-            .all(|call| call.stdout_mode == reinstall_rs::command::OutputMode::Stream)
+            .all(|call| call.stdout_mode == rustaller::command::OutputMode::Stream)
     );
 
     let mut unused = MockRunner::empty();

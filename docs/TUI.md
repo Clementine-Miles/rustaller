@@ -4,7 +4,7 @@ Run a build with the host-only `tui` feature without arguments, with stdin and s
 
 ```console
 cargo xtask bundle
-./target/x86_64-unknown-linux-musl/release/reinstall
+./target/x86_64-unknown-linux-musl/release/rustaller
 ```
 
 The Release binary embeds its matching worker. The VPS does not need a Rust toolchain. Build and download instructions are in [GITHUB-RELEASE.md](GITHUB-RELEASE.md).

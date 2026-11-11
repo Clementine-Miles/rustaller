@@ -1,4 +1,4 @@
-# rust-aller：给下一位 agent 的续接指南
+# rustaller：给下一位 agent 的续接指南
 
 更新日期：2026-11-02。此文件随完整源码包提供，不要求获得旧会话、旧 Git 历史或本机构建产物。
 
@@ -38,7 +38,7 @@ Rust 版本和 musl target 以 rust-toolchain.toml 为准。需要 Bash、Git、
 git fetch --no-tags --depth=1 https://github.com/bin456789/reinstall.git 98f1e21013233d42750cc2e7a298a0818461d686:refs/rustaller/upstream-baseline
 cargo xtask check
 cargo xtask bundle
-target/x86_64-unknown-linux-musl/release/reinstall --help
+target/x86_64-unknown-linux-musl/release/rustaller --help
 ```
 
 直接解压且没有 Git 元数据时，可以先在解压根目录 git init；若要上传已有仓库，优先 clone 该仓库再复制源码，保留隐藏目录。上游对象获取已写入 GitHub Check 工作流，并在前一轮独立空仓中实测成功。
@@ -47,8 +47,8 @@ target/x86_64-unknown-linux-musl/release/reinstall --help
 
 ```console
 PATH=/home/agent/.cargo/bin:$PATH \
-TEST_BUSYBOX=/workspace/scratch/reinstall-tools/usr/bin/busybox \
-TEST_SHELLCHECK=/workspace/scratch/reinstall-tools-current/usr/bin/shellcheck \
+TEST_BUSYBOX=/workspace/scratch/rustaller-tools/usr/bin/busybox \
+TEST_SHELLCHECK=/workspace/scratch/rustaller-tools-current/usr/bin/shellcheck \
 cargo xtask check
 ```
 
@@ -58,7 +58,7 @@ cargo xtask check
 
 | 功能 | 代码入口 | 当前边界 |
 |---|---|---|
-| 英文多级 TUI、ASCII 标题、按目标草稿、返回保存/丢弃 | src/tui/；bin/reinstall.rs | 共用 CLI 校验，凭据遮蔽，结果返回不能自动重试 |
+| 英文多级 TUI、ASCII 标题、按目标草稿、返回保存/丢弃 | src/tui/；bin/rustaller.rs | 共用 CLI 校验，凭据遮蔽，结果返回不能自动重试 |
 | 主机检查与 kexec | host/preflight.rs、handoff.rs | systemd/openrc-init PID 1；无两次重启回退 |
 | Live 模块、安装调度 | worker/install.rs | 最新模块/服务修复待完整 VM 复验 |
 | 四目标安装与 minimal 包策略 | targets/install.rs、packages.rs、debian.rs、rolling.rs | 尚无完整安装成功验收；不能承诺最终几十 MB |
@@ -97,7 +97,7 @@ cargo xtask vm-acceptance install \
   --tools /absolute/tools-root \
   --base /absolute/source-prepared.qcow2 --sha512 VERIFIED_SOURCE_SHA512 \
   --key /absolute/test-key --public-key /absolute/test-key.pub \
-  --installer /absolute/reinstall \
+  --installer /absolute/rustaller \
   --target alpine --firmware both --disk-bus virtio-blk \
   --timeout 1800 --output /absolute/new-results-directory
 ```

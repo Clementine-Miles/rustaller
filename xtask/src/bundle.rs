@@ -27,14 +27,14 @@ pub fn build(root: &Path, target: &str, tui: bool) -> Result<BundleArtifacts, St
         root,
         &manifest,
         target,
-        "reinstall-worker",
+        "rustaller-worker",
         None,
         false,
     )?;
-    let worker_path = artifact_path(&target_dir, target, "reinstall-worker");
+    let worker_path = artifact_path(&target_dir, target, "rustaller-worker");
     let worker = fs::read(&worker_path)
         .map_err(|error| format!("cannot read worker {}: {error}", worker_path.display()))?;
-    verify_x86_64_elf(&worker, true, reinstall_rs::RUNTIME_VERSION)
+    verify_x86_64_elf(&worker, true, rustaller::RUNTIME_VERSION)
         .map_err(|error| format!("worker validation failed: {error}"))?;
 
     run_cargo_build(
@@ -42,14 +42,14 @@ pub fn build(root: &Path, target: &str, tui: bool) -> Result<BundleArtifacts, St
         root,
         &manifest,
         target,
-        "reinstall",
+        "rustaller",
         Some(&worker_path),
         tui,
     )?;
-    let host_path = artifact_path(&target_dir, target, "reinstall");
+    let host_path = artifact_path(&target_dir, target, "rustaller");
     let host = fs::read(&host_path)
         .map_err(|error| format!("cannot read host {}: {error}", host_path.display()))?;
-    verify_x86_64_elf(&host, true, reinstall_rs::RUNTIME_VERSION)
+    verify_x86_64_elf(&host, true, rustaller::RUNTIME_VERSION)
         .map_err(|error| format!("host validation failed: {error}"))?;
     if host.len() <= worker.len() || !contains_bytes(&host, &worker) {
         return Err("host does not contain the exact worker ELF that was built".into());

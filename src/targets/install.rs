@@ -507,7 +507,7 @@ pub fn configure<R: CommandRunner>(
             )?,
             _ => unreachable!(),
         }
-        let worker = fs::read("/reinstall-worker")?;
+        let worker = fs::read("/rustaller-worker")?;
         crate::worker::firstboot::install_firstboot_service(
             runner,
             root,
@@ -639,7 +639,7 @@ pub fn write_network(
         }
         write_target(root, "etc/network/interfaces", interfaces.as_bytes(), 0o644)?;
         // No interface-name binding: the firstboot MAC repair renames ifupdown
-        // stanzas; dhcpcd remains valid if ens3 becomes eth0 after reinstall.
+        // stanzas; dhcpcd remains valid if ens3 becomes eth0 after rustaller.
         write_target(
             root,
             "etc/dhcpcd.conf",
@@ -1528,12 +1528,12 @@ pub fn start_live_services<R: CommandRunner>(
             include_bytes!("../../logviewer.html"),
             0o644,
         )?;
-        let log = Path::new("/reinstall.log");
+        let log = Path::new("/rustaller.log");
         if !log.exists() {
             symlink("/var/log/rustaller.log", log)?;
         }
         let service = format!(
-            "#!/sbin/openrc-run\nname=rustaller-web\ncommand=/usr/bin/websocketd\ncommand_args=\"--port={port} --staticdir={} /reinstall-worker log-stream {web_path}\"\ncommand_background=yes\npidfile=/run/rustaller-web.pid\n",
+            "#!/sbin/openrc-run\nname=rustaller-web\ncommand=/usr/bin/websocketd\ncommand_args=\"--port={port} --staticdir={} /rustaller-worker log-stream {web_path}\"\ncommand_background=yes\npidfile=/run/rustaller-web.pid\n",
             web.display()
         );
         atomic_replace(

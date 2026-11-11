@@ -10,8 +10,8 @@ use crate::shared::dns::{
 use crate::worker::live::ValidatedLivePlan;
 use std::path::Path;
 
-const BEGIN: &str = "# BEGIN rust-aller minimal packages";
-const END: &str = "# END rust-aller minimal packages";
+const BEGIN: &str = "# BEGIN rustaller minimal packages";
+const END: &str = "# END rustaller minimal packages";
 
 pub fn configuration_for_plan(
     plan: &InstallPlan,
@@ -318,12 +318,12 @@ pub fn apply_package_policy(
     let mut files = Vec::new();
     match plan.target {
         Target::Debian => {
-            let path = root.join("etc/dpkg/dpkg.cfg.d/99-rust-aller-minimal");
+            let path = root.join("etc/dpkg/dpkg.cfg.d/99-rustaller-minimal");
             validate_planned_file(&path)?;
             let contents = if strip {
-                "# rust-aller minimal; retain copyright and locale aliases\npath-exclude=/usr/share/doc/*\npath-include=/usr/share/doc/*/copyright\npath-exclude=/usr/share/man/*\npath-exclude=/usr/share/info/*\npath-exclude=/usr/share/locale/*\npath-include=/usr/share/locale/locale.alias\n"
+                "# rustaller minimal; retain copyright and locale aliases\npath-exclude=/usr/share/doc/*\npath-include=/usr/share/doc/*/copyright\npath-exclude=/usr/share/man/*\npath-exclude=/usr/share/info/*\npath-exclude=/usr/share/locale/*\npath-include=/usr/share/locale/locale.alias\n"
             } else {
-                "# rust-aller: documentation filtering disabled\n"
+                "# rustaller: documentation filtering disabled\n"
             };
             files.push(ConfigFile {
                 path,

@@ -5,13 +5,13 @@
 ## 目录与职责
 
 ```text
-rust-aller/
+rustaller/
 ├── Cargo.toml / Cargo.lock / rust-toolchain.toml
 ├── build.rs                  嵌入构建器提供的匹配 worker
 ├── src/
 │   ├── lib.rs                核心入口，集中声明 host/worker/shared/targets 子模块
-│   ├── bin/reinstall.rs      CLI/TUI 入口、检查、确认与执行
-│   ├── bin/reinstall-worker.rs
+│   ├── bin/rustaller.rs      CLI/TUI 入口、检查、确认与执行
+│   ├── bin/rustaller-worker.rs
 │   │                         无界面 Live、网络、首启与日志命令
 │   ├── model.rs / config.rs / postinstall.rs
 │   │                         安装计划及配置模型；不直接执行安装

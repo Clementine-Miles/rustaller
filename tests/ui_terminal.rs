@@ -176,8 +176,8 @@ fn run_in_terminal(input: &[(&[u8], Option<&str>)]) -> String {
         );
     }
     let before = attributes(&slave);
-    let binary = std::env::var_os("TEST_REINSTALL_BIN")
-        .unwrap_or_else(|| env!("CARGO_BIN_EXE_reinstall").into());
+    let binary = std::env::var_os("TEST_RUSTALLER_BIN")
+        .unwrap_or_else(|| env!("CARGO_BIN_EXE_rustaller").into());
     let mut command = Command::new(binary);
     command
         .stdin(Stdio::from(slave.try_clone().unwrap()))

@@ -1,7 +1,7 @@
-use reinstall_rs::codec::encode_plan;
-use reinstall_rs::command::{CommandOutput, MockRunner};
-use reinstall_rs::model::{InstallPlan, Target};
-use reinstall_rs::worker::live::{
+use rustaller::codec::encode_plan;
+use rustaller::command::{CommandOutput, MockRunner};
+use rustaller::model::{InstallPlan, Target};
+use rustaller::worker::live::{
     LivePreflightError, load_and_validate_plan_with_uid, validate_live_plan_with_uid,
 };
 use std::fs;
@@ -17,7 +17,7 @@ impl Scratch {
             .unwrap()
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "reinstall-live-preflight-{}-{nonce}",
+            "rustaller-live-preflight-{}-{nonce}",
             std::process::id()
         ));
         fs::create_dir(&path).unwrap();
@@ -59,7 +59,7 @@ fn live_ram_gate_runs_for_each_automatic_target_before_workflow_creation() {
                 plan(target),
                 "x86_64",
                 floor,
-                reinstall_rs::RUNTIME_VERSION,
+                rustaller::RUNTIME_VERSION,
                 0,
             )
             .is_ok()
@@ -69,7 +69,7 @@ fn live_ram_gate_runs_for_each_automatic_target_before_workflow_creation() {
                 plan(target),
                 "x86_64",
                 floor - 1,
-                reinstall_rs::RUNTIME_VERSION,
+                rustaller::RUNTIME_VERSION,
                 0
             ),
             Err(LivePreflightError::InsufficientRam(_))
@@ -91,7 +91,7 @@ fn live_worker_reads_private_plan_and_checks_uname_then_ram_without_disk_command
         ),
     ]);
     let validated =
-        load_and_validate_plan_with_uid(&mut runner, &plan_path, reinstall_rs::RUNTIME_VERSION, 0)
+        load_and_validate_plan_with_uid(&mut runner, &plan_path, rustaller::RUNTIME_VERSION, 0)
             .unwrap();
     assert_eq!(validated.plan().target, Target::Arch);
     assert!(!plan_path.exists(), "one-shot plan is consumed on read");
@@ -116,7 +116,7 @@ fn live_worker_rechecks_ram_and_stops_before_any_disk_command() {
         ),
     ]);
     assert!(matches!(
-        load_and_validate_plan_with_uid(&mut runner, &plan_path, reinstall_rs::RUNTIME_VERSION, 0),
+        load_and_validate_plan_with_uid(&mut runner, &plan_path, rustaller::RUNTIME_VERSION, 0),
         Err(LivePreflightError::InsufficientRam(_))
     ));
     assert_eq!(runner.calls().len(), 2);
@@ -132,7 +132,7 @@ fn live_worker_refuses_non_root_before_reading_plan_or_running_utilities() {
         load_and_validate_plan_with_uid(
             &mut runner,
             std::path::Path::new("/must-not-be-read"),
-            reinstall_rs::RUNTIME_VERSION,
+            rustaller::RUNTIME_VERSION,
             1000
         ),
         Err(LivePreflightError::RootRequired)
@@ -147,7 +147,7 @@ fn live_preflight_rejects_non_root_before_any_workflow_can_start() {
             plan(Target::Alpine),
             "x86_64",
             512,
-            reinstall_rs::RUNTIME_VERSION,
+            rustaller::RUNTIME_VERSION,
             1000
         ),
         Err(LivePreflightError::RootRequired)
@@ -161,7 +161,7 @@ fn live_preflight_rejects_wrong_architecture_target_and_runtime_version() {
             plan(Target::Alpine),
             "aarch64",
             2048,
-            reinstall_rs::RUNTIME_VERSION,
+            rustaller::RUNTIME_VERSION,
             0
         ),
         Err(LivePreflightError::UnsupportedArchitecture(_))
@@ -171,7 +171,7 @@ fn live_preflight_rejects_wrong_architecture_target_and_runtime_version() {
             plan(Target::Reset),
             "x86_64",
             0,
-            reinstall_rs::RUNTIME_VERSION,
+            rustaller::RUNTIME_VERSION,
             0
         ),
         Err(LivePreflightError::NonAutomaticTarget(Target::Reset))

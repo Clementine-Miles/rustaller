@@ -1,18 +1,18 @@
-use reinstall_rs::codec::{decode_plan, encode_plan};
-use reinstall_rs::command::{
+use rustaller::codec::{decode_plan, encode_plan};
+use rustaller::command::{
     CommandInput, CommandOutput, CommandRunner, CommandSpec, MockRunner, PipelineOutput,
     SwapSafeRunner,
 };
-use reinstall_rs::config::{
+use rustaller::config::{
     AddressPreference, CongestionControl, Ipv6Policy, NetworkConfig, QueueDiscipline,
 };
-use reinstall_rs::host::args::{CliOutcome, parse_args};
-use reinstall_rs::host::preflight::{KexecError, validate_one_reboot_support};
-use reinstall_rs::host::ssh_keygen::{KeyType, KeygenOptions, generate};
-use reinstall_rs::model::{InstallPlan, Target};
-use reinstall_rs::shared::network::{alpine_mtu, apply_network_configuration};
-use reinstall_rs::shared::swapfile::prepare_swapfile;
-use reinstall_rs::worker::live::{ValidatedLivePlan, validate_live_plan_with_uid};
+use rustaller::host::args::{CliOutcome, parse_args};
+use rustaller::host::preflight::{KexecError, validate_one_reboot_support};
+use rustaller::host::ssh_keygen::{KeyType, KeygenOptions, generate};
+use rustaller::model::{InstallPlan, Target};
+use rustaller::shared::network::{alpine_mtu, apply_network_configuration};
+use rustaller::shared::swapfile::prepare_swapfile;
+use rustaller::worker::live::{ValidatedLivePlan, validate_live_plan_with_uid};
 use std::fs;
 use std::io;
 use std::os::unix::fs::{PermissionsExt, symlink};
@@ -73,7 +73,7 @@ fn plan(target: Target) -> InstallPlan {
     plan
 }
 fn live(plan: InstallPlan) -> ValidatedLivePlan {
-    validate_live_plan_with_uid(plan, "x86_64", 2048, reinstall_rs::RUNTIME_VERSION, 0).unwrap()
+    validate_live_plan_with_uid(plan, "x86_64", 2048, rustaller::RUNTIME_VERSION, 0).unwrap()
 }
 fn out(status: i32, text: &str) -> CommandOutput {
     CommandOutput::new(Some(status), text.as_bytes().to_vec(), vec![])
@@ -181,7 +181,7 @@ fn networkd_settings_survive_renaming_and_use_the_target_kernel_and_native_files
         let selected = live(selected);
         let services = apply_network_configuration(&scratch.0, &selected, KERNEL).unwrap();
         assert!(services.openrc_boot.is_empty());
-        let text = scratch.read("etc/sysctl.d/90-rust-aller-network.conf");
+        let text = scratch.read("etc/sysctl.d/90-rustaller-network.conf");
         assert!(text.contains("tcp_congestion_control = bbr"));
         assert!(text.contains("16777216"));
         assert!(!text.contains("accept_ra"));
@@ -189,7 +189,7 @@ fn networkd_settings_survive_renaming_and_use_the_target_kernel_and_native_files
         assert!(!text.contains("tcp_adv_win_scale"));
         assert!(
             scratch
-                .read("etc/modules-load.d/90-rust-aller-network.conf")
+                .read("etc/modules-load.d/90-rustaller-network.conf")
                 .contains("tcp_bbr")
         );
         assert!(
@@ -259,7 +259,7 @@ fn alpine_native_mtu_and_ipv6_policy_preserve_dhcp_and_loopback_without_forcing_
         fs::read_link(scratch.0.join("etc/runlevels/boot/sysctl")).unwrap(),
         PathBuf::from("/etc/init.d/sysctl")
     );
-    let sysctl = scratch.read("etc/sysctl.d/90-rust-aller-network.conf");
+    let sysctl = scratch.read("etc/sysctl.d/90-rustaller-network.conf");
     assert!(sysctl.contains("all.disable_ipv6 = 0"));
     assert!(!sysctl.contains("accept_ra"));
 }
@@ -302,7 +302,7 @@ fn opt_in_swapfile_is_fully_allocated_private_and_persistent_but_never_activated
     assert!(scratch.read("etc/fstab").contains("UUID=original"));
     assert!(
         scratch
-            .read("etc/sysctl.d/90-rust-aller-swap.conf")
+            .read("etc/sysctl.d/90-rustaller-swap.conf")
             .contains("vm.swappiness = 10")
     );
     let calls = runner.into_inner();
@@ -379,7 +379,7 @@ fn mkswap_failure_leaves_fstab_untouched_and_removes_only_its_temporary_file() {
         e.unwrap()
             .file_name()
             .to_string_lossy()
-            .starts_with(".rust-aller-swap")
+            .starts_with(".rustaller-swap")
     }));
 }
 
@@ -402,7 +402,7 @@ fn dd_failure_does_not_format_or_publish_swap() {
         e.unwrap()
             .file_name()
             .to_string_lossy()
-            .starts_with(".rust-aller-swap")
+            .starts_with(".rustaller-swap")
     }));
 }
 
@@ -519,7 +519,7 @@ fn ssh_keygen_calls_system_tool_with_separate_arguments_and_never_serializes_pri
         e.unwrap()
             .file_name()
             .to_string_lossy()
-            .starts_with(".rust-aller-keygen")
+            .starts_with(".rustaller-keygen")
     }));
     assert!(generate(&mut runner, &options).is_err());
     assert_eq!(runner.calls.len(), 1);

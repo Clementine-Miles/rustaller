@@ -1,5 +1,5 @@
-use reinstall_rs::command::{CommandOutput, MockRunner};
-use reinstall_rs::worker::firstboot::{
+use rustaller::command::{CommandOutput, MockRunner};
+use rustaller::worker::firstboot::{
     InitManager, apply_network_fixes_from_links, cleanup_firstboot, eth_names_by_mac,
     install_firstboot_service, lookup_ethx_by_mac, non_loopback_links, render_firstboot_service,
     rewrite_ifupdown, rewrite_networkd_file, wait_for_stable_links,
@@ -17,7 +17,7 @@ impl Scratch {
             .duration_since(UNIX_EPOCH)
             .expect("clock after epoch")
             .as_nanos();
-        Self(std::env::temp_dir().join(format!("reinstall-{label}-{}-{nonce}", std::process::id())))
+        Self(std::env::temp_dir().join(format!("rustaller-{label}-{}-{nonce}", std::process::id())))
     }
 }
 
@@ -167,7 +167,7 @@ fn systemd_service_installs_worker_and_matches_the_rust_worker_contract() {
     let root = &scratch.0;
     fs::create_dir_all(root.join("lib/systemd/system-preset")).unwrap();
     let mut runner = MockRunner::new([CommandOutput::new(Some(0), Vec::new(), Vec::new())]);
-    let worker_elf = format!("ELF {}", reinstall_rs::RUNTIME_VERSION);
+    let worker_elf = format!("ELF {}", rustaller::RUNTIME_VERSION);
 
     install_firstboot_service(
         &mut runner,
@@ -179,15 +179,15 @@ fn systemd_service_installs_worker_and_matches_the_rust_worker_contract() {
 
     let service = fs::read_to_string(root.join("etc/systemd/system/fix-eth-name.service")).unwrap();
     assert_eq!(service, render_firstboot_service(InitManager::Systemd));
-    assert!(service.contains("ExecStart=/usr/local/bin/reinstall-worker firstboot-fix"));
-    assert!(service.contains("ExecStartPost=/usr/local/bin/reinstall-worker cleanup-systemd"));
+    assert!(service.contains("ExecStart=/usr/local/bin/rustaller-worker firstboot-fix"));
+    assert!(service.contains("ExecStartPost=/usr/local/bin/rustaller-worker cleanup-systemd"));
     assert!(!service.contains("fix-eth-name.sh"));
     assert_eq!(
-        fs::read(root.join("usr/local/bin/reinstall-worker")).unwrap(),
+        fs::read(root.join("usr/local/bin/rustaller-worker")).unwrap(),
         worker_elf.as_bytes()
     );
     assert_eq!(
-        fs::metadata(root.join("usr/local/bin/reinstall-worker"))
+        fs::metadata(root.join("usr/local/bin/rustaller-worker"))
             .unwrap()
             .permissions()
             .mode()
@@ -228,7 +228,7 @@ fn mismatched_worker_version_is_rejected_before_writing_service_files() {
         )
         .is_err()
     );
-    assert!(!scratch.0.join("usr/local/bin/reinstall-worker").exists());
+    assert!(!scratch.0.join("usr/local/bin/rustaller-worker").exists());
     assert!(runner.calls().is_empty());
 }
 
@@ -239,7 +239,7 @@ fn openrc_cleanup_runs_service_commands_then_removes_the_one_shot_worker() {
     fs::create_dir_all(root.join("etc/init.d")).unwrap();
     fs::create_dir_all(root.join("usr/local/bin")).unwrap();
     fs::write(root.join("etc/init.d/fix-eth-name"), "service").unwrap();
-    fs::write(root.join("usr/local/bin/reinstall-worker"), "worker").unwrap();
+    fs::write(root.join("usr/local/bin/rustaller-worker"), "worker").unwrap();
     let mut runner = MockRunner::new([
         CommandOutput::new(Some(0), Vec::new(), Vec::new()),
         CommandOutput::new(Some(0), Vec::new(), Vec::new()),
@@ -253,7 +253,7 @@ fn openrc_cleanup_runs_service_commands_then_removes_the_one_shot_worker() {
     assert_eq!(runner.calls()[1].program, "rc-update");
     assert_eq!(runner.calls()[1].args, ["del", "fix-eth-name", "boot"]);
     assert!(!root.join("etc/init.d/fix-eth-name").exists());
-    assert!(!root.join("usr/local/bin/reinstall-worker").exists());
+    assert!(!root.join("usr/local/bin/rustaller-worker").exists());
 }
 
 #[test]

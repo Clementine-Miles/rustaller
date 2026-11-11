@@ -51,7 +51,7 @@
 ### 原生落盘组件
 
 - `shared::dns`：静态 `/etc/resolv.conf`；Alpine 全局关闭 dhcpcd/udhcpc 的 DNS 覆盖；networkd 文件设置 DNS/Domains 并禁止 DHCPv4/v6/RA 替换。自动模式不写文件。拒绝回环、多播、未指定及无作用域的链路本地 DNS，允许内网 DNS；不测试地址可达性。
-- `shared::network`：目标 `/etc/sysctl.d/90-rust-aller-network.conf`；模块加载配置；glibc 完整 precedence 表；MTU 写入已有 networkd 文件或 Alpine ifupdown stanza。修改在网络文件内部，首启按网卡名重命名文件不会丢失选项。
+- `shared::network`：目标 `/etc/sysctl.d/90-rustaller-network.conf`；模块加载配置；glibc 完整 precedence 表；MTU 写入已有 networkd 文件或 Alpine ifupdown stanza。修改在网络文件内部，首启按网卡名重命名文件不会丢失选项。
 - OpenRC 的 sysctl/modules 服务以目标 runlevel 链接离线启用；服务脚本必须已存在且可执行。systemd 通过原生 modules-load/sysctl 读取配置。
 - BBR/qdisc 组件要求调用方提供**目标已安装内核**的 Kconfig，而非运行中的旧内核。完整驱动仍须绑定该 Kconfig 与内核版本，并检查模块实际存在、启动后验证生效。
 
@@ -98,7 +98,7 @@ swapfile 在 dd 同步后核对长度及已分配块数；这不是实际 swapon
 ## CLI 示例与执行边界
 
 ```console
-./reinstall debian --confhome https://your.example/reinstall/pinned-version \
+./rustaller debian --confhome https://your.example/reinstall/pinned-version \
   --minimal --kernel cloud --hostname my-vps --timezone Etc/UTC \
   --ssh-key /root/client.pub --ssh-port 2222 \
   --dns 1.1.1.1 --dns 2606:4700:4700::1111 \

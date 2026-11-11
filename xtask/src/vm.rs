@@ -563,7 +563,7 @@ fn install_case(
     )?;
     source.copy(
         installer,
-        "/var/tmp/rustaller-vm/reinstall",
+        "/var/tmp/rustaller-vm/rustaller",
         &case.join("copy-installer.log"),
     )?;
     source.copy(
@@ -572,12 +572,12 @@ fn install_case(
         &case.join("copy-public.log"),
     )?;
     source.checked(
-        &["chmod", "700", "/var/tmp/rustaller-vm/reinstall"],
+        &["chmod", "700", "/var/tmp/rustaller-vm/rustaller"],
         &case.join("source-chmod.log"),
         Duration::from_secs(20),
     )?;
     let arguments = vec![
-        "/var/tmp/rustaller-vm/reinstall".to_owned(),
+        "/var/tmp/rustaller-vm/rustaller".to_owned(),
         target.to_owned(),
         format!("--target-disk={}", bus.device()),
         "--username=root".into(),

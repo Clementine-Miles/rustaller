@@ -13,7 +13,7 @@ impl Scratch {
             .expect("clock after epoch")
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "reinstall-command-trace-{}-{nonce}",
+            "rustaller-command-trace-{}-{nonce}",
             std::process::id()
         ));
         fs::create_dir(&path).expect("create unique trace directory");
