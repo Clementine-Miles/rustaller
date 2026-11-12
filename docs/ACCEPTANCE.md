@@ -1,5 +1,20 @@
 # Disposable BIOS / UEFI acceptance
 
+## Configuration choices — 2026-11-12
+
+Schema 6 adds XFS/ext4 roots, distribution-specific kernel choices, separate root passwords for non-root accounts, source-hostname inheritance and public/custom DNS. Arch CachyOS additionally uses pinned official repository setup, OS-usable ISA selection and a dedicated first-target-boot full package upgrade with initramfs/GRUB regeneration. Gentoo's kernel/init path and retained Shell implementation are unchanged.
+
+**No new full installation VM pass is established for these options.** Existing XFS/Live evidence below remains historical. Pending coverage:
+
+- Each supported explicit kernel with XFS/ext4 under BIOS/UEFI; target initramfs drivers, UUID fstab, GRUB filesystem detection and boot.
+- Source hostname inheritance, valid FQDN first-label handling, missing-name distribution fallback and explicit overrides.
+- Non-root user/root password separation, password/public-key user login, disabled root SSH and private terminal restoration after cancellation.
+- Automatic/provider/custom DNS switching, invalid/duplicate/empty input rejection, IPv6-disabled presets and working resolution after DHCP/RA renewal.
+- Swap activation on XFS and ext4 with permissions, allocation and fstab protections retained.
+- CachyOS baseline/v3/v4 and applicable znver4 repository selection, mandatory signatures, first-boot full upgrade, network/upgrade failure retry, initramfs/GRUB regeneration, successful completion state and no extra automatic reboot.
+
+Unit and mocked command coverage does not replace these disposable VM cases. The existing VM probe's XFS/cloud/virt expectations describe its historical fixture and must be explicitly extended before claiming the broader matrix.
+
 ## XFS / dd swapfile change — 2026-11-02
 
 Automatic roots use XFS with GRUB-compatible flags and a pre-partition Live module check. Alpine retains OpenRC. Optional swapfiles use GNU dd zero writes, private files, mkswap and one fstab entry; only target boot activates them. The guest probe requires XFS and prints free -h, swapon --show and fstab.

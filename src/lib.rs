@@ -9,8 +9,10 @@ pub mod host {
     pub mod current;
     pub mod disk;
     pub mod handoff;
+    pub mod hostname;
     pub mod initrd;
     pub mod iso;
+    pub mod password;
     pub mod preflight;
     pub mod sources;
     pub mod ssh_keygen;
@@ -26,13 +28,14 @@ pub mod shared {
     pub mod swapfile;
 }
 pub mod targets {
+    pub mod cachyos;
     pub mod debian;
     pub mod install;
     pub mod packages;
     pub mod rolling;
 }
 
-pub const RUNTIME_VERSION: &str = "PERSONAL-LINUX-XFS-20261102-05";
+pub const RUNTIME_VERSION: &str = "RUSTALLER-CONFIG-20261112-06";
 pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub mod worker {
     pub mod args;

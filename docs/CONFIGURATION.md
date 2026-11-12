@@ -1,6 +1,6 @@
 # 安装前配置与一次重启目标
 
-配置通过 TUI/CLI 写入 schema 5 计划。**确认磁盘身份后会执行真实安装；仅检查须加 `--inspect`。** 四目标 BIOS/UEFI 完整验收仍待完成，见[验收记录](ACCEPTANCE.md)。原生 ssh-keygen 会立即写入指定本机文件。
+配置通过 TUI/CLI 写入 schema 6 计划。**确认磁盘身份后会执行真实安装；仅检查须加 `--inspect`。** 四目标 BIOS/UEFI 完整验收仍待完成，见[验收记录](ACCEPTANCE.md)。原生 ssh-keygen 会立即写入指定本机文件。
 
 ## 执行顺序
 
@@ -19,6 +19,20 @@
 
 Rust 通过 kexec 进入 Live，仅在安装验证成功后最终重启；不静默退回 Shell 的两次重启流程。原系统 PID 1 须为 systemd/openrc-init；预检要求内核 kexec 配置、未禁用/lockdown 及可用工具，实际加载和平台兼容性仍需验收。ISO/netboot.xyz 为独立交互介质；`hold=2` 时由用户最终重启。
 
+## 账户、主机名与根文件系统
+
+创建非 root 用户时，须另设 root 账户密码；TUI 输入两次并遮蔽，交互 CLI 在缺少参数时私密询问。非交互调用须提供 `--root-password`，其值可能暴露于 shell 历史或进程参数，优先使用交互输入。root 密码与用户的密码/公钥认证独立，不开启 root SSH。
+
+主机名优先继承原系统有效名称，检测不到时使用发行版名称；显式 `--hostname` 优先。当前系统配置不自动填入或修改 hostname，详见[目标配置](POSTINSTALL.md)。
+
+`--filesystem xfs|ext4` 选择整盘安装后的根文件系统，默认 XFS；TUI 位于 Disk and boot。Live 清盘前检查所选模块，fstab、initramfs 和 GRUB 随选择配置。ESP 仍为 FAT32，Gentoo 的 systemd/内核路线不变。
+
+## DNS 选择与输入
+
+TUI 可选 Automatic、Cloudflare、Google、Quad9 或 Custom；CLI 的 `--dns` 用于自定义 IP。自动模式不提交静态值；切换服务商时保留自定义草稿，但只提交当前选项。关闭 IPv6 时预设只含 IPv4，否则最多提交两个 IPv4 和一个 IPv6。
+
+Custom 接受逗号分隔的 1–3 个 IP，逐项去除外围空格；拒绝空项、重复地址、域名、控制字符、回环/多播/未指定地址及无作用域链路本地 IPv6。搜索域独立验证。不会静默吞掉输入错误或将无效自定义值改成预设。
+
 ## 网络参考脚本取舍
 
 2026-10-26 仅阅读 `https://box.dmitstock.com`：534595 字节，SHA-256 `b70844acb181b9b6c82f0904b682bdfb5908d188c3b73328568edc21e6766fda`。未执行、复制或作为运行时依赖；远程内容可能变化。
@@ -27,7 +41,7 @@ Rust 通过 kexec 进入 Live，仅在安装验证成功后最终重启；不静
 
 | 配置 | 默认 / 范围 | 作用 |
 |---|---|---|
-| DNS | 自动，或 1–3 个上游 IPv4/IPv6 | 静态解析器及 DHCP/RA DNS 覆盖控制 |
+| DNS | 自动、公共预设或自定义 1–3 个 IPv4/IPv6 | 静态解析器及 DHCP/RA DNS 覆盖控制 |
 | 搜索域 | 无；最多 6 个 ASCII 域，总计 255 字节 | DNS 搜索路径 |
 | 拥塞控制 | default / bbr / cubic | BBR 必须配 fq，并校验目标内核配置 |
 | 默认队列 | default / fq / fq_codel | 校验目标内核配置，模块形式时准备原生加载配置 |
@@ -42,7 +56,7 @@ Rust 通过 kexec 进入 Live，仅在安装验证成功后最终重启；不静
 
 “填入参考脚本固定 TCP 参数”只填充草稿：BBR/fq、64 MiB 最大缓冲、somaxconn/SYN 队列 8192、netdev 队列 16384、MTU probing=1、Fast Open=3、cookies=1。可逐项修改或清除，不在当前主机执行 sysctl，也不表示这些参数一定提高性能。低内存 VPS 可保留内核默认或选较小上限。
 
-不纳入安装配置：动态测速/BDP/HTB、第三方内核、NAT66 随机出网、IPv6 地址池、全量防火墙规则、服务商专用“默认值”、已过时的 `tcp_adv_win_scale`、`kernel.panic=-1`、强制 RA=2、自动重启当前网络服务等。它们不能作为四系统通用安装默认。
+不纳入网络配置：动态测速/BDP/HTB、NAT66 随机出网、IPv6 地址池、全量防火墙规则、服务商专用“默认值”、已过时的 `tcp_adv_win_scale`、`kernel.panic=-1`、强制 RA=2、自动重启当前网络服务等。内核仅提供[明确列出的选择](POSTINSTALL.md)。
 
 配置仅用于目标，Live 沿用原系统网络。拒绝禁用 IPv6 与 IPv6 DNS 同选，并须证明 IPv4 路径可用。TUI 尚不提供手动 IP/路由替换；IPv6-only 与提供商特殊网络另行验收。
 
@@ -79,7 +93,7 @@ Rust 通过 kexec 进入 Live，仅在安装验证成功后最终重启；不静
 菜单：`目标 swapfile → 启用 → 大小 MiB / swappiness`。默认不创建；这是本次用户明确要求后加入的 Rust 选项，保留 Shell 基线的无 swap 行为。
 
 - 固定目标 `/swapfile`，64–65536 MiB。`bs=1M count=2048` 是 **2048 MiB = 2 GiB**；1 GiB 使用 1024 MiB。
-- 只接受独立挂载的 XFS 目标根；先检查空闲空间并至少留下 512 MiB。该余量是最低保护，不是后续更新空间足够的保证；应在软件包安装完成后执行。
+- 只接受独立挂载且与计划匹配的 XFS/ext4 目标根；先检查空闲空间并至少留下 512 MiB。该余量是最低保护，不是后续更新空间足够的保证；应在软件包安装完成后执行。
 - Live 中调用 GNU dd（bs=1M、count=所选 MiB、conv=notrunc,fsync、status=progress）完整写零，避免稀疏文件；0600；只对这个新建、尚未启用的目标文件调用系统 `mkswap`。
 - 不覆盖已有 swapfile、不改已有 swap 条目；成功后为目标 fstab 添加一次 `/swapfile none swap defaults 0 0`。
 - 可选 swappiness 为 0–200，写入目标 sysctl 文件。systemd 通过 fstab generator 启用；Alpine 离线启用目标 OpenRC swap 服务（及必要的 sysctl）。
@@ -99,4 +113,4 @@ Rust 通过 kexec 进入 Live，仅在安装验证成功后最终重启；不静
   --mtu 1450 --swapfile-mib 2048 --swappiness 10
 ```
 
-示例确认后会进入 Live 清盘；仅检查须加 `--inspect`。schema 5 拒绝旧计划；密钥生成是立即执行的本机工具，不交给 worker。
+示例确认后会进入 Live 清盘；仅检查须加 `--inspect`。可加 `--filesystem ext4` 选择 ext4；创建非 root 用户还需独立 root 密码。schema 6 拒绝旧计划；密钥生成是立即执行的本机工具，不交给 worker。

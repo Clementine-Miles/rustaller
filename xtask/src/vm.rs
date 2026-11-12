@@ -583,6 +583,14 @@ fn install_case(
         "--username=root".into(),
         "--ssh-key=/run/rustaller-vm/client.pub".into(),
         "--minimal".into(),
+        format!(
+            "--kernel={}",
+            match target {
+                "alpine" => "virt",
+                "debian" => "cloud",
+                _ => "standard",
+            }
+        ),
         format!("--hostname=rustaller-{target}"),
         "--timezone=Etc/UTC".into(),
         "--swapfile-mib=64".into(),

@@ -1,4 +1,4 @@
-//! Create only an explicitly requested, inactive swapfile in an isolated XFS root.
+//! Create an explicitly requested, inactive swapfile in an isolated XFS/ext4 root.
 //! No swapon/swapoff is called: target native boot services activate its fstab.
 use super::configure::{ConfigurationError, validate_root};
 use super::dns::{read_config, validate_planned_file};
@@ -32,7 +32,7 @@ impl std::fmt::Display for SwapfileError {
             Self::Configuration(e) => e.fmt(f), Self::Command(e) => e.fmt(f),
             Self::Filesystem(e) => write!(f,"Cannot prepare target swapfile: {e}"),
             Self::ExistingSwapfile => f.write_str("Refusing to overwrite an existing swapfile or fstab entry"),
-            Self::UnsupportedFilesystem => f.write_str("Target swapfile requires its own mounted XFS root; other filesystems need separate support"),
+            Self::UnsupportedFilesystem => f.write_str("Target swapfile requires its own mounted root matching the selected XFS/ext4 filesystem"),
             Self::InsufficientSpace => f.write_str("Target swapfile must leave at least 512 MiB of free disk space"),
             Self::InvalidInventory => f.write_str("Cannot verify target swapfile filesystem/free space"),
         }
@@ -121,7 +121,7 @@ pub fn prepare_swapfile<R: CommandRunner>(
             ],
         ),
     )?;
-    if fs_type.trim() != "xfs" {
+    if fs_type.trim() != plan.system.root_filesystem.as_str() {
         return Err(SwapfileError::UnsupportedFilesystem);
     }
     let inventory = capture(
@@ -154,7 +154,7 @@ pub fn prepare_swapfile<R: CommandRunner>(
             .open(&temporary)?;
         owned = true;
         // Live installs GNU coreutils for status=progress. Never use truncate or
-        // fallocate: write every byte so XFS swap extents are fully allocated.
+        // fallocate: write every byte so swap extents are fully allocated.
         progress(0, mib);
         run_checked(
             runner,

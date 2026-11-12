@@ -8,9 +8,18 @@
 | Alpine 目标 | 稳定版 APK 仓库 | 同上 | APK 信任密钥及包签名 |
 | Debian 目标 | debootstrap minbase、APT 仓库 | `deb.debian.org/debian`、`security.debian.org/debian-security` | Debian archive keyring → InRelease/Release.gpg → 包索引与包摘要 |
 | Arch 目标 | pacstrap、core/extra 软件仓库 | `geo.mirror.pkgbuild.com` | 可信 `archlinux-keyring`，软件包签名必需，数据库签名可选 |
+| Arch 可选 CachyOS | 官方仓库安装脚本、优化仓库及 linux-cachyos | `mirror.cachyos.org` | 固定归档 SHA256、完整主密钥指纹、原生 pacman 包签名 |
 | Gentoo 目标 | amd64 systemd stage3、软件仓库 | `distfiles.gentoo.org` | 可信 Gentoo release 密钥 → 签名索引/DIGESTS → 选定 stage3 SHA512 |
 
 GitHub Release 分发程序，发行版资源与包来自各自官方来源。静态入口不内含完整发行版或安装介质；认证所需密钥与工具由各安装阶段建立。
+
+## 可选 CachyOS 仓库
+
+仅 Arch 显式选择 CachyOS 内核时使用[官方仓库方案](https://wiki.cachyos.org/features/optimized_repos/)。资源为 `https://mirror.cachyos.org/cachyos-repo.tar.xz`，固定 SHA256 `a1e3a74bdd12c10ac7317079e3e8c8e7d5557d818e4d4021364005a336b6afdc`，签名主密钥指纹 `882DCFE48E2051D48E2562ABF3B607488DB35A47`。摘要不匹配时停止，须重新审计后更新固定值。
+
+清盘前下载并验证归档/完整密钥，随后仅在隔离 Arch 目标执行审核过的官方脚本：将短密钥 ID 引导替换为固定完整指纹、使用非交互 pacman，并使配置写入错误正常失败。脚本依据 glibc loader 报告的可用 ISA 选择 v3/v4 或适用的 znver4 仓库；低于 v3 使用官方基线 `[cachyos]`。包签名保持开启，不允许任意脚本 URL。
+
+首次开机的 `rustaller-cachyos-update.service` 在网卡修复、network-online 与 networkd-wait-online 后执行 `pacman -Syu --noconfirm`、`mkinitcpio -P`、`grub-mkconfig`。失败保留标记并重试；全部成功后才移除标记，不额外自动重启。standard/LTS 不启用该仓库。
 
 ## Rust 源解析与只读在线审计
 

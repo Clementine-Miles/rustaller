@@ -37,6 +37,11 @@ fn worker_accepts_only_known_actions_and_validates_initrd_arguments() {
     assert_eq!(config.mac_addr(), "00:11:22:33:44:55");
     assert!(parse_worker_args(["initrd-network", "not-a-mac", "", "", "", "", ""]).is_err());
     assert!(parse_worker_args(["firstboot-fix", "extra"]).is_err());
+    assert_eq!(
+        parse_worker_args(["cachyos-firstboot"]).unwrap(),
+        Some(WorkerAction::CachyosFirstboot)
+    );
+    assert!(parse_worker_args(["cachyos-firstboot", "--anything"]).is_err());
     assert!(parse_worker_args(["unknown"]).is_err());
     assert_eq!(
         parse_worker_args([

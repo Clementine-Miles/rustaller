@@ -15,6 +15,8 @@ pub enum KernelChoice {
     Generic,
     Lts,
     Standard,
+    Virt,
+    Cachyos,
 }
 
 impl KernelChoice {
@@ -25,14 +27,16 @@ impl KernelChoice {
             Self::Generic => "generic",
             Self::Lts => "lts",
             Self::Standard => "standard",
+            Self::Virt => "virt",
+            Self::Cachyos => "cachyos",
         }
     }
 
     pub const fn choices_for(target: Target) -> &'static str {
         match target {
-            Target::Alpine => "auto/cloud/generic/lts",
-            Target::Debian => "auto/cloud/generic",
-            Target::Arch => "auto/standard/lts",
+            Target::Alpine => "standard/virt/lts",
+            Target::Debian => "standard/cloud/generic",
+            Target::Arch => "standard/lts/cachyos",
             Target::Gentoo => "auto/standard",
             Target::LocalIso | Target::NetbootXyz | Target::Reset => "auto",
         }
@@ -49,6 +53,8 @@ impl FromStr for KernelChoice {
             "generic" => Ok(Self::Generic),
             "lts" => Ok(Self::Lts),
             "standard" => Ok(Self::Standard),
+            "virt" => Ok(Self::Virt),
+            "cachyos" | "linux-cachyos" => Ok(Self::Cachyos),
             _ => Err(PostInstallError::InvalidKernel),
         }
     }
@@ -94,7 +100,7 @@ pub enum PostInstallError {
 impl fmt::Display for PostInstallError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidKernel => f.write_str("Invalid official kernel selection"),
+            Self::InvalidKernel => f.write_str("Invalid kernel selection"),
             Self::UnsupportedKernel { target, kernel } => write!(
                 f,
                 "Kernel {} is unavailable for {target}; choose {}",
@@ -150,39 +156,35 @@ impl PostInstallConfig {
         Ok(())
     }
 
-    /// Resolve an official package while retaining the old Auto/VM defaults.
+    /// Resolve distribution-standard defaults and explicit kernel packages.
     pub fn kernel_package(
         &self,
         target: Target,
         no_cloud_kernel: bool,
-        is_virtual_machine: bool,
+        _is_virtual_machine: bool,
     ) -> Result<KernelPackage, PostInstallError> {
         if no_cloud_kernel && self.kernel != KernelChoice::Auto {
             return Err(PostInstallError::ConflictingKernelOptions);
         }
         let (package, alpine_flavor) = match (target, self.kernel) {
-            (Target::Alpine, KernelChoice::Auto) => {
-                if !no_cloud_kernel && is_virtual_machine {
-                    ("linux-virt", Some("virt"))
-                } else {
-                    ("linux-lts", Some("lts"))
-                }
+            (
+                Target::Alpine,
+                KernelChoice::Auto
+                | KernelChoice::Standard
+                | KernelChoice::Generic
+                | KernelChoice::Lts,
+            ) => ("linux-lts", Some("lts")),
+            (Target::Alpine, KernelChoice::Cloud | KernelChoice::Virt) => {
+                ("linux-virt", Some("virt"))
             }
-            (Target::Alpine, KernelChoice::Cloud) => ("linux-virt", Some("virt")),
-            (Target::Alpine, KernelChoice::Generic | KernelChoice::Lts) => {
-                ("linux-lts", Some("lts"))
-            }
-            (Target::Debian, KernelChoice::Auto) => {
-                if no_cloud_kernel {
-                    ("linux-image-amd64", None)
-                } else {
-                    ("linux-image-cloud-amd64", None)
-                }
-            }
+            (
+                Target::Debian,
+                KernelChoice::Auto | KernelChoice::Standard | KernelChoice::Generic,
+            ) => ("linux-image-amd64", None),
             (Target::Debian, KernelChoice::Cloud) => ("linux-image-cloud-amd64", None),
-            (Target::Debian, KernelChoice::Generic) => ("linux-image-amd64", None),
             (Target::Arch, KernelChoice::Auto | KernelChoice::Standard) => ("linux", None),
             (Target::Arch, KernelChoice::Lts) => ("linux-lts", None),
+            (Target::Arch, KernelChoice::Cachyos) => ("linux-cachyos", None),
             (Target::Gentoo, KernelChoice::Auto | KernelChoice::Standard) => {
                 ("sys-kernel/gentoo-kernel-bin", None)
             }

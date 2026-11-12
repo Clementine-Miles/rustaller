@@ -1,6 +1,6 @@
 # 构建与 GitHub 发布
 
-仓库：[Clementine-Miles/rustaller](https://github.com/Clementine-Miles/rustaller)。当前为含真实清盘操作的开发预览：schema=5，XFS 根，GRUB，目标启动后激活可选 swapfile。四目标 BIOS/UEFI 完整验收见 [ACCEPTANCE.md](ACCEPTANCE.md)；Rust ISO/netboot.xyz/reset 交接仍未连接。
+仓库：[Clementine-Miles/rustaller](https://github.com/Clementine-Miles/rustaller)。当前为含真实清盘操作的开发预览：schema=6，XFS/ext4 根，GRUB，目标启动后激活可选 swapfile。四目标 BIOS/UEFI 完整验收见 [ACCEPTANCE.md](ACCEPTANCE.md)；Rust ISO/netboot.xyz/reset 交接仍未连接。
 
 ## 结构与界面
 

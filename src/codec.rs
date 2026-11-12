@@ -1,6 +1,8 @@
 use crate::config::NetworkConfig;
 use crate::config::SwapConfig;
-use crate::config::{DnsConfig, DnsMode, InstallProfile, SystemConfig, SystemConfigError};
+use crate::config::{
+    DnsConfig, DnsMode, InstallProfile, RootFilesystem, SystemConfig, SystemConfigError,
+};
 use crate::model::{
     BootMode, CURRENT_SCHEMA_VERSION, InstallPlan, IsoOptions, PlanError, SecretString, Target,
 };
@@ -52,6 +54,12 @@ pub fn encode_plan(plan: &InstallPlan) -> Result<Vec<u8>, PlanCodecError> {
             .as_ref()
             .map(|secret| secret.expose().as_bytes()),
     )?;
+    put_optional_bytes(
+        &mut output,
+        plan.root_password
+            .as_ref()
+            .map(|secret| secret.expose().as_bytes()),
+    )?;
 
     if plan.ssh_keys.len() > MAX_SSH_KEYS {
         return Err(PlanCodecError::TooManySshKeys);
@@ -85,6 +93,10 @@ pub fn encode_plan(plan: &InstallPlan) -> Result<Vec<u8>, PlanCodecError> {
         }
     }
     output.push(u8::from(plan.debug));
+    output.push(match plan.system.root_filesystem {
+        RootFilesystem::Xfs => 0,
+        RootFilesystem::Ext4 => 1,
+    });
     output.push(match plan.system.profile {
         InstallProfile::Standard => 0,
         InstallProfile::Minimal => 1,
@@ -143,6 +155,8 @@ pub fn encode_plan(plan: &InstallPlan) -> Result<Vec<u8>, PlanCodecError> {
         KernelChoice::Generic => 2,
         KernelChoice::Lts => 3,
         KernelChoice::Standard => 4,
+        KernelChoice::Virt => 5,
+        KernelChoice::Cachyos => 6,
     });
     put_optional_string(&mut output, plan.post_install.hostname.as_deref())?;
     put_optional_string(&mut output, plan.post_install.timezone.as_deref())?;
@@ -171,6 +185,12 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
     let target = tag_to_target(reader.read_u8()?)?;
     let username = reader.read_optional_string()?;
     let password = match reader.read_optional_bytes()? {
+        Some(value) => {
+            Some(SecretString::from_bytes(value).map_err(|_| PlanCodecError::InvalidUtf8)?)
+        }
+        None => None,
+    };
+    let root_password = match reader.read_optional_bytes()? {
         Some(value) => {
             Some(SecretString::from_bytes(value).map_err(|_| PlanCodecError::InvalidUtf8)?)
         }
@@ -211,6 +231,11 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
         _ => return Err(PlanCodecError::InvalidTag),
     };
     let debug = reader.read_bool()?;
+    let root_filesystem = match reader.read_u8()? {
+        0 => RootFilesystem::Xfs,
+        1 => RootFilesystem::Ext4,
+        _ => return Err(PlanCodecError::InvalidTag),
+    };
     let profile = match reader.read_u8()? {
         0 => InstallProfile::Standard,
         1 => InstallProfile::Minimal,
@@ -281,6 +306,7 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
         swappiness: reader.read_optional_u8()?,
     };
     let system = SystemConfig {
+        root_filesystem,
         profile,
         with_tools,
         keep_docs,
@@ -300,6 +326,8 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
             2 => KernelChoice::Generic,
             3 => KernelChoice::Lts,
             4 => KernelChoice::Standard,
+            5 => KernelChoice::Virt,
+            6 => KernelChoice::Cachyos,
             _ => return Err(PlanCodecError::InvalidTag),
         },
         hostname: reader.read_optional_string()?,
@@ -314,6 +342,7 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
         target,
         username,
         password,
+        root_password,
         ssh_keys,
         ssh_port,
         web_port,

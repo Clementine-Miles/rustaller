@@ -144,3 +144,73 @@ fn boot_mode_has_only_bios_and_efi_variants() {
     assert_eq!(BootMode::Bios.as_str(), "bios");
     assert_eq!(BootMode::Efi.as_str(), "efi");
 }
+
+#[test]
+fn non_root_installation_requires_a_private_root_password_only_at_dispatch() {
+    use rustaller::model::PlanError;
+    for target in [Target::Alpine, Target::Debian, Target::Arch, Target::Gentoo] {
+        let mut plan = InstallPlan::new(target);
+        plan.username = Some("admin".into());
+        plan.ssh_keys = vec!["ssh-ed25519 AAAATEST admin".into()];
+        assert!(
+            plan.validate().is_ok(),
+            "inspection permits incomplete credentials"
+        );
+        assert_eq!(
+            plan.validate_install_credentials(),
+            Err(PlanError::MissingRootPassword)
+        );
+        plan.root_password = Some(SecretString::new(" root password with spaces "));
+        assert!(plan.validate_install_credentials().is_ok());
+        assert!(!format!("{plan:?}").contains("root password with spaces"));
+        assert!(
+            plan.password.is_none(),
+            "root credential does not change login authentication"
+        );
+        for invalid in [
+            "",
+            "root\nother:password",
+            "root\0password",
+            "root\rpassword",
+        ] {
+            plan.root_password = Some(SecretString::new(invalid));
+            assert_eq!(plan.validate(), Err(PlanError::InvalidPassword));
+        }
+        plan.root_password = Some(SecretString::new("valid-root-secret"));
+        plan.hold = Some(1);
+        assert!(
+            plan.validate().is_err(),
+            "rescue must not carry an unused root password"
+        );
+        plan.root_password = None;
+        assert!(plan.validate_install_credentials().is_ok());
+    }
+    let mut root = InstallPlan::new(Target::Debian);
+    assert!(root.validate_install_credentials().is_ok());
+    root.root_password = Some(SecretString::new("unused"));
+    assert!(
+        root.validate().is_err(),
+        "root login uses the existing password field"
+    );
+}
+
+#[test]
+fn filesystem_choices_validate_routes_and_keep_xfs_as_the_default() {
+    use rustaller::config::RootFilesystem;
+    assert_eq!(RootFilesystem::default(), RootFilesystem::Xfs);
+    assert_eq!(
+        "ext4".parse::<RootFilesystem>().unwrap(),
+        RootFilesystem::Ext4
+    );
+    for invalid in ["", "btrfs", "ext4;reboot", "EXT4"] {
+        assert!(invalid.parse::<RootFilesystem>().is_err());
+    }
+    let mut plan = InstallPlan::new(Target::Debian);
+    plan.system.root_filesystem = RootFilesystem::Ext4;
+    assert!(plan.validate().is_ok());
+    plan.hold = Some(1);
+    assert!(plan.validate().is_err());
+    plan.hold = None;
+    plan.target = Target::Reset;
+    assert!(plan.validate().is_err());
+}

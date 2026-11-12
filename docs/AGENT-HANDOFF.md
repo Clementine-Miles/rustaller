@@ -5,9 +5,11 @@
 ## 当前状态
 
 - Linux x86_64，英文多级 TUI；四目标经认证的 Alpine Live 和 kexec 安装，最后只重启一次。已有真实清盘能力，四系统 BIOS/UEFI 完整验收尚未通过，保持开发预览。
-- 根为 XFS，保留 GRUB（SeaBIOS/UEFI）与 Alpine/OpenRC。EFI Stub 已取消，[评估](EFI-STUB-OPTIONS.md)仅为历史记录。
-- Live 清盘前检查 XFS 模块及扣除 ESP/对齐后的根容量；mkfs 禁用 reflink/bigtime/inobtcount/nrext64，以 `-K` 跳过整卷 discard。swapfile 用 GNU dd 写零、核对长度/块数，0600、mkswap、fstab，仅目标开机激活；容量解析固定 `LC_ALL=C`。
-- 计划 schema=5、manifest schema=1、Rust 标记 `PERSONAL-LINUX-XFS-20261102-05`，拒绝旧计划及混用 worker。Shell 四资源及旧标记保持不变。
+- 根可选 XFS（默认）/ext4，保留 GRUB（SeaBIOS/UEFI）与 Alpine/OpenRC。EFI Stub 已取消，[评估](EFI-STUB-OPTIONS.md)仅为历史记录。
+- Live 清盘前检查所选文件系统模块及扣除 ESP/对齐后的根容量。XFS 保留兼容特性与 `-K`，ext4 禁止整卷 discard 并完整初始化 inode/journal；fstab、initramfs、GRUB 随选择配置。swapfile 支持两者，仅新目标开机激活，原系统/Live 不 swapon/swapoff。
+- 计划 schema=6、manifest schema=1、Rust 标记 `RUSTALLER-CONFIG-20261112-06`，拒绝旧计划及混用 worker。Shell 四资源及旧标记保持不变。
+- 内核默认与选项、主机名继承、非 root 用户的独立 root 密码见 [POSTINSTALL.md](POSTINSTALL.md)；公共 DNS/Custom 与文件系统输入见 [CONFIGURATION.md](CONFIGURATION.md)。Gentoo 内核/init 保持不变。
+- Arch 显式选择 CachyOS 才启用固定官方脚本、完整密钥和 OS 可用 ISA 仓库检测；首次目标开机完成全包升级、initramfs/GRUB 更新，失败保留状态并重试，不额外自动重启。资源固定值见 [SOURCES.md](SOURCES.md)。
 - 仓库：https://github.com/Clementine-Miles/rustaller 。Cargo 主包、CLI 为 `rustaller`，worker 为 `rustaller-worker`；GNU GPLv3，保留上游声明与署名。
 - 主 crate + xtask，`tests/verify` 独立。核心无第三方运行时依赖；tui 可选，libc 仅测试、sha2 仅开发工具。模块声明集中在 `lib.rs`，公共 Live 命令默认值在 `command::live_command`，环境与重试留在适配器。
 - 源码包保留 Cargo.lock、公开密钥、fixture、`.github`/`.cargo`，排除 `.git`、构建产物、VM、日志与私钥。
@@ -48,7 +50,9 @@ cargo xtask check
 | 四目标安装与 minimal 包策略 | targets/install.rs、packages.rs、debian.rs、rolling.rs | 尚无完整安装成功验收；不能承诺最终几十 MB |
 | 当前系统持久配置 | host/current.rs | 备份、原生 SSH 校验；不自动重启服务/在线加载 sysctl |
 | 原生 ssh-keygen | host/ssh_keygen.rs、TUI | 调用系统工具，可配置 rounds/cipher/type/comment，仅公钥序列化 |
-| DNS/网络与可选 swapfile | shared/dns.rs、network.rs、swapfile.rs | swap 仅新目标 XFS，源/Live 不 swapon/swapoff |
+| DNS/网络与可选 swapfile | shared/dns.rs、network.rs、swapfile.rs | 预设/Custom 只提交选中值；swap 仅新目标 XFS/ext4 |
+| 原主机名与私密 root 密码输入 | host/hostname.rs、password.rs | 原系统检测后交接；非 root 安装必填，root SSH 仍禁用 |
+| 可选 CachyOS | targets/cachyos.rs | 固定官方脚本与密钥、ISA 仓库、独立首次开机更新服务 |
 | ISO/netboot.xyz/reset | host/iso.rs、boot.rs、args.rs、TUI | Rust 实际交接未接通，不得描述为可用 |
 | 开发与 VM 验收 | xtask/src/ | 不随目标运行时分发 |
 
@@ -86,7 +90,9 @@ cargo xtask vm-acceptance install \
 
 覆盖四系统 × BIOS/UEFI，再扩展 virtio-scsi、SATA、NVMe、PVSCSI；源内核也须支持控制器。TCG 设备模拟不替代真实 KVM/ESXi/Hyper-V/Xen HVM 验收。
 
-每例须看到 Live/start 与 install-complete、dispatch 后 QMP 恰好一次 RESET、新磁盘启动、正确 distro/hostname/kernel、公钥 SSH、XFS/UUID fstab、GRUB/UEFI fallback、DNS/默认路由、原生包元数据更新和目标开机激活 swapfile。IPv6-only、多 NIC、特殊路由及真实 4Kn 另验。
+每例须看到 Live/start 与 install-complete、dispatch 后 QMP 恰好一次 RESET、新磁盘启动、正确 distro/hostname/kernel、公钥 SSH、所选文件系统/UUID fstab、GRUB/UEFI fallback、DNS/默认路由、原生包元数据更新和目标开机激活 swapfile。IPv6-only、多 NIC、特殊路由及真实 4Kn 另验。
+
+新配置须补验收：各显式内核 × XFS/ext4 × BIOS/UEFI，源 hostname 继承/缺失，非 root 用户与 root 密码及禁用 root SSH，公共/自定义 DNS 切换和重启后解析。CachyOS 分别验证基线/v3/v4/适用 znver4、仓库签名、首次升级成功/网络失败重试、更新后内核/GRUB 及无额外自动重启；尚无这些新增案例的完整 VM 通过证据。
 
 故障覆盖身份改变/多盘同身份、挂载/swap 占用、只读盘、低 RAM、下载/签名失败、缺驱动、GRUB/SSH 校验失败。清盘前的拒绝条件不得延后，安装失败不得最终重启。
 

@@ -3,6 +3,8 @@ pub(super) enum Field {
     Username,
     Password,
     Confirm,
+    RootPassword,
+    RootConfirm,
     SshPort,
     Hostname,
     Timezone,
@@ -38,6 +40,8 @@ impl Field {
             Self::Username => "Username",
             Self::Password => "New password",
             Self::Confirm => "Confirm password",
+            Self::RootPassword => "Root account password",
+            Self::RootConfirm => "Confirm root password",
             Self::SshPort => "SSH port",
             Self::Hostname => "Hostname",
             Self::Timezone => "Timezone",
@@ -71,7 +75,13 @@ impl Field {
     pub fn secret(self) -> bool {
         matches!(
             self,
-            Self::Password | Self::Confirm | Self::Confhome | Self::Frpc | Self::IsoCmdline
+            Self::Password
+                | Self::Confirm
+                | Self::RootPassword
+                | Self::RootConfirm
+                | Self::Confhome
+                | Self::Frpc
+                | Self::IsoCmdline
         )
     }
     pub fn option(self) -> &'static str {
@@ -79,6 +89,8 @@ impl Field {
             Self::Username => "--username",
             Self::Password => "--password",
             Self::Confirm => "",
+            Self::RootPassword => "--root-password",
+            Self::RootConfirm => "",
             Self::SshPort => "--ssh-port",
             Self::Hostname => "--hostname",
             Self::Timezone => "--timezone",
@@ -111,14 +123,14 @@ impl Field {
             Self::Username => {
                 "1-32 ASCII letters, digits, _ or -; begin with a letter or _. Current-system mode requires an existing user."
             }
-            Self::Password | Self::Confirm => {
+            Self::Password | Self::Confirm | Self::RootPassword | Self::RootConfirm => {
                 "Hidden input. Leading/trailing spaces are preserved; both passwords must match."
             }
             Self::SshPort | Self::WebPort => {
                 "Use a port from 1 to 65535. A blank SSH port leaves the current system unchanged."
             }
             Self::Hostname => {
-                "One ASCII label, 1-63 letters, digits or hyphens. Blank: rustaller for a new install; unchanged in current-system mode."
+                "One ASCII label, 1-63 letters, digits or hyphens. Blank: use the existing hostname, then the target system name; unchanged in current-system mode."
             }
             Self::Timezone => {
                 "Optional IANA name, for example Etc/UTC, Asia/Shanghai or America/New_York."
@@ -165,7 +177,7 @@ impl Field {
             }
             Self::Syncookies => "Optional: 0=off, 1=on. Blank leaves it unspecified.",
             Self::SwapSize => {
-                "64-65536 MiB; 1024 MiB=1 GiB, 2048 MiB=2 GiB. Target /swapfile, xfs, mode 0600 and fstab activation."
+                "64-65536 MiB; 1024 MiB=1 GiB, 2048 MiB=2 GiB. Target /swapfile, mode 0600 and activation at target boot."
             }
             Self::Swappiness => {
                 "Optional: 0-200. Read by the new system at boot; source/Live swapon and swapoff are never run."

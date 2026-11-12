@@ -426,6 +426,45 @@ fn alpine_swap_enables_native_openrc_boot_service() {
     );
 }
 
+#[test]
+fn ext4_swapfile_requires_matching_mount_and_stays_inactive_until_target_boot() {
+    let scratch = Scratch::new();
+    scratch.write("etc/fstab", "UUID=root / ext4 defaults 0 1\n");
+    let mut selected = plan(Target::Debian);
+    selected.system.root_filesystem = rustaller::config::RootFilesystem::Ext4;
+    selected.system.swap.size_mib = Some(64);
+    let selected = live(selected);
+    let mut mismatch = MockRunner::new([out(0, "xfs\n")]);
+    assert!(prepare_swapfile(&mut mismatch, &scratch.0, &selected, |_, _| {}).is_err());
+    assert!(!scratch.0.join("swapfile").exists());
+    let mut runner = SwapSafeRunner::new(SwapIoRunner(MockRunner::new([
+        out(0, "ext4\n"),
+        out(0, "header\n/dev/mock 4096 512 3584 13% /os\n"),
+        out(0, ""),
+        out(0, ""),
+    ])));
+    assert!(prepare_swapfile(&mut runner, &scratch.0, &selected, |_, _| {}).unwrap());
+    assert_eq!(
+        fs::metadata(scratch.0.join("swapfile")).unwrap().len(),
+        64 * 1024 * 1024
+    );
+    assert_eq!(
+        scratch
+            .read("etc/fstab")
+            .matches("/swapfile none swap defaults 0 0")
+            .count(),
+        1
+    );
+    assert!(
+        !runner
+            .into_inner()
+            .0
+            .calls()
+            .iter()
+            .any(|c| c.program == "swapon" || c.program == "swapoff")
+    );
+}
+
 struct FakeKeygen {
     calls: Vec<CommandSpec>,
     status: i32,

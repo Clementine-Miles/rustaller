@@ -44,6 +44,7 @@ pub fn run(
         Terminal::new(CrosstermBackend::new(io::stdout())).map_err(|error| error.to_string())?;
     terminal.clear().map_err(|error| error.to_string())?;
     let mut wizard = Wizard::new(confhome);
+    wizard.prefill_hostnames(std::path::Path::new("/"));
     loop {
         terminal
             .draw(|frame| wizard.render(frame))

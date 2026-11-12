@@ -9,6 +9,8 @@ fn plan_round_trip_preserves_all_modes_and_private_fields() {
     let mut plan = InstallPlan::new(Target::Debian);
     plan.username = Some("admin".into());
     plan.password = Some(SecretString::new("p@ssword"));
+    plan.root_password = Some(SecretString::new("root-only-secret"));
+    plan.system.root_filesystem = rustaller::config::RootFilesystem::Ext4;
     plan.ssh_port = Some(2200);
     plan.web_port = Some(8080);
     plan.frpc_config = Some("/root/private/frpc.toml".into());
@@ -31,6 +33,15 @@ fn plan_round_trip_preserves_all_modes_and_private_fields() {
         Some("p@ssword")
     );
     assert_eq!(decoded.ssh_port, plan.ssh_port);
+    assert_eq!(
+        decoded.root_password.as_ref().map(SecretString::expose),
+        Some("root-only-secret")
+    );
+    assert_eq!(
+        decoded.system.root_filesystem,
+        rustaller::config::RootFilesystem::Ext4
+    );
+    assert!(!format!("{decoded:?}").contains("root-only-secret"));
     assert_eq!(decoded.web_port, plan.web_port);
     assert_eq!(decoded.frpc_config, plan.frpc_config);
     assert_eq!(decoded.target_disk, plan.target_disk);
@@ -106,8 +117,12 @@ fn decoder_rejects_bad_magic_truncation_trailing_data_and_invalid_plan() {
 fn kernel_choices_round_trip_and_unsupported_schemas_fail_before_body_decoding() {
     for (target, kernel) in [
         (Target::Alpine, KernelChoice::Cloud),
+        (Target::Alpine, KernelChoice::Virt),
+        (Target::Alpine, KernelChoice::Standard),
         (Target::Debian, KernelChoice::Generic),
+        (Target::Debian, KernelChoice::Standard),
         (Target::Arch, KernelChoice::Lts),
+        (Target::Arch, KernelChoice::Cachyos),
         (Target::Gentoo, KernelChoice::Standard),
     ] {
         let mut plan = InstallPlan::new(target);
@@ -120,7 +135,7 @@ fn kernel_choices_round_trip_and_unsupported_schemas_fail_before_body_decoding()
             plan.post_install
         );
     }
-    for schema in [1, 2, 3, 4, CURRENT_SCHEMA_VERSION + 1] {
+    for schema in [1, 2, 3, 4, 5, CURRENT_SCHEMA_VERSION + 1] {
         let mut bytes = b"RINSTALL\0".to_vec();
         bytes.extend_from_slice(&schema.to_le_bytes());
         assert!(

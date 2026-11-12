@@ -3,7 +3,7 @@ pub(super) use super::fields::Field;
 use super::fields::TCP_FIELDS;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rustaller::config::{AddressPreference, CongestionControl, Ipv6Policy, QueueDiscipline};
-use rustaller::config::{DnsMode, InstallProfile};
+use rustaller::config::{DnsMode, InstallProfile, RootFilesystem};
 use rustaller::host::current::{CurrentConfig, CurrentReport, detect_current_target};
 use rustaller::host::ssh_keygen::{self, GeneratedKey, KeyType, KeygenOptions};
 use rustaller::model::{BootMode, InstallPlan, Target};
@@ -30,6 +30,23 @@ pub(super) enum IsoMode {
     Loopback,
     Kernel,
 }
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(super) enum DnsProvider {
+    Custom,
+    Cloudflare,
+    Google,
+    Quad9,
+}
+impl DnsProvider {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Custom => "Custom",
+            Self::Cloudflare => "Cloudflare",
+            Self::Google => "Google",
+            Self::Quad9 => "Quad9",
+        }
+    }
+}
 #[derive(Clone, Eq, PartialEq)]
 pub(super) struct Draft {
     pub values: Vec<TextValue>,
@@ -43,6 +60,8 @@ pub(super) struct Draft {
     pub debug: bool,
     pub profile: InstallProfile,
     pub dns_mode: DnsMode,
+    pub dns_provider: DnsProvider,
+    pub root_filesystem: RootFilesystem,
     pub with_tools: bool,
     pub keep_docs: bool,
     pub keep_package_cache: bool,
@@ -70,6 +89,8 @@ impl Draft {
             debug: false,
             profile: InstallProfile::Standard,
             dns_mode: DnsMode::Auto,
+            dns_provider: DnsProvider::Custom,
+            root_filesystem: RootFilesystem::Xfs,
             with_tools: false,
             keep_docs: false,
             keep_package_cache: false,
@@ -104,7 +125,10 @@ impl Draft {
     }
     pub fn display(&self, field: Field) -> String {
         let value = self.get(field);
-        let value = if matches!(field, Field::Password | Field::Confirm) {
+        let value = if matches!(
+            field,
+            Field::Password | Field::Confirm | Field::RootPassword | Field::RootConfirm
+        ) {
             value
         } else {
             value.trim()
@@ -120,6 +144,30 @@ impl Draft {
         }
         clean(value)
     }
+    pub fn dns_servers(&self) -> String {
+        let ipv6 = self.ipv6 != Ipv6Policy::Disable;
+        match self.dns_provider {
+            DnsProvider::Custom => self.get(Field::DnsServers).trim().to_owned(),
+            DnsProvider::Cloudflare => if ipv6 {
+                "1.1.1.1,1.0.0.1,2606:4700:4700::1111"
+            } else {
+                "1.1.1.1,1.0.0.1"
+            }
+            .into(),
+            DnsProvider::Google => if ipv6 {
+                "8.8.8.8,8.8.4.4,2001:4860:4860::8888"
+            } else {
+                "8.8.8.8,8.8.4.4"
+            }
+            .into(),
+            DnsProvider::Quad9 => if ipv6 {
+                "9.9.9.9,149.112.112.112,2620:fe::fe"
+            } else {
+                "9.9.9.9,149.112.112.112"
+            }
+            .into(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -130,6 +178,7 @@ pub(super) enum Page {
     Account,
     Auth,
     Passwords,
+    RootPasswords,
     Keys,
     KeyActions(usize),
     Host,
@@ -154,6 +203,7 @@ impl Page {
             Self::Account => "Account and SSH",
             Self::Auth => "Authentication",
             Self::Passwords => "Password settings",
+            Self::RootPasswords => "Root account password",
             Self::Keys => "SSH public keys",
             Self::KeyActions(_) => "Public key actions",
             Self::Host => "Host settings",
@@ -214,6 +264,7 @@ pub(super) enum Setting {
     IsoMode,
     Profile,
     DnsMode,
+    RootFilesystem,
     Congestion,
     Qdisc,
     Ipv6,
@@ -291,6 +342,19 @@ pub(super) struct Wizard {
 }
 
 impl Wizard {
+    pub fn prefill_hostnames(&mut self, root: &std::path::Path) {
+        for (index, target) in [Target::Alpine, Target::Debian, Target::Arch, Target::Gentoo]
+            .into_iter()
+            .enumerate()
+        {
+            if self.drafts[index].get(Field::Hostname).trim().is_empty() {
+                self.drafts[index].set(
+                    Field::Hostname,
+                    rustaller::host::hostname::default_hostname(target, root),
+                );
+            }
+        }
+    }
     pub fn new(confhome: Option<String>) -> Self {
         let comment = ssh_keygen::date_comment();
         let key_path = std::env::var_os("HOME")
@@ -360,6 +424,13 @@ impl Wizard {
     }
     pub fn has_account(&self) -> bool {
         self.choice < 4 || self.choice == 5 || self.is_current()
+    }
+    pub fn kernel_label(&self) -> &'static str {
+        if self.choice < 3 && self.draft().kernel == KernelChoice::Auto {
+            "standard"
+        } else {
+            self.draft().kernel.as_str()
+        }
     }
     fn open(&mut self, page: Page) {
         self.frames.push(MenuFrame {
@@ -521,6 +592,16 @@ impl Wizard {
             {
                 return Err("Port must be an integer from 1 to 65535".into());
             }
+            EditSlot::Field(Field::DnsServers) => {
+                let servers = value.split(',').map(|server| server.trim().parse().map_err(|_| "DNS requires comma-separated IPv4/IPv6 addresses without empty entries".to_owned())).collect::<Result<_, _>>()?;
+                rustaller::config::DnsConfig {
+                    mode: DnsMode::Static,
+                    servers,
+                    search_domains: Vec::new(),
+                }
+                .validate()
+                .map_err(|error| error.to_string())?;
+            }
             EditSlot::Key(_) | EditSlot::NewKey if !valid_public_key_source(value) => {
                 return Err("Enter a nonempty SSH public key/source, never a private key".into());
             }
@@ -539,6 +620,13 @@ impl Wizard {
             EditSlot::Field(field) => self.draft_mut().set(field, value),
             EditSlot::Key(index) => self.draft_mut().keys[index].replace(value.trim().into()),
             EditSlot::NewKey => self.draft_mut().keys.push(TextValue::new(value.trim())),
+        }
+        if matches!(slot, EditSlot::Field(Field::Username))
+            && self.is_automatic()
+            && self.draft().get(Field::Username).trim() != "root"
+            && self.draft().get(Field::RootPassword).is_empty()
+        {
+            self.open(Page::RootPasswords);
         }
         Ok(())
     }
@@ -768,6 +856,8 @@ impl Wizard {
             for field in [
                 Field::Password,
                 Field::Confirm,
+                Field::RootPassword,
+                Field::RootConfirm,
                 Field::Confhome,
                 Field::Frpc,
                 Field::IsoCmdline,

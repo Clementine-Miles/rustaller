@@ -1,10 +1,12 @@
 use super::editor::{Editor, MAX_INPUT, TextValue};
-use super::state::{Action, Authentication, EditSlot, Field, IsoMode, MenuFrame, Page, View};
+use super::state::{
+    Action, Authentication, DnsProvider, EditSlot, Field, IsoMode, MenuFrame, Page, Setting, View,
+};
 use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{Terminal, backend::TestBackend};
 use rustaller::codec::encode_plan;
-use rustaller::config::{DnsMode, InstallProfile};
+use rustaller::config::{DnsMode, InstallProfile, Ipv6Policy, RootFilesystem};
 use rustaller::host::args::{CliOutcome, parse_args};
 use rustaller::model::{BootMode, SecretString};
 use rustaller::postinstall::KernelChoice;
@@ -64,6 +66,8 @@ fn set(wizard: &mut Wizard, field: Field, value: &str) {
 fn credentials(wizard: &mut Wizard) {
     set(wizard, Field::Password, "test-password");
     set(wizard, Field::Confirm, "test-password");
+    set(wizard, Field::RootPassword, "test-root-password");
+    set(wizard, Field::RootConfirm, "test-root-password");
 }
 fn render(wizard: &mut Wizard, width: u16, height: u16) -> String {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -351,6 +355,15 @@ fn keyboard_navigates_nested_categories_and_editor_commit_or_cancel_preserves_dr
     wizard.paste("alice");
     press(&mut wizard, KeyCode::Enter);
     assert_eq!(wizard.draft().get(Field::Username), "alice");
+    assert_eq!(wizard.page(), Page::RootPasswords);
+    press(&mut wizard, KeyCode::Enter);
+    wizard.paste("  separate root password  ");
+    press(&mut wizard, KeyCode::Enter);
+    press(&mut wizard, KeyCode::Down);
+    press(&mut wizard, KeyCode::Enter);
+    wizard.paste("  separate root password  ");
+    press(&mut wizard, KeyCode::Enter);
+    press(&mut wizard, KeyCode::Esc);
     press(&mut wizard, KeyCode::Down);
     press(&mut wizard, KeyCode::Enter);
     assert_eq!(wizard.page(), Page::Auth);
@@ -381,6 +394,21 @@ fn keyboard_navigates_nested_categories_and_editor_commit_or_cancel_preserves_dr
             .as_ref()
             .map(SecretString::expose),
         Some("  exact password  ")
+    );
+    assert_eq!(
+        wizard
+            .build_plan()
+            .unwrap()
+            .root_password
+            .as_ref()
+            .map(SecretString::expose),
+        Some("  separate root password  ")
+    );
+    assert!(
+        !wizard
+            .summary()
+            .join("\n")
+            .contains("separate root password")
     );
 }
 
@@ -736,6 +764,8 @@ fn all_automatic_targets_match_cli_plan_encoding_including_multiple_keys_and_hos
         let mut wizard = wizard();
         choose(&mut wizard, index);
         set(&mut wizard, Field::Username, "admin");
+        set(&mut wizard, Field::RootPassword, "test-root-password");
+        set(&mut wizard, Field::RootConfirm, "test-root-password");
         set(&mut wizard, Field::Hostname, "my-vps");
         set(&mut wizard, Field::Timezone, "Etc/UTC");
         set(&mut wizard, Field::Disk, "/dev/vda");
@@ -757,6 +787,8 @@ fn all_automatic_targets_match_cli_plan_encoding_including_multiple_keys_and_hos
                 target,
                 "--username",
                 "admin",
+                "--root-password",
+                "test-root-password",
                 "--ssh-port",
                 "2200",
                 "--web-port",
@@ -893,7 +925,7 @@ fn selectors_offer_only_target_kernels_and_do_not_apply_cancelled_choices() {
     let View::Select { setting, .. } = wizard.view else {
         panic!("selector")
     };
-    assert_eq!(wizard.choices(setting), ["auto", "cloud", "generic"]);
+    assert_eq!(wizard.choices(setting), ["standard", "cloud", "generic"]);
     press(&mut wizard, KeyCode::End);
     press(&mut wizard, KeyCode::Esc);
     assert!(wizard.draft().kernel == KernelChoice::Auto);
@@ -974,6 +1006,8 @@ fn summary_displays_effective_trimmed_options_but_keeps_exact_password_whitespac
     set(&mut wizard, Field::Frpc, "   ");
     set(&mut wizard, Field::Password, "  exact  ");
     set(&mut wizard, Field::Confirm, "  exact  ");
+    set(&mut wizard, Field::RootPassword, "test-root-password");
+    set(&mut wizard, Field::RootConfirm, "test-root-password");
     let plan = wizard.build_plan().unwrap();
     assert_eq!(plan.username.as_deref(), Some("alice"));
     assert!(plan.frpc_config.is_none());
@@ -1167,4 +1201,224 @@ fn inactive_dns_and_minimal_overrides_are_not_submitted_or_exposed_for_rescue() 
             Action::Open(Page::Installation | Page::Network)
         )));
     }
+}
+
+#[test]
+fn nonroot_installation_prompts_for_separate_confirmed_root_password_and_redacts_it() {
+    let mut wizard = wizard();
+    choose(&mut wizard, 1);
+    credentials(&mut wizard);
+    open(&mut wizard, Page::Account);
+    focus(&mut wizard, |action| {
+        matches!(action, Action::Edit(EditSlot::Field(Field::Username)))
+    });
+    press(&mut wizard, KeyCode::Enter);
+    control(&mut wizard, 'u');
+    wizard.paste("admin");
+    // An existing valid root password does not require a repeat prompt.
+    set(&mut wizard, Field::RootPassword, "");
+    set(&mut wizard, Field::RootConfirm, "");
+    press(&mut wizard, KeyCode::Enter);
+    assert_eq!(wizard.page(), Page::RootPasswords);
+    assert!(
+        wizard
+            .build_plan()
+            .unwrap_err()
+            .contains("root account password")
+    );
+    set(
+        &mut wizard,
+        Field::RootPassword,
+        "  ROOT-PRIVATE-SENTINEL  ",
+    );
+    set(&mut wizard, Field::RootConfirm, "mismatch");
+    assert!(wizard.build_plan().unwrap_err().contains("root passwords"));
+    set(&mut wizard, Field::RootConfirm, "  ROOT-PRIVATE-SENTINEL  ");
+    let plan = wizard.build_plan().unwrap();
+    assert_eq!(
+        plan.root_password.as_ref().unwrap().expose(),
+        "  ROOT-PRIVATE-SENTINEL  "
+    );
+    assert_eq!(plan.password.as_ref().unwrap().expose(), "test-password");
+    assert!(
+        !wizard
+            .summary()
+            .join("\n")
+            .contains("ROOT-PRIVATE-SENTINEL")
+    );
+    assert!(!render(&mut wizard, 100, 30).contains("ROOT-PRIVATE-SENTINEL"));
+    wizard.complete(Err("failure: ROOT-PRIVATE-SENTINEL".into()));
+    assert!(!render(&mut wizard, 100, 30).contains("ROOT-PRIVATE-SENTINEL"));
+    set(&mut wizard, Field::Username, "root");
+    assert!(wizard.build_plan().unwrap().root_password.is_none());
+    wizard.choice = 8;
+    wizard.frames.last_mut().unwrap().page = Page::Account;
+    assert!(
+        !wizard
+            .entries()
+            .iter()
+            .any(|entry| matches!(entry.action, Action::Open(Page::RootPasswords)))
+    );
+}
+
+#[test]
+fn dns_provider_switches_preserve_custom_drafts_but_submit_only_selected_values() {
+    let mut wizard = wizard();
+    choose(&mut wizard, 0);
+    credentials(&mut wizard);
+    set(
+        &mut wizard,
+        Field::DnsServers,
+        " 192.0.2.53 , 2001:db8::53 ",
+    );
+    set(&mut wizard, Field::DnsSearch, "example.internal");
+    wizard.select(Setting::DnsMode, 1);
+    assert_eq!(wizard.build_plan().unwrap().system.dns.servers.len(), 2);
+    for (index, provider, first) in [
+        (2, DnsProvider::Cloudflare, "1.1.1.1"),
+        (3, DnsProvider::Google, "8.8.8.8"),
+        (4, DnsProvider::Quad9, "9.9.9.9"),
+    ] {
+        wizard.select(Setting::DnsMode, index);
+        assert!(wizard.draft().dns_provider == provider);
+        let plan = wizard.build_plan().unwrap();
+        assert_eq!(plan.system.dns.servers.len(), 3);
+        assert_eq!(plan.system.dns.servers[0].to_string(), first);
+        assert!(
+            !plan
+                .system
+                .dns
+                .servers
+                .iter()
+                .any(|ip| ip.to_string() == "192.0.2.53")
+        );
+        wizard.draft_mut().ipv6 = Ipv6Policy::Disable;
+        let plan = wizard.build_plan().unwrap();
+        assert_eq!(plan.system.dns.servers.len(), 2);
+        assert!(
+            plan.system
+                .dns
+                .servers
+                .iter()
+                .all(std::net::IpAddr::is_ipv4)
+        );
+        wizard.draft_mut().ipv6 = Ipv6Policy::Inherit;
+    }
+    wizard.select(Setting::DnsMode, 1);
+    assert_eq!(
+        wizard.draft().get(Field::DnsServers),
+        " 192.0.2.53 , 2001:db8::53 "
+    );
+    assert_eq!(
+        wizard.build_plan().unwrap().system.dns.servers[0].to_string(),
+        "192.0.2.53"
+    );
+    wizard.select(Setting::DnsMode, 0);
+    set(&mut wizard, Field::DnsSearch, "invalid/domain");
+    set(&mut wizard, Field::DnsServers, "invalid");
+    let plan = wizard.build_plan().unwrap();
+    assert!(plan.system.dns.servers.is_empty());
+    assert!(plan.system.dns.search_domains.is_empty());
+    // Selecting a preset must not consume the stale custom input.
+    wizard.select(Setting::DnsMode, 2);
+    set(&mut wizard, Field::DnsSearch, "");
+    assert_eq!(
+        wizard.build_plan().unwrap().system.dns.servers[0].to_string(),
+        "1.1.1.1"
+    );
+}
+
+#[test]
+fn custom_dns_editor_rejects_empty_invalid_duplicate_and_unsafe_addresses() {
+    let mut wizard = wizard();
+    choose(&mut wizard, 1);
+    credentials(&mut wizard);
+    open(&mut wizard, Page::Network);
+    open(&mut wizard, Page::Dns);
+    wizard.select(Setting::DnsMode, 1);
+    for value in [
+        "",
+        "1.1.1.1,",
+        ",1.1.1.1",
+        "1.1.1.1,,8.8.8.8",
+        "1.1.1.1,1.1.1.1",
+        "127.0.0.1",
+        "fe80::1",
+        "https://dns.example",
+        "1.1.1.1 8.8.8.8",
+    ] {
+        focus(&mut wizard, |action| {
+            matches!(action, Action::Edit(EditSlot::Field(Field::DnsServers)))
+        });
+        press(&mut wizard, KeyCode::Enter);
+        control(&mut wizard, 'u');
+        wizard.paste(value);
+        press(&mut wizard, KeyCode::Enter);
+        assert!(
+            matches!(wizard.view, View::Edit { .. }),
+            "accepted invalid DNS input"
+        );
+        assert!(!wizard.error.is_empty());
+        press(&mut wizard, KeyCode::Esc);
+    }
+    focus(&mut wizard, |action| {
+        matches!(action, Action::Edit(EditSlot::Field(Field::DnsServers)))
+    });
+    press(&mut wizard, KeyCode::Enter);
+    wizard.paste(" 1.1.1.1 , 2606:4700:4700::1111 ");
+    press(&mut wizard, KeyCode::Enter);
+    assert!(matches!(wizard.view, View::Menu));
+    assert_eq!(wizard.build_plan().unwrap().system.dns.servers.len(), 2);
+    wizard.choice = 8;
+    wizard.current_target = Ok(rustaller::model::Target::Debian);
+    wizard.select(Setting::DnsMode, 3);
+    assert_eq!(
+        wizard.build_current().unwrap().dns.servers[0].to_string(),
+        "8.8.8.8"
+    );
+}
+
+#[test]
+fn filesystem_and_new_kernel_choices_reach_the_plan_and_stay_target_scoped() {
+    let mut wizard = wizard();
+    for (index, kernels) in [
+        (0, vec!["standard", "virt", "lts"]),
+        (1, vec!["standard", "cloud", "generic"]),
+        (2, vec!["standard", "lts", "cachyos"]),
+        (3, vec!["auto", "standard"]),
+    ] {
+        choose(&mut wizard, index);
+        credentials(&mut wizard);
+        assert_eq!(wizard.choices(Setting::Kernel), kernels);
+        for (selected, kernel) in kernels.into_iter().enumerate() {
+            wizard.select(Setting::Kernel, selected);
+            for (fs_index, fs) in [(0, RootFilesystem::Xfs), (1, RootFilesystem::Ext4)] {
+                wizard.select(Setting::RootFilesystem, fs_index);
+                let plan = wizard.build_plan().unwrap();
+                assert_eq!(plan.post_install.kernel.as_str(), kernel);
+                assert_eq!(plan.system.root_filesystem, fs);
+            }
+        }
+    }
+    wizard.choice = 8;
+    wizard.frames.last_mut().unwrap().page = Page::Host;
+    assert!(!wizard.entries().iter().any(|entry| matches!(
+        entry.action,
+        Action::Select(Setting::RootFilesystem | Setting::Kernel)
+    )));
+}
+
+#[test]
+fn hostname_prefill_keeps_explicit_values_and_current_system_draft_unchanged() {
+    let mut wizard = wizard();
+    choose(&mut wizard, 1);
+    set(&mut wizard, Field::Hostname, "explicit-host");
+    wizard.prefill_hostnames(std::path::Path::new(
+        "/nonexistent-rustaller-hostname-fixture",
+    ));
+    assert_eq!(wizard.drafts[0].get(Field::Hostname), "alpine");
+    assert_eq!(wizard.drafts[1].get(Field::Hostname), "explicit-host");
+    assert_eq!(wizard.drafts[2].get(Field::Hostname), "arch");
+    assert_eq!(wizard.drafts[3].get(Field::Hostname), "gentoo");
+    assert!(wizard.drafts[8].get(Field::Hostname).is_empty());
 }

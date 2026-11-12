@@ -2,7 +2,7 @@
 
 A derivative of [bin456789/reinstall](https://github.com/bin456789/reinstall), based on `98f1e21013233d42750cc2e7a298a0818461d686`. Licensed under GNU GPLv3 (`GPL-3.0-only`); see [LICENSE](LICENSE). Upstream source notices and attribution are retained.
 
-The static Rust/musl host provides an English TUI and installs Alpine, Debian, Arch or Gentoo through authenticated Alpine Live and kexec. **This development preview includes real disk-erasing actions. Full BIOS/UEFI installation, XFS boot and swap activation acceptance remain pending.**
+The static Rust/musl host provides an English TUI and installs Alpine, Debian, Arch or Gentoo through authenticated Alpine Live and kexec. **This development preview includes real disk-erasing actions. Full BIOS/UEFI installation, filesystem boot and swap activation acceptance remain pending.**
 
 > Automatic installation erases every partition on the target disk. Back up data and retain provider console/VNC access before testing.
 > Rust uses kexec into Live and one final reboot with GRUB's UEFI fallback path. Retained Shell boot/reset interfaces can also write NVRAM/BootNext.
@@ -20,6 +20,8 @@ An interactive terminal with no arguments opens the TUI. Prebuilt downloads need
 
 Use `./rustaller debian --inspect` to read the disk, firmware and confirmation token without installation or kexec. Installation requires a public key or password and the full disk-identity token; non-interactive use requires `--confirm-erase`. The host embeds its matching worker and log page, authenticates official resources and needs no custom `confhome`.
 
+Choose a kernel, XFS/ext4 root and public/custom DNS. Non-root accounts require a separate root password, entered privately in the TUI or interactive CLI; root SSH remains disabled. Hostnames inherit a valid source name or fall back to the distribution name; explicit settings win. See [kernel choices and CachyOS first-boot updates](docs/POSTINSTALL.md).
+
 Source PID 1 must be systemd or openrc-init. Failed kexec support stops preparation without a two-reboot fallback. `hold=1` enters Alpine Live rescue without automatic partitioning. Rust ISO/netboot.xyz/reset execution is not connected; the retained Shell interfaces below provide those routes.
 
 `Configure current system` persists existing-account keys, SSH port, hostname, timezone, DNS and supported network settings, with private backups and a changed-file report. It does not restart services or load sysctl values. Static DNS changes may affect lookups immediately. Save keeps a session draft; Apply writes configuration.
@@ -29,7 +31,7 @@ Source PID 1 must be systemd or openrc-init. Failed kexec support stops preparat
 - Linux x86_64 hosts and targets only. Containers, enabled Secure Boot and tmpfs-root source systems are rejected.
 - All four targets install from Alpine Live: latest stable Alpine/Debian and rolling Arch/Gentoo. Versions come from official metadata; version arguments are rejected.
 - Debian uses `debootstrap --variant=minbase`, systemd-networkd, SSH, a kernel and GRUB, without desktop/standard tasks or recommends. Gentoo retains systemd stage3, gentoo-kernel-bin/dracut and GRUB.
-- Rust uses XFS roots, FAT32 ESPs, Alpine/OpenRC and schema 5 plans. Optional GNU-dd-backed `/swapfile` activates only at target boot. Defaults and Shell preserve existing swap; source/Live swap is never changed and no swap partition is added.
+- Rust offers XFS (default) or ext4 roots, FAT32 ESPs, Alpine/OpenRC and schema 6 plans. Optional GNU-dd-backed `/swapfile` activates only at target boot. Defaults and Shell preserve existing swap; source/Live swap is never changed and no swap partition is added.
 - Static/DHCP, IPv4/IPv6, multiple NICs, SSH credentials, ports, frpc and disk-ID discovery remain. Windows, ARM, Debian Installer, other automatic targets, geographic detection and arbitrary RAW/DD targets are excluded; use Live for manual recovery/DD.
 
 RAM floors are Alpine/Debian 512 MB, Arch 1024 MB and Gentoo 2048 MB, checked on the host and again before Live cleanup/partitioning. See [minimal profiles](docs/MINIMAL.md), [source authentication](docs/SOURCES.md) and platform limits in the acceptance record.

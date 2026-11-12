@@ -141,8 +141,35 @@ impl DnsConfig {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RootFilesystem {
+    #[default]
+    Xfs,
+    Ext4,
+}
+impl RootFilesystem {
+    pub const ALL: &'static [Self] = &[Self::Xfs, Self::Ext4];
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Xfs => "xfs",
+            Self::Ext4 => "ext4",
+        }
+    }
+}
+impl FromStr for RootFilesystem {
+    type Err = SystemConfigError;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "xfs" => Ok(Self::Xfs),
+            "ext4" => Ok(Self::Ext4),
+            _ => Err(SystemConfigError::InvalidFilesystem),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SystemConfig {
+    pub root_filesystem: RootFilesystem,
     pub profile: InstallProfile,
     pub with_tools: bool,
     pub keep_docs: bool,
@@ -205,6 +232,7 @@ impl SystemConfig {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SystemConfigError {
+    InvalidFilesystem,
     InvalidProfile,
     InvalidDnsMode,
     AutomaticDnsWithValues,
@@ -225,6 +253,7 @@ impl fmt::Display for SystemConfigError {
             return error.fmt(f);
         }
         f.write_str(match self {
+            Self::InvalidFilesystem => "Root filesystem must be xfs or ext4",
             Self::InvalidProfile => "Profile must be standard or minimal",
             Self::InvalidDnsMode => "DNS mode must be auto or static",
             Self::AutomaticDnsWithValues => "Automatic DNS cannot contain explicit servers or search domains",

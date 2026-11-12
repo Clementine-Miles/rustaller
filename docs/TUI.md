@@ -41,6 +41,7 @@ The four automatic targets share these directories. Choices are limited to those
 System configuration
 ├── Account and SSH
 │   ├── Username
+│   ├── Non-root installation: root password and confirmation
 │   ├── Authentication
 │   │   ├── Password / SSH public keys
 │   │   ├── Password settings: password and confirmation
@@ -53,9 +54,10 @@ System configuration
 ├── Host settings
 │   ├── Hostname
 │   ├── Timezone
-│   └── Official kernel choice
+│   └── Kernel choice (Arch also offers CachyOS)
 ├── Network and DNS
-│   ├── DNS settings: automatic / static, servers, search domains
+│   ├── DNS: automatic / Cloudflare / Google / Quad9 / custom
+│   │   └── Custom servers and search domains
 │   ├── TCP and congestion control
 │   │   ├── Congestion control and queue discipline
 │   │   ├── Buffer, listen, SYN and network-device queue limits
@@ -69,6 +71,7 @@ System configuration
 │   └── Optional swappiness
 ├── Disk and boot
 │   ├── Whole target disk
+│   ├── Root filesystem: XFS / ext4
 │   ├── Boot mode
 │   └── Hold behavior
 ├── Resources and logs
@@ -80,7 +83,11 @@ System configuration
 └── Back to previous menu
 ```
 
-Kernel choices use official packages; BBR requires `fq` and target-kernel support, and Alpine/musl rejects glibc address preference. Ranges are in [CONFIGURATION.md](CONFIGURATION.md), profiles in [MINIMAL.md](MINIMAL.md).
+Alpine offers standard/default (linux-lts), virt and LTS; Debian offers standard/default (generic), cloud and generic; Arch offers standard, LTS and opt-in CachyOS. Gentoo is unchanged. BBR requires `fq` and target-kernel support, and Alpine/musl rejects glibc address preference. See [kernel mappings](POSTINSTALL.md), [ranges](CONFIGURATION.md) and [profiles](MINIMAL.md).
+
+Selecting a non-root username opens the separate required root-password page; password and confirmation are masked and must match exactly. This password does not change the user's selected SSH authentication or permit root SSH. New-system hostname drafts inherit a valid source hostname, otherwise the distribution name; explicit edits win. Current-system drafts remain unchanged.
+
+DNS presets never overwrite the custom draft. Only the selected provider's addresses are submitted; Automatic omits static values. Presets use IPv4 only when IPv6 is disabled, otherwise two IPv4 addresses and one IPv6 address. Custom input validates each comma-separated IP and rejects empty/duplicate/invalid entries. Root filesystem selection applies only to new installations.
 
 Each target has a session draft. Hidden values are not submitted: stale static DNS in automatic mode, disabled swap size, or minimal-only flags in standard mode. Review uses the CLI's validated plan, then restores the native terminal for disk confirmation and progress. Errors return to a result page; navigating back never retries installation.
 
@@ -156,4 +163,4 @@ Below 48×16, hidden actions are blocked while drafts survive resizing. Navigati
 
 ## 2026-11-02 界面调整
 
-新安装 hostname 留空使用 `rustaller`，当前系统留空不变。启用 swapfile 后焦点转至 MiB 大小，空值必填；关闭保留草稿但不提交。返回使用 Save/Discard/Cancel。EFI Stub 已取消，不接入执行菜单，方案见 [EFI Stub 评估](EFI-STUB-OPTIONS.md)。
+新安装 hostname 当前优先继承原系统，缺失时使用发行版名称，替代旧 `rustaller` 默认；当前系统留空不变。启用 swapfile 后焦点转至 MiB 大小，空值必填；关闭保留草稿但不提交。返回使用 Save/Discard/Cancel。EFI Stub 已取消，不接入执行菜单，方案见 [EFI Stub 评估](EFI-STUB-OPTIONS.md)。

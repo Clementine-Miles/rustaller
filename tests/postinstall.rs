@@ -8,11 +8,11 @@ fn official_kernel_matrix_preserves_defaults_and_rejects_cross_distribution_choi
         (Target::Alpine, KernelChoice::Cloud, "linux-virt"),
         (Target::Alpine, KernelChoice::Generic, "linux-lts"),
         (Target::Alpine, KernelChoice::Lts, "linux-lts"),
-        (
-            Target::Debian,
-            KernelChoice::Auto,
-            "linux-image-cloud-amd64",
-        ),
+        (Target::Alpine, KernelChoice::Virt, "linux-virt"),
+        (Target::Alpine, KernelChoice::Standard, "linux-lts"),
+        (Target::Debian, KernelChoice::Standard, "linux-image-amd64"),
+        (Target::Arch, KernelChoice::Cachyos, "linux-cachyos"),
+        (Target::Debian, KernelChoice::Auto, "linux-image-amd64"),
         (
             Target::Debian,
             KernelChoice::Cloud,
@@ -43,9 +43,7 @@ fn official_kernel_matrix_preserves_defaults_and_rejects_cross_distribution_choi
             package
         );
         for (other_target, other_choice) in [
-            (Target::Alpine, KernelChoice::Standard),
             (Target::Debian, KernelChoice::Lts),
-            (Target::Debian, KernelChoice::Standard),
             (Target::Arch, KernelChoice::Cloud),
             (Target::Arch, KernelChoice::Generic),
             (Target::Gentoo, KernelChoice::Cloud),
@@ -65,14 +63,14 @@ fn official_kernel_matrix_preserves_defaults_and_rejects_cross_distribution_choi
 }
 
 #[test]
-fn legacy_non_cloud_flag_and_virtual_machine_defaults_keep_their_meaning() {
+fn standard_defaults_are_predictable_on_physical_and_virtual_hosts() {
     let config = PostInstallConfig::default();
     assert_eq!(
         config
             .kernel_package(Target::Alpine, false, true)
             .unwrap()
             .alpine_flavor,
-        Some("virt")
+        Some("lts")
     );
     assert_eq!(
         config

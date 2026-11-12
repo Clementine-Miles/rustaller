@@ -4,6 +4,7 @@ use std::fmt;
 pub enum WorkerAction {
     LiveModules,
     FirstbootFix,
+    CachyosFirstboot,
     CleanupOpenRc,
     CleanupSystemd,
     InitrdNetwork(super::initrd_network::InitrdNetworkConfig),
@@ -36,6 +37,7 @@ where
         [command] if command == "--help" || command == "-h" => Ok(None),
         [command] if command == "live-modules" => Ok(Some(WorkerAction::LiveModules)),
         [command] if command == "firstboot-fix" => Ok(Some(WorkerAction::FirstbootFix)),
+        [command] if command == "cachyos-firstboot" => Ok(Some(WorkerAction::CachyosFirstboot)),
         [command] if command == "cleanup-openrc" => Ok(Some(WorkerAction::CleanupOpenRc)),
         [command] if command == "cleanup-systemd" => Ok(Some(WorkerAction::CleanupSystemd)),
         [command, path] if command == "log-stream" && super::log_stream::valid_web_path(path) => {

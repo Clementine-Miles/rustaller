@@ -1,10 +1,10 @@
 use super::fields::{Field, TCP_FIELDS};
 use super::state::{
-    Action, Authentication, CHOICES, EditSlot, Entry, IsoMode, Page, Setting, Wizard, boot_label,
-    hold_label, iso_label, optional_label, yes_no,
+    Action, Authentication, CHOICES, DnsProvider, EditSlot, Entry, IsoMode, Page, Setting, Wizard,
+    boot_label, hold_label, iso_label, optional_label, yes_no,
 };
 use rustaller::config::{AddressPreference, CongestionControl, Ipv6Policy, QueueDiscipline};
-use rustaller::config::{DnsMode, InstallProfile};
+use rustaller::config::{DnsMode, InstallProfile, RootFilesystem};
 use rustaller::host::ssh_keygen::{self, KeyType};
 use rustaller::model::{BootMode, Target};
 use rustaller::postinstall::KernelChoice;
@@ -113,6 +113,12 @@ impl Wizard {
                     format!("SSH port: {}", draft.display(Field::SshPort)),
                     Action::Edit(EditSlot::Field(Field::SshPort)),
                 );
+                if self.is_automatic() && draft.get(Field::Username).trim() != "root" {
+                    add(
+                        "Root account password (required)  ›".into(),
+                        Action::Open(Page::RootPasswords),
+                    );
+                }
             }
             Page::Auth => {
                 add(
@@ -137,6 +143,14 @@ impl Wizard {
             }
             Page::Passwords => {
                 for field in [Field::Password, Field::Confirm] {
+                    add(
+                        format!("{}: {}", field.label(), draft.display(field)),
+                        Action::Edit(EditSlot::Field(field)),
+                    );
+                }
+            }
+            Page::RootPasswords => {
+                for field in [Field::RootPassword, Field::RootConfirm] {
                     add(
                         format!("{}: {}", field.label(), draft.display(field)),
                         Action::Edit(EditSlot::Field(field)),
@@ -175,7 +189,7 @@ impl Wizard {
                 }
                 if !self.is_current() {
                     add(
-                        format!("Kernel: {}", draft.kernel.as_str()),
+                        format!("Kernel: {}", self.kernel_label()),
                         Action::Select(Setting::Kernel),
                     );
                 }
@@ -210,16 +224,35 @@ impl Wizard {
             }
             Page::Dns => {
                 add(
-                    format!("DNS mode: {}", draft.dns_mode.as_str()),
+                    format!(
+                        "DNS provider: {}",
+                        if draft.dns_mode == DnsMode::Auto {
+                            "Automatic / unchanged"
+                        } else {
+                            draft.dns_provider.label()
+                        }
+                    ),
                     Action::Select(Setting::DnsMode),
                 );
                 if draft.dns_mode == DnsMode::Static {
-                    for field in [Field::DnsServers, Field::DnsSearch] {
+                    if draft.dns_provider == DnsProvider::Custom {
                         add(
-                            format!("{}: {}", field.label(), draft.display(field)),
-                            Action::Edit(EditSlot::Field(field)),
+                            format!(
+                                "{}: {}",
+                                Field::DnsServers.label(),
+                                draft.display(Field::DnsServers)
+                            ),
+                            Action::Edit(EditSlot::Field(Field::DnsServers)),
                         );
                     }
+                    add(
+                        format!(
+                            "{}: {}",
+                            Field::DnsSearch.label(),
+                            draft.display(Field::DnsSearch)
+                        ),
+                        Action::Edit(EditSlot::Field(Field::DnsSearch)),
+                    );
                 }
             }
             Page::Tcp => {
@@ -331,6 +364,10 @@ impl Wizard {
                         format!("Target disk: {}", draft.display(Field::Disk)),
                         Action::Edit(EditSlot::Field(Field::Disk)),
                     );
+                    add(
+                        format!("Root filesystem: {}", draft.root_filesystem.as_str()),
+                        Action::Select(Setting::RootFilesystem),
+                    );
                 }
                 add(
                     format!("Boot mode: {}", boot_label(draft.boot)),
@@ -413,8 +450,12 @@ impl Wizard {
             ],
             Setting::DnsMode => vec![
                 "auto (automatic / unchanged DNS)",
-                "static (explicit upstream DNS)",
+                "Custom DNS (IPv4/IPv6 addresses)",
+                "Cloudflare (1.1.1.1 / 1.0.0.1)",
+                "Google (8.8.8.8 / 8.8.4.4)",
+                "Quad9 (9.9.9.9 / 149.112.112.112)",
             ],
+            Setting::RootFilesystem => vec!["xfs", "ext4"],
             Setting::Congestion => CongestionControl::ALL.iter().map(|v| v.as_str()).collect(),
             Setting::Qdisc => QueueDiscipline::ALL.iter().map(|v| v.as_str()).collect(),
             Setting::Ipv6 => Ipv6Policy::ALL.iter().map(|v| v.as_str()).collect(),
@@ -451,7 +492,19 @@ impl Wizard {
             },
             Setting::IsoMode => usize::from(draft.iso_mode == IsoMode::Kernel),
             Setting::Profile => usize::from(draft.profile == InstallProfile::Minimal),
-            Setting::DnsMode => usize::from(draft.dns_mode == DnsMode::Static),
+            Setting::DnsMode => {
+                if draft.dns_mode == DnsMode::Auto {
+                    0
+                } else {
+                    match draft.dns_provider {
+                        DnsProvider::Custom => 1,
+                        DnsProvider::Cloudflare => 2,
+                        DnsProvider::Google => 3,
+                        DnsProvider::Quad9 => 4,
+                    }
+                }
+            }
+            Setting::RootFilesystem => usize::from(draft.root_filesystem == RootFilesystem::Ext4),
             Setting::Congestion => CongestionControl::ALL
                 .iter()
                 .position(|v| *v == draft.congestion)
@@ -517,6 +570,19 @@ impl Wizard {
                     DnsMode::Auto
                 } else {
                     DnsMode::Static
+                };
+                draft.dns_provider = match index {
+                    2 => DnsProvider::Cloudflare,
+                    3 => DnsProvider::Google,
+                    4 => DnsProvider::Quad9,
+                    _ => DnsProvider::Custom,
+                };
+            }
+            Setting::RootFilesystem => {
+                draft.root_filesystem = if index == 0 {
+                    RootFilesystem::Xfs
+                } else {
+                    RootFilesystem::Ext4
                 }
             }
             Setting::Authentication => {

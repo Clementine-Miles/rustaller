@@ -169,6 +169,50 @@ fn successes(count: usize) -> Vec<CommandOutput> {
 }
 
 #[test]
+fn ext4_selection_controls_partition_format_and_mount_without_swap_activation() {
+    use rustaller::config::RootFilesystem;
+    use rustaller::shared::storage::mount_target;
+    for boot in [BootMode::Bios, BootMode::Efi] {
+        let mut install = InstallPlan::new(Target::Debian);
+        install.system.root_filesystem = RootFilesystem::Ext4;
+        let selected =
+            validate_live_plan_with_uid(install, "x86_64", 4096, rustaller::RUNTIME_VERSION, 0)
+                .unwrap();
+        let layout = DiskLayout::new(&selected, "nvme0n1", boot, 8 * 1024_u64.pow(3)).unwrap();
+        let mut runner = MockRunner::new(successes(100));
+        create_partitions(&mut runner, &layout, &Default::default()).unwrap();
+        let root = std::env::temp_dir().join(format!(
+            "rustaller-ext4-mount-{}-{}",
+            std::process::id(),
+            boot.as_str()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        mount_target(&mut runner, &layout, &root).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+        let calls = runner.calls();
+        let partition = calls.iter().find(|c| c.program == "parted").unwrap();
+        assert!(partition.args.iter().any(|v| v == "ext4"));
+        let format = calls.iter().find(|c| c.program == "mkfs.ext4").unwrap();
+        assert_eq!(
+            format.args,
+            [
+                "-F",
+                "-E",
+                "nodiscard,lazy_itable_init=0,lazy_journal_init=0",
+                &layout.root_partition()
+            ]
+        );
+        let mount = calls.iter().find(|c| c.phase == "live-mount-root").unwrap();
+        assert_eq!(mount.args[1], "ext4");
+        assert!(!calls.iter().any(|c| {
+            ["mkfs.xfs", "swapon", "swapoff", "mkswap"]
+                .iter()
+                .any(|p| c.program == *p)
+        }));
+    }
+}
+
+#[test]
 fn partition_refresh_ignores_partprobe_but_stops_on_partx_failure() {
     use rustaller::shared::storage::{PartitionEnvironment, refresh_partition_table};
     let layout = layout(Target::Debian, BootMode::Bios, 40_000_000_000, "vda");

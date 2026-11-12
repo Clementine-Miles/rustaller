@@ -16,7 +16,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let action = parse_worker_args(std::env::args().skip(1))?;
     let Some(action) = action else {
         println!(
-            "Usage: rustaller-worker <live-install PLAN MANIFEST|firstboot-fix|cleanup-openrc|cleanup-systemd|initrd-network|log-stream>\n\nRuntime version: {}\nInternal helper for the Rust rustaller installer.",
+            "Usage: rustaller-worker <live-install PLAN MANIFEST|firstboot-fix|cachyos-firstboot|cleanup-openrc|cleanup-systemd|initrd-network|log-stream>\n\nRuntime version: {}\nInternal helper for the Rust rustaller installer.",
             rustaller::RUNTIME_VERSION
         );
         return Ok(());
@@ -33,6 +33,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             )?;
         }
         WorkerAction::FirstbootFix => run_firstboot(&mut runner, Path::new("/"))?,
+        WorkerAction::CachyosFirstboot => {
+            rustaller::targets::cachyos::run_firstboot_update(&mut runner, Path::new("/"))?
+        }
         WorkerAction::CleanupOpenRc => {
             cleanup_firstboot(&mut runner, Path::new("/"), InitManager::OpenRc)?
         }

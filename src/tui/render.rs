@@ -76,12 +76,15 @@ impl Wizard {
             } => {
                 let title = match setting {
                     Setting::Authentication => "Choose authentication",
-                    Setting::Kernel => "Choose an official kernel",
+                    Setting::Kernel => "Choose target kernel",
                     Setting::Boot => "Choose boot mode",
                     Setting::Hold => "Choose installation hold behavior",
                     Setting::IsoMode => "Choose ISO boot method",
                     Setting::Profile => "Choose installation profile",
                     Setting::DnsMode => "Choose DNS policy",
+                    Setting::RootFilesystem => {
+                        "Choose root filesystem (entire target disk is erased)"
+                    }
                     Setting::Congestion => "Congestion control (target kernel support required)",
                     Setting::Qdisc => "Queue discipline (use fq with BBR)",
                     Setting::Ipv6 => "IPv6 policy (disabling requires usable IPv4)",

@@ -72,6 +72,14 @@ fn run_install(
     if !plan.target.is_automatic() {
         return Err("This Rust handoff entry supports Alpine, Debian, Arch, Gentoo and Alpine Live rescue. Interactive media handoff is not connected.".into());
     }
+    // Own the resolved plan: hostname discovery and a terminal root-password
+    // prompt must be serialized before crossing into Live, never rediscovered there.
+    let mut encoded = rustaller::codec::encode_plan(plan).map_err(|error| error.to_string())?;
+    let decoded = rustaller::codec::decode_plan(&encoded);
+    encoded.fill(0);
+    let mut owned_plan = decoded.map_err(|error| error.to_string())?;
+    rustaller::host::hostname::resolve_install_hostname(&mut owned_plan, std::path::Path::new("/"));
+    let plan = &mut owned_plan;
     let mut runner = SystemRunner;
     let deployment = handoff::discover(&mut runner, plan).map_err(|error| error.to_string())?;
     println!("Target system: {}", plan.target);
@@ -84,6 +92,17 @@ fn run_install(
     if inspect {
         return Ok(());
     }
+    if plan.hold != Some(1)
+        && plan.username.as_deref().unwrap_or("root") != "root"
+        && plan.root_password.is_none()
+    {
+        if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+            return Err("Non-root installation requires a separate --root-password. Use the TUI or interactive CLI to enter it privately.".into());
+        }
+        plan.root_password = Some(rustaller::host::password::prompt_root_password()?);
+    }
+    plan.validate_install_credentials()
+        .map_err(|error| error.to_string())?;
     if plan.password.is_none() && plan.ssh_keys.is_empty() {
         return Err("Configure an SSH public key or password before installation. Use the TUI to enter and confirm a password without command-line history.".into());
     }

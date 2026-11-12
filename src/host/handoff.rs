@@ -423,7 +423,7 @@ pub fn prepare<R: CommandRunner>(
     workspace: &Path,
     worker: &[u8],
 ) -> Result<PreparedHandoff, HandoffError> {
-    plan.validate()
+    plan.validate_install_credentials()
         .map_err(|_| HandoffError::Invalid("invalid installation plan"))?;
     deployment
         .manifest

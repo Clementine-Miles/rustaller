@@ -74,7 +74,10 @@ pub fn package_plan(
                 "openssh",
                 "ca-certificates",
                 "dhcpcd",
-                "xfsprogs",
+                match plan.system.root_filesystem {
+                    crate::config::RootFilesystem::Xfs => "xfsprogs",
+                    crate::config::RootFilesystem::Ext4 => "e2fsprogs",
+                },
             ]
             .map(str::to_owned)
             .to_vec();
@@ -108,7 +111,7 @@ pub fn package_plan(
         Target::Arch => {
             let mut base = pacstrap_packages(
                 boot_mode,
-                "xfs",
+                plan.system.root_filesystem.as_str(),
                 plan.username.as_deref().unwrap_or("root"),
                 firmware_packages,
             );
@@ -124,7 +127,12 @@ pub fn package_plan(
         Target::Gentoo => (
             RootfsMethod::GentooSystemdStage3,
             vec![],
-            emerge_package_set_for_plan(plan, boot_mode, "xfs", firmware_packages)?,
+            emerge_package_set_for_plan(
+                plan,
+                boot_mode,
+                plan.system.root_filesystem.as_str(),
+                firmware_packages,
+            )?,
         ),
         _ => unreachable!(),
     };

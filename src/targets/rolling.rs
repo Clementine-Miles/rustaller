@@ -128,7 +128,7 @@ pub(super) fn bootstrap_arch_rootfs<R: CommandRunner>(
 
     let mut packages = packages::pacstrap_packages(
         boot,
-        "xfs",
+        plan.plan().system.root_filesystem.as_str(),
         plan.plan().username.as_deref().unwrap_or("root"),
         firmware,
     );
@@ -193,7 +193,12 @@ pub(super) fn configure_arch<R: CommandRunner>(
         root,
         ["mkinitcpio", "-P", "-S", "autodetect"],
         "arch-target-initramfs",
-    )
+    )?;
+    if plan.plan().post_install.kernel == crate::postinstall::KernelChoice::Cachyos {
+        super::cachyos::install_firstboot_update(root)
+            .map_err(|_| RollingError::InvalidInput("CachyOS first-boot update service"))?;
+    }
+    Ok(())
 }
 
 /// Extract before mounting target /proc,/sys,/dev,/run. The token is constructible
@@ -305,7 +310,12 @@ pub(super) fn configure_gentoo<R: CommandRunner>(
     )?;
     chroot_checked(runner, root, ["locale-gen"], "gentoo-target-locale")?;
     chroot_checked(runner, root, ["env-update"], "gentoo-target-environment")?;
-    let mut packages = packages::emerge_package_set_for_plan(plan.plan(), boot, "xfs", firmware)?;
+    let mut packages = packages::emerge_package_set_for_plan(
+        plan.plan(),
+        boot,
+        plan.plan().system.root_filesystem.as_str(),
+        firmware,
+    )?;
     for atom in [
         "sys-boot/grub",
         "sys-kernel/dracut",

@@ -1,6 +1,6 @@
 use super::fields::{Field, TCP_FIELDS};
 use super::state::{
-    Authentication, CHOICES, IsoMode, Page, Wizard, boot_label, hold_label, iso_label,
+    Authentication, CHOICES, Draft, IsoMode, Page, Wizard, boot_label, hold_label, iso_label,
     optional_label, valid_public_key_source, valid_username, yes_no,
 };
 use rustaller::config::NetworkConfig;
@@ -51,10 +51,6 @@ impl Wizard {
             for field in [Field::Hostname, Field::Timezone, Field::Disk] {
                 add(field);
             }
-            if draft.dns_mode == DnsMode::Static {
-                add(Field::DnsServers);
-                add(Field::DnsSearch);
-            }
             for field in TCP_FIELDS {
                 add(*field);
             }
@@ -78,7 +74,15 @@ impl Wizard {
             }
         }
         if self.is_automatic() {
+            let dns = effective_dns(draft)?;
+            for server in &dns.servers {
+                args.push(format!("--dns={server}"));
+            }
+            for domain in &dns.search_domains {
+                args.push(format!("--dns-search={domain}"));
+            }
             args.push(format!("--kernel={}", draft.kernel.as_str()));
+            args.push(format!("--filesystem={}", draft.root_filesystem.as_str()));
             args.push(format!("--profile={}", draft.profile.as_str()));
             args.push(format!("--dns-mode={}", draft.dns_mode.as_str()));
             args.push(format!("--tcp-congestion={}", draft.congestion.as_str()));
@@ -147,7 +151,19 @@ impl Wizard {
             }
             plan.password = Some(SecretString::new(password));
         }
+        if self.is_automatic() && draft.get(Field::Username).trim() != "root" {
+            let password = draft.get(Field::RootPassword);
+            if password.is_empty() {
+                return Err("Set and confirm a separate root account password".into());
+            }
+            if password != draft.get(Field::RootConfirm) {
+                return Err("The two root passwords do not match".into());
+            }
+            plan.root_password = Some(SecretString::new(password));
+        }
         plan.validate().map_err(|error| error.to_string())?;
+        plan.validate_install_credentials()
+            .map_err(|error| error.to_string())?;
         if let Some(iso) = plan.iso.as_ref() {
             rustaller::host::iso::validate_iso_options(iso).map_err(|_| {
                 "Invalid ISO path/boot configuration; check absolute paths and arguments".to_owned()
@@ -162,25 +178,7 @@ impl Wizard {
         }
         let target = *self.current_target.as_ref().map_err(Clone::clone)?;
         let draft = self.draft();
-        let mut dns = DnsConfig {
-            mode: draft.dns_mode,
-            ..Default::default()
-        };
-        if draft.dns_mode == DnsMode::Static {
-            dns.servers = draft
-                .get(Field::DnsServers)
-                .split(',')
-                .map(|s| {
-                    s.trim()
-                        .parse()
-                        .map_err(|_| "DNS servers require IPv4/IPv6 addresses".to_owned())
-                })
-                .collect::<Result<_, _>>()?;
-            let search = draft.get(Field::DnsSearch).trim();
-            if !search.is_empty() {
-                dns.search_domains = search.split(',').map(|s| s.trim().to_owned()).collect();
-            }
-        }
+        let dns = effective_dns(draft)?;
         let network = NetworkConfig {
             congestion: draft.congestion,
             qdisc: draft.qdisc,
@@ -298,15 +296,16 @@ impl Wizard {
                     }
                 ),
                 format!("DNS policy: {}", draft.dns_mode.as_str()),
+                format!("Root filesystem: {}", draft.root_filesystem.as_str()),
                 format!(
                     "Hostname: {}",
-                    optional_label(draft.get(Field::Hostname), "rustaller (default for new host)")
+                    optional_label(draft.get(Field::Hostname), "Existing hostname, otherwise target system name")
                 ),
                 format!(
                     "Timezone: {}",
                     optional_label(draft.get(Field::Timezone), "Installer default")
                 ),
-                format!("Kernel: {}", draft.kernel.as_str()),
+                format!("Kernel: {}", self.kernel_label()),
                 format!(
                     "Target disk: {}",
                     optional_label(draft.get(Field::Disk), "Auto-detect (not scanned yet)")
@@ -316,8 +315,8 @@ impl Wizard {
                     "Target swapfile: {}",
                     if draft.swap_enabled {
                         format!(
-                            "/swapfile, {} MiB, XFS, mode 0600, activated at target boot",
-                            draft.display(Field::SwapSize)
+                            "/swapfile, {} MiB, {}, mode 0600, activated at target boot",
+                            draft.display(Field::SwapSize), draft.root_filesystem.as_str()
                         )
                     } else {
                         "Do not create; preserve existing swap policy".into()
@@ -353,13 +352,20 @@ impl Wizard {
             }
             if draft.dns_mode == DnsMode::Static {
                 lines.extend([
-                    format!("DNS servers: {}", draft.display(Field::DnsServers)),
+                    format!("DNS provider: {}", draft.dns_provider.label()),
+                    format!("DNS servers: {}", draft.dns_servers()),
                     format!(
                         "DNS search domains: {}",
                         optional_label(draft.get(Field::DnsSearch), "None")
                     ),
                 ]);
             }
+        }
+        if self.is_automatic() && draft.get(Field::Username).trim() != "root" {
+            lines.push(format!(
+                "Root account password: {}",
+                draft.display(Field::RootPassword)
+            ));
         }
         if self.choice == 5 {
             lines.extend([
@@ -450,7 +456,8 @@ impl Wizard {
         ];
         if draft.dns_mode == DnsMode::Static {
             lines.extend([
-                format!("DNS servers: {}", draft.display(Field::DnsServers)),
+                format!("DNS provider: {}", draft.dns_provider.label()),
+                format!("DNS servers: {}", draft.dns_servers()),
                 format!(
                     "Search domains: {}",
                     optional_label(draft.get(Field::DnsSearch), "None")
@@ -469,6 +476,34 @@ impl Wizard {
             "Enter explicitly applies these changes; Esc returns to editing.".into()]);
         lines
     }
+}
+
+fn effective_dns(draft: &Draft) -> Result<DnsConfig, String> {
+    let mut dns = DnsConfig {
+        mode: draft.dns_mode,
+        ..Default::default()
+    };
+    if draft.dns_mode == DnsMode::Static {
+        dns.servers = draft
+            .dns_servers()
+            .split(',')
+            .map(|value| {
+                value.trim().parse().map_err(|_| {
+                    "Enter DNS IPv4/IPv6 addresses separated by commas, without empty entries"
+                        .to_owned()
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        let search = draft.get(Field::DnsSearch).trim();
+        if !search.is_empty() {
+            dns.search_domains = search
+                .split(',')
+                .map(|value| value.trim().to_owned())
+                .collect();
+        }
+    }
+    dns.validate().map_err(|error| error.to_string())?;
+    Ok(dns)
 }
 
 fn optional_value(value: &str) -> Option<String> {

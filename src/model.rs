@@ -2,7 +2,7 @@ use crate::config::{SystemConfig, SystemConfigError};
 use crate::postinstall::{PostInstallConfig, PostInstallError};
 use std::fmt;
 
-pub const CURRENT_SCHEMA_VERSION: u16 = 5;
+pub const CURRENT_SCHEMA_VERSION: u16 = 6;
 
 pub fn valid_account_name(value: &str) -> bool {
     !value.is_empty()
@@ -169,6 +169,7 @@ pub struct InstallPlan {
     pub target: Target,
     pub username: Option<String>,
     pub password: Option<SecretString>,
+    pub root_password: Option<SecretString>,
     pub ssh_keys: Vec<String>,
     pub ssh_port: Option<u16>,
     pub web_port: Option<u16>,
@@ -191,6 +192,10 @@ impl fmt::Debug for InstallPlan {
             .field("target", &self.target)
             .field("username", &self.username)
             .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "root_password",
+                &self.root_password.as_ref().map(|_| "[REDACTED]"),
+            )
             .field("ssh_keys", &self.ssh_keys)
             .field("ssh_port", &self.ssh_port)
             .field("web_port", &self.web_port)
@@ -218,6 +223,7 @@ impl InstallPlan {
             target,
             username: None,
             password: None,
+            root_password: None,
             ssh_keys: Vec::new(),
             ssh_port: if target.is_automatic() {
                 Some(22)
@@ -266,10 +272,12 @@ impl InstallPlan {
         if self.password.is_some() && !self.ssh_keys.is_empty() {
             return Err(PlanError::PasswordAndSshKey);
         }
-        if self.password.as_ref().is_some_and(|value| {
-            value.expose().is_empty()
-                || value.expose().len() > 8192
-                || value.expose().chars().any(char::is_control)
+        if [&self.password, &self.root_password].iter().any(|secret| {
+            secret.as_ref().is_some_and(|value| {
+                value.expose().is_empty()
+                    || value.expose().len() > 8192
+                    || value.expose().chars().any(char::is_control)
+            })
         }) {
             return Err(PlanError::InvalidPassword);
         }
@@ -278,6 +286,13 @@ impl InstallPlan {
             && !valid_account_name(username)
         {
             return Err(PlanError::InvalidUsername);
+        }
+
+        let non_root_install = self.target.is_automatic()
+            && self.hold != Some(1)
+            && self.username.as_deref().is_some_and(|name| name != "root");
+        if !non_root_install && self.root_password.is_some() {
+            return Err(PlanError::UnexpectedOption("root-password"));
         }
 
         if self.target.is_automatic() {
@@ -334,9 +349,24 @@ impl InstallPlan {
         Ok(())
     }
 
+    /// Required only when dispatching an installation, not while inspecting a
+    /// disk or editing an incomplete plan. No credential values enter errors.
+    pub fn validate_install_credentials(&self) -> Result<(), PlanError> {
+        self.validate()?;
+        if self.target.is_automatic()
+            && self.hold != Some(1)
+            && self.username.as_deref().is_some_and(|name| name != "root")
+            && self.root_password.is_none()
+        {
+            return Err(PlanError::MissingRootPassword);
+        }
+        Ok(())
+    }
+
     fn has_unsupported_interactive_options(&self) -> bool {
         self.username.is_some()
             || self.password.is_some()
+            || self.root_password.is_some()
             || !self.ssh_keys.is_empty()
             || self.ssh_port.is_some()
             || self.web_port.is_some()
@@ -387,6 +417,7 @@ pub enum PlanError {
     PasswordAndSshKey,
     InvalidUsername,
     InvalidPassword,
+    MissingRootPassword,
     MissingIso,
     IncompleteIsoBoot,
     ConflictingIsoBoot,
@@ -409,6 +440,7 @@ impl fmt::Display for PlanError {
             Self::PasswordAndSshKey => f.write_str("Password and SSH key are mutually exclusive"),
             Self::InvalidUsername => f.write_str("Invalid username"),
             Self::InvalidPassword => f.write_str("Password must be a nonempty single line of at most 8192 bytes without control characters"),
+            Self::MissingRootPassword => f.write_str("A non-root installation account requires a separate root password"),
             Self::MissingIso => f.write_str("Local ISO mode requires an ISO path"),
             Self::IncompleteIsoBoot => {
                 f.write_str("Custom ISO boot requires both kernel and initrd")

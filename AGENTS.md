@@ -9,14 +9,14 @@ The upstream comparison baseline is `98f1e21013233d42750cc2e7a298a0818461d686`.
 
 - rustaller and its workspace tools use GPL-3.0-only. Preserve upstream source notices, attribution and the full LICENSE text.
 
-- Latest user decision: EFI Stub is cancelled. Retain GRUB for SeaBIOS and UEFI, XFS roots and Alpine/OpenRC. EFI-STUB-OPTIONS.md is historical design only.
+- Latest user decision: retain GRUB for SeaBIOS/UEFI and Alpine/OpenRC; allow XFS (default) or ext4 roots. EFI Stub remains cancelled; EFI-STUB-OPTIONS.md is historical only.
 
-- 2026-11-02 authorization: Rust automatic roots use XFS and GNU dd-backed target swapfiles; retain Alpine/OpenRC and current GRUB. Rust runtime marker is PERSONAL-LINUX-XFS-20261102-05; the Shell baseline marker below stays unchanged. No dinit or EFI Stub changes in this task.
+- 2026-11-12 configuration update: selectable kernels, opt-in official CachyOS repository setup for Arch, separate root password for non-root installs, source-hostname inheritance, DNS presets/custom input and XFS/ext4. Gentoo's kernel/init path is unchanged. Runtime marker: RUSTALLER-CONFIG-20261112-06; retained Shell marker is unchanged.
 
 - Accept only Linux x86_64 source hosts and x86_64 targets; preserve support for different x86_64 Linux source distributions.
 - Automatic targets are latest stable Alpine, latest stable minimal Debian, rolling Arch and rolling Gentoo. All four run from Alpine Live.
 - Debian is installed with Alpine `debootstrap --variant=minbase` and systemd-networkd; Debian Installer and its assets are retired.
-- Default and retained Shell installation paths leave swap unchanged. The user explicitly authorized optional Rust target swapfiles on 2026-10-26: only a newly created inactive /swapfile in an isolated XFS target is permitted, with explicit size, 0600, and fstab activation by target boot. Never run swapon/swapoff in the source/Live environment, change existing swap, or add swap partitions.
+- Default and retained Shell paths leave swap unchanged. Optional Rust /swapfile is permitted only as a new inactive file in an isolated XFS/ext4 target, with explicit size, 0600 and fstab activation by target boot. Never run swapon/swapoff in source/Live, change existing swap or add swap partitions.
 - RAM floors are Alpine 512 MB, Debian 512 MB, Arch 1024 MB and Gentoo 2048 MB. Check in host preflight and again in Alpine Live before cleanup/partitioning.
 - Preserve Alpine Live, direct netboot.xyz, local Linux ISO GRUB loopback, reset, and shared networking/SSH/frpc behavior.
 - Local ISO means an interactive ISO-specific loopback boot, not universal media support or DD. Do not bypass its path/preflight safety checks.
@@ -29,7 +29,8 @@ The upstream comparison baseline is `98f1e21013233d42750cc2e7a298a0818461d686`.
 - Keep hierarchical TUI drafts separate per target, validate through the common CLI/model and pure ISO validator, and submit only the selected authentication method. Mask credentials in editors, summaries and callback errors. Preflight uses the same callback as CLI; result-page navigation must not automatically retry. See `docs/TUI.md` for menu and input bounds.
 - Target NIC repair handles generated ifupdown/networkd formats only; websocketd is the only log backend.
 - Official source constants/parsers live in `src/host/sources.rs`. `cargo xtask audit-sources` is read-only metadata/HEAD checking; it does not authenticate signatures or payloads. Complete installation must establish trusted keyrings and verify signatures/payload hashes before use; do not inherit the retained Shell's HTTP netboot, Arch `SigLevel = Never`, or unverified stage3 extraction.
-- Target kernel/hostname/timezone settings use `InstallPlan.post_install`; profile/DNS/network/swap use `InstallPlan.system`, schema 5. Reject all older schemas. Apply settings only to checked isolated target roots; no arbitrary Shell hooks or unrequested sysctl defaults. Keep source/Live networking intact. Native ssh-keygen belongs to the host TUI, with terminal suspension for its passphrase prompt; serialize only its public key.
+- Target kernel/hostname/timezone settings use `InstallPlan.post_install`; filesystem/profile/DNS/network/swap use `InstallPlan.system`, schema 6. Reject older schemas. Apply only to checked isolated target roots; no arbitrary hooks or unrequested sysctl defaults. The CachyOS exception is limited to its pinned, audited official repository setup inside the Arch target. Keep source/Live networking intact. Native ssh-keygen is a host tool; serialize only its public key.
+- Non-root installation requires a separate private root password; root SSH stays disabled. Source hostname is detected before handoff, otherwise use the target distribution name; explicit hostname wins. DNS preset/custom switching must not submit hidden stale values.
 - The requested automatic workflow requires kexec into Alpine Live and one final reboot into the new system. Do not silently fall back to a two-reboot GRUB workflow if kexec is unavailable. The Rust driver is connected, with systemd/openrc-init source adapters; do not claim this contract is accepted until actual target BIOS/UEFI installation tests pass. Rust manual ISO/netboot/reset execution remains unconnected.
 
 ## Development and safety

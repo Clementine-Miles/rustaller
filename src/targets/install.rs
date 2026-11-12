@@ -30,6 +30,7 @@ pub enum InstallError {
     Configuration(ConfigurationError),
     Debian(super::debian::DebianError),
     Rolling(rolling::RollingError),
+    Cachyos(super::cachyos::CachyosError),
     Firstboot(crate::worker::firstboot::FirstbootError),
     Swap(crate::shared::swapfile::SwapfileError),
     Plan(crate::model::PlanError),
@@ -43,6 +44,7 @@ impl std::fmt::Display for InstallError {
             Self::Configuration(e) => e.fmt(f),
             Self::Debian(e) => e.fmt(f),
             Self::Rolling(e) => e.fmt(f),
+            Self::Cachyos(e) => e.fmt(f),
             Self::Firstboot(e) => e.fmt(f),
             Self::Swap(e) => e.fmt(f),
             Self::Plan(e) => e.fmt(f),
@@ -73,6 +75,11 @@ impl From<super::debian::DebianError> for InstallError {
 impl From<rolling::RollingError> for InstallError {
     fn from(e: rolling::RollingError) -> Self {
         Self::Rolling(e)
+    }
+}
+impl From<super::cachyos::CachyosError> for InstallError {
+    fn from(e: super::cachyos::CachyosError) -> Self {
+        Self::Cachyos(e)
     }
 }
 impl From<crate::worker::firstboot::FirstbootError> for InstallError {
@@ -175,7 +182,10 @@ pub fn prepare<R: CommandRunner>(
         "umount",
         "util-linux-misc",
         "parted",
-        "xfsprogs",
+        match plan.plan().system.root_filesystem {
+            crate::config::RootFilesystem::Xfs => "xfsprogs",
+            crate::config::RootFilesystem::Ext4 => "e2fsprogs",
+        },
         "coreutils",
         "dosfstools",
         "tar",
@@ -199,7 +209,16 @@ pub fn prepare<R: CommandRunner>(
     args.extend(packages);
     checked(runner, "apk", args, "live-authenticated-prerequisites")?;
     // Fail before partitioning if the Live kernel cannot mount the new root.
-    checked(runner, "modprobe", ["xfs"], "live-xfs-support")?;
+    let filesystem = plan.plan().system.root_filesystem.as_str();
+    checked(
+        runner,
+        "modprobe",
+        [filesystem],
+        "live-root-filesystem-support",
+    )?;
+    if plan.plan().post_install.kernel == crate::postinstall::KernelChoice::Cachyos {
+        super::cachyos::prepare_assets(runner, work)?;
+    }
     let stage3 = match &manifest.gentoo_stage3 {
         Some(stage) if plan.plan().target == Target::Gentoo => {
             Some(verify_gentoo_stage3(runner, stage, work)?)
@@ -227,6 +246,7 @@ pub fn validate_install_options(
 ) -> Result<(), InstallError> {
     let plan = plan.plan();
     plan.validate()?;
+    plan.validate_install_credentials()?;
     manifest
         .validate()
         .map_err(|_| InstallError::Invalid("invalid deployment manifest"))?;
@@ -319,7 +339,10 @@ pub fn bootstrap<R: CommandRunner>(
                     "openssh",
                     "ca-certificates",
                     "dhcpcd",
-                    "xfsprogs",
+                    match plan.plan().system.root_filesystem {
+                        crate::config::RootFilesystem::Xfs => "xfsprogs",
+                        crate::config::RootFilesystem::Ext4 => "e2fsprogs",
+                    },
                 ]
                 .map(Into::into),
             );
@@ -406,7 +429,11 @@ pub fn configure<R: CommandRunner>(
                 write_target(
                     root,
                     "etc/mkinitfs/mkinitfs.conf",
-                    b"features=\"ata base scsi virtio xfs nvme xenpci rustaller\"\n",
+                    format!(
+                        "features=\"ata base scsi virtio {} nvme xenpci rustaller\"\n",
+                        layout.root_filesystem().as_str()
+                    )
+                    .as_bytes(),
                     0o644,
                 )?;
                 write_target(
@@ -448,7 +475,12 @@ pub fn configure<R: CommandRunner>(
                     "debian-target-initramfs",
                 )?;
             }
-            Target::Arch => rolling::configure_arch(runner, root, plan)?,
+            Target::Arch => {
+                if plan.plan().post_install.kernel == crate::postinstall::KernelChoice::Cachyos {
+                    super::cachyos::configure_repositories(runner, root, &assets.work)?;
+                }
+                rolling::configure_arch(runner, root, plan)?;
+            }
             Target::Gentoo => {
                 rolling::configure_gentoo(runner, root, plan, layout.boot_mode(), &[], root_uuid)?
             }
@@ -456,18 +488,17 @@ pub fn configure<R: CommandRunner>(
         }
         write_network(root, manifest, plan.plan().target)?;
         configure_accounts(runner, root, plan)?;
+        let hostname = target_hostname(plan.plan());
         if plan.plan().post_install.hostname.is_none() {
-            write_target(root, "etc/hostname", b"rustaller\n", 0o644)?;
+            write_target(
+                root,
+                "etc/hostname",
+                format!("{hostname}\n").as_bytes(),
+                0o644,
+            )?;
         }
         crate::shared::configure::apply_basic_configuration(root, plan, true)?;
-        write_target_hosts(
-            root,
-            plan.plan()
-                .post_install
-                .hostname
-                .as_deref()
-                .unwrap_or("rustaller"),
-        )?;
+        write_target_hosts(root, &hostname)?;
         let needs_kernel_config = plan.plan().system.network.congestion
             != crate::config::CongestionControl::Default
             || plan.plan().system.network.qdisc != crate::config::QueueDiscipline::Default;
@@ -692,6 +723,13 @@ fn configure_accounts<R: CommandRunner>(
 ) -> Result<(), InstallError> {
     let plan = plan.plan();
     let username = plan.username.as_deref().unwrap_or("root");
+    let root_password = if username != "root" {
+        Some(plan.root_password.as_ref().ok_or(InstallError::Invalid(
+            "a separate root password is required for a non-root installation account",
+        ))?)
+    } else {
+        None
+    };
     if username != "root" {
         match plan.target {
             Target::Alpine => chroot_checked(
@@ -721,6 +759,15 @@ fn configure_accounts<R: CommandRunner>(
             .as_bytes(),
             0o440,
         )?;
+        let root_password =
+            root_password.expect("non-root credentials checked before account creation");
+        let spec = chroot_command(root, ["chpasswd"], "target-set-root-password")
+            .stdin(CommandInput::Bytes(
+                format!("root:{}\n", root_password.expose()).into_bytes(),
+            ))
+            .stdout_mode(OutputMode::Discard)
+            .stderr_mode(OutputMode::Capture);
+        run_checked(runner, &spec)?;
     }
     if let Some(password) = &plan.password {
         let spec = chroot_command(root, ["chpasswd"], "target-set-account-password")
@@ -874,7 +921,16 @@ fn write_fstab(
     if (layout.boot_mode() == BootMode::Efi) != efi_uuid.is_some() {
         return Err(InstallError::Invalid("EFI layout/UUID mismatch"));
     }
-    let mut text = format!("UUID={root_uuid} / xfs defaults 0 0\n");
+    let filesystem = layout.root_filesystem();
+    let pass = if filesystem == crate::config::RootFilesystem::Ext4 {
+        1
+    } else {
+        0
+    };
+    let mut text = format!(
+        "UUID={root_uuid} / {} defaults 0 {pass}\n",
+        filesystem.as_str()
+    );
     if let Some(uuid) = efi_uuid {
         text.push_str(&format!(
             "UUID={uuid} {} vfat umask=0077 0 2\n",
@@ -1255,7 +1311,7 @@ fn verify_installed_target<R: CommandRunner>(
             "installed kernel or initramfs is missing",
         ));
     }
-    verify_grub_root(runner, root)?;
+    verify_grub_root(runner, root, layout.root_filesystem())?;
     if layout.boot_mode() == BootMode::Efi {
         let path = root.join(
             if matches!(plan.plan().target, Target::Alpine | Target::Debian) {
@@ -1275,7 +1331,11 @@ fn verify_installed_target<R: CommandRunner>(
     Ok(())
 }
 
-fn verify_grub_root<R: CommandRunner>(runner: &mut R, root: &Path) -> Result<(), InstallError> {
+fn verify_grub_root<R: CommandRunner>(
+    runner: &mut R,
+    root: &Path,
+    root_filesystem: crate::config::RootFilesystem,
+) -> Result<(), InstallError> {
     let filesystem = capture(
         runner,
         &command(
@@ -1289,9 +1349,14 @@ fn verify_grub_root<R: CommandRunner>(runner: &mut R, root: &Path) -> Result<(),
             "target-grub-root-probe",
         ),
     )?;
-    if filesystem.trim() != "xfs" {
+    // GRUB's ext2 filesystem module reads ext2, ext3 and ext4 and reports ext2.
+    let expected = match root_filesystem {
+        crate::config::RootFilesystem::Xfs => "xfs",
+        crate::config::RootFilesystem::Ext4 => "ext2",
+    };
+    if filesystem.trim() != expected {
         return Err(InstallError::Invalid(
-            "GRUB cannot identify the installed XFS root",
+            "GRUB cannot identify the selected target root filesystem",
         ));
     }
     chroot_checked(
@@ -2059,6 +2124,13 @@ fn valid_uuid(value: &str) -> bool {
         && value.len() <= 64
         && value.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
 }
+fn target_hostname(plan: &crate::model::InstallPlan) -> String {
+    plan.post_install
+        .hostname
+        .clone()
+        .unwrap_or_else(|| plan.target.to_string().to_ascii_lowercase())
+}
+
 fn write_target_hosts(root: &Path, hostname: &str) -> Result<(), InstallError> {
     // This is a freshly installed target, not the current-system editor.
     write_target(
@@ -2193,11 +2265,117 @@ mod runtime_tests {
                 CommandOutput::new(Some(status), vec![], vec![]),
             ]);
             assert_eq!(
-                verify_grub_root(&mut runner, Path::new("/isolated-target")).is_ok(),
+                verify_grub_root(
+                    &mut runner,
+                    Path::new("/isolated-target"),
+                    crate::config::RootFilesystem::Xfs
+                )
+                .is_ok(),
                 accepted
             );
             assert_eq!(runner.calls().len(), count);
         }
+    }
+    #[test]
+    fn ext4_grub_uses_the_ext2_driver_and_fstab_fsck_pass() {
+        let root = Scratch::new();
+        let mut install = crate::model::InstallPlan::new(Target::Debian);
+        install.system.root_filesystem = crate::config::RootFilesystem::Ext4;
+        let plan = crate::worker::live::validate_live_plan_with_uid(
+            install,
+            "x86_64",
+            4096,
+            crate::RUNTIME_VERSION,
+            0,
+        )
+        .unwrap();
+        let layout = DiskLayout::new(&plan, "vda", BootMode::Bios, 8 * 1024_u64.pow(3)).unwrap();
+        write_fstab(&root.0, &layout, "1234-ABCD", None).unwrap();
+        assert_eq!(
+            fs::read_to_string(root.0.join("etc/fstab")).unwrap(),
+            "UUID=1234-ABCD / ext4 defaults 0 1\n"
+        );
+        let mut runner = MockRunner::new([
+            CommandOutput::new(Some(0), b"ext2\n".to_vec(), vec![]),
+            CommandOutput::new(Some(0), vec![], vec![]),
+        ]);
+        verify_grub_root(&mut runner, &root.0, crate::config::RootFilesystem::Ext4).unwrap();
+        let mut wrong = MockRunner::new([CommandOutput::new(Some(0), b"xfs\n".to_vec(), vec![])]);
+        assert!(
+            verify_grub_root(&mut wrong, &root.0, crate::config::RootFilesystem::Ext4).is_err()
+        );
+    }
+    #[test]
+    fn non_root_accounts_set_root_password_privately_without_enabling_root_ssh() {
+        for key_auth in [false, true] {
+            let root = Scratch::new();
+            root.write("etc/ssh/sshd_config", b"# base\n");
+            let mut install = crate::model::InstallPlan::new(Target::Debian);
+            install.username = Some("alice".into());
+            install.root_password = Some(crate::model::SecretString::new("PRIVATE-ROOT-SENTINEL"));
+            if key_auth {
+                install
+                    .ssh_keys
+                    .push("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestfixture alice".into());
+            } else {
+                install.password = Some(crate::model::SecretString::new("PRIVATE-USER-SENTINEL"));
+            }
+            let plan = crate::worker::live::validate_live_plan_with_uid(
+                install,
+                "x86_64",
+                4096,
+                crate::RUNTIME_VERSION,
+                0,
+            )
+            .unwrap();
+            let mut runner =
+                MockRunner::new((0..20).map(|_| CommandOutput::new(Some(0), vec![], vec![])));
+            configure_accounts(&mut runner, &root.0, &plan).unwrap();
+            let call = runner
+                .calls()
+                .iter()
+                .find(|c| c.phase == "target-set-root-password")
+                .unwrap();
+            assert_eq!(
+                call.stdin,
+                CommandInput::Bytes(b"root:PRIVATE-ROOT-SENTINEL\n".to_vec())
+            );
+            assert_eq!(call.stdout_mode, OutputMode::Discard);
+            assert_eq!(call.stderr_mode, OutputMode::Capture);
+            assert!(!format!("{call:?}").contains("PRIVATE-ROOT-SENTINEL"));
+            assert!(
+                !call
+                    .args
+                    .iter()
+                    .any(|arg| arg.to_string_lossy().contains("PRIVATE-ROOT-SENTINEL"))
+            );
+            let config = fs::read_to_string(root.0.join("etc/ssh/sshd_config")).unwrap();
+            assert!(config.contains("PermitRootLogin no\n"));
+            assert!(config.contains(if key_auth {
+                "PasswordAuthentication no\n"
+            } else {
+                "PasswordAuthentication yes\n"
+            }));
+        }
+    }
+    #[test]
+    fn missing_root_password_stops_before_creating_non_root_account() {
+        let root = Scratch::new();
+        let mut install = crate::model::InstallPlan::new(Target::Debian);
+        install.username = Some("alice".into());
+        install.password = Some(crate::model::SecretString::new("PRIVATE-USER-SENTINEL"));
+        let plan = crate::worker::live::validate_live_plan_with_uid(
+            install,
+            "x86_64",
+            4096,
+            crate::RUNTIME_VERSION,
+            0,
+        )
+        .unwrap();
+        let mut runner = MockRunner::empty();
+        assert!(configure_accounts(&mut runner, &root.0, &plan).is_err());
+        assert!(runner.calls().is_empty());
+        assert!(!root.0.join("etc/sudoers.d/90-rustaller").exists());
     }
     #[test]
     fn new_target_hostname_resolves_locally_and_hosts_write_is_repeatable() {
@@ -2210,6 +2388,28 @@ mod runtime_tests {
         assert_eq!(hosts.matches("127.0.1.1 vps-node").count(), 1);
         assert!(!hosts.contains("template-host"));
         assert!(hosts.contains("::1 localhost"));
+    }
+    #[test]
+    fn absent_hostname_uses_selected_system_name_and_explicit_hostname_wins() {
+        for (target, expected) in [
+            (Target::Alpine, "alpine"),
+            (Target::Debian, "debian"),
+            (Target::Arch, "arch"),
+            (Target::Gentoo, "gentoo"),
+        ] {
+            let root = Scratch::new();
+            let mut plan = crate::model::InstallPlan::new(target);
+            let hostname = target_hostname(&plan);
+            assert_eq!(hostname, expected);
+            write_target_hosts(&root.0, &hostname).unwrap();
+            assert!(
+                fs::read_to_string(root.0.join("etc/hosts"))
+                    .unwrap()
+                    .contains(&format!("127.0.1.1 {expected}\n"))
+            );
+            plan.post_install.hostname = Some("previous-host".into());
+            assert_eq!(target_hostname(&plan), "previous-host");
+        }
     }
     struct Scratch(PathBuf);
     impl Scratch {

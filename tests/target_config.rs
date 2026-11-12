@@ -18,10 +18,7 @@ fn default_plan_adapters_preserve_existing_kernel_and_package_selection() {
         for is_vm in [false, true] {
             let configuration =
                 packages::configuration_for_plan(&alpine_plan, Target::Alpine, is_vm).unwrap();
-            assert_eq!(
-                configuration.kernel.alpine_flavor,
-                Some(if !no_cloud && is_vm { "virt" } else { "lts" })
-            );
+            assert_eq!(configuration.kernel.alpine_flavor, Some("lts"));
             assert!(configuration.extra_packages.is_empty());
         }
         let mut debian_plan = plan(Target::Debian);
@@ -29,7 +26,7 @@ fn default_plan_adapters_preserve_existing_kernel_and_package_selection() {
         for boot_mode in [BootMode::Bios, BootMode::Efi] {
             assert_eq!(
                 debian::apt_package_list_for_plan(&debian_plan, boot_mode, &[]).unwrap(),
-                debian::apt_package_list(no_cloud, boot_mode, "root", &[])
+                debian::apt_package_list(true, boot_mode, "root", &[])
             );
         }
     }

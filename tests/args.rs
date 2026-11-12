@@ -213,3 +213,52 @@ fn target_configuration_uses_shared_validation_and_official_kernel_choices() {
     }
     assert!(parse_args(["debian", "--kernel", "auto", "--no-cloud-kernel"], env).is_ok());
 }
+
+#[test]
+fn filesystem_and_root_password_options_preserve_secrets_and_inspection() {
+    use rustaller::config::RootFilesystem;
+    let CliOutcome::Plan(plan) = parse_args(
+        [
+            "debian",
+            "--username=admin",
+            "--root-password",
+            " root-secret ",
+            "--ssh-key",
+            "/root/client.pub",
+            "--filesystem=ext4",
+        ],
+        None,
+    )
+    .unwrap() else {
+        panic!("plan")
+    };
+    assert_eq!(plan.system.root_filesystem, RootFilesystem::Ext4);
+    assert_eq!(
+        plan.root_password.as_ref().unwrap().expose(),
+        " root-secret "
+    );
+    assert_eq!(plan.ssh_keys, ["/root/client.pub"]);
+    assert!(!format!("{plan:?}").contains("root-secret"));
+    assert!(plan.validate_install_credentials().is_ok());
+    assert!(matches!(
+        parse_args(["debian", "--username=admin", "--inspect"], None),
+        Ok(CliOutcome::Inspect(_))
+    ));
+    for args in [
+        vec![
+            "debian",
+            "--username=admin",
+            "--root-password",
+            "bad\nsecret",
+        ],
+        vec!["debian", "--root-password", "unused-secret"],
+        vec!["debian", "--filesystem=btrfs"],
+        vec!["debian", "--hold=1", "--filesystem=ext4"],
+        vec!["netboot.xyz", "--filesystem=ext4"],
+    ] {
+        let error = parse_args(args, None)
+            .err()
+            .expect("invalid option combination");
+        assert!(!error.to_string().contains("secret"));
+    }
+}

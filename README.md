@@ -2,7 +2,7 @@
 
 基于 [bin456789/reinstall](https://github.com/bin456789/reinstall)，上游基准为 `98f1e21013233d42750cc2e7a298a0818461d686`。采用 GNU GPLv3（`GPL-3.0-only`），见 [LICENSE](LICENSE)；保留上游源码声明与署名。
 
-静态 Rust/musl 入口提供英文多级 TUI，支持 Alpine、Debian、Arch、Gentoo，经认证的 Alpine Live 和 kexec 执行安装。**当前为含真实清盘操作的开发预览，四系统 BIOS/UEFI、XFS 启动与 swap 激活尚未完成验收。**
+静态 Rust/musl 入口提供英文多级 TUI，支持 Alpine、Debian、Arch、Gentoo，经认证的 Alpine Live 和 kexec 执行安装。**当前为含真实清盘操作的开发预览，四系统 BIOS/UEFI、文件系统启动与 swap 激活尚未完成验收。**
 
 > 自动安装会清空目标磁盘的全部分区。请先备份并准备控制台/VNC，不要直接用于唯一生产机。
 > Rust 通过 kexec 进入 Live，最后重启进入目标系统；UEFI 使用 GRUB 回退路径。保留的 Shell 引导/reset 接口还可能写 NVRAM/BootNext。
@@ -20,6 +20,8 @@ cargo xtask bundle
 
 先用 `./rustaller debian --inspect` 只读查看磁盘、固件和确认令牌。实际安装需要 SSH 公钥或密码及完整磁盘身份确认；非交互模式须传入 `--confirm-erase`。程序内嵌匹配 worker 和日志页面，认证官方资源，无需自建 `confhome`。
 
+可选内核、XFS/ext4 根和公共 DNS/自定义 DNS。创建非 root 用户须另设 root 密码，且不开放 root SSH；TUI 与交互 CLI 提供私密输入。主机名优先继承原系统，检测不到时用发行版名称；手动设置优先。内核映射和 CachyOS 首次开机更新见[目标配置](docs/POSTINSTALL.md)。
+
 原系统 PID 1 须为 systemd 或 openrc-init；kexec 不可用时停止，不退回两次重启。`hold=1` 进入 Alpine Live 救援，不自动分区。Rust 的 ISO/netboot.xyz/reset 尚未接通执行；下文 Shell 基线保留这些接口。
 
 `Configure current system` 可持久化现有账户公钥、SSH 端口、主机名、时区、DNS 和受支持的网络设置，提供私有备份与变更清单。不自动重启服务或加载 sysctl；静态 DNS 变化可能立即影响解析。Save 仅保存本次会话草稿，Apply 才写入系统。
@@ -29,7 +31,7 @@ cargo xtask bundle
 - 原系统与目标均为 Linux x86_64；支持不同原系统发行版，拒绝容器、启用 Secure Boot 及 tmpfs 根的原系统。
 - 四目标均从 Alpine Live 安装：Alpine/Debian 解析官方最新稳定版，Arch/Gentoo 使用滚动版；不接受版本号参数。
 - Debian 使用 `debootstrap --variant=minbase`、systemd-networkd、SSH、内核和 GRUB，不安装桌面/standard 任务或 recommends。Gentoo 保留 systemd stage3、gentoo-kernel-bin/dracut 和 GRUB。
-- Rust 根文件系统为 XFS，ESP 为 FAT32，Alpine 保留 OpenRC；计划 schema=5，拒绝旧计划。可选[目标 swapfile](docs/CONFIGURATION.md#目标-swapfile)由 GNU dd 写零，仅在新系统启动后激活；不操作原系统/Live swap，也不创建 swap 分区。
+- Rust 根可选 XFS（默认）或 ext4，ESP 为 FAT32，Alpine 保留 OpenRC；计划 schema=6，拒绝旧计划。可选[目标 swapfile](docs/CONFIGURATION.md#目标-swapfile)由 GNU dd 写零，仅在新系统启动后激活；不操作原系统/Live swap，也不创建 swap 分区。
 - 保留静态/DHCP、IPv4/IPv6、多网卡、SSH 公钥/密码、端口、frpc 和磁盘 ID 识别。默认及 Shell 路径不改变已有 swap。
 - 不支持 Windows、ARM、Debian Installer、其他自动目标或任意 RAW/DD 自动写盘；手动恢复/DD 可进入 Alpine Live。
 

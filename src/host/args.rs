@@ -16,13 +16,15 @@ Targets:
 Options:
   --username USERNAME           Target account name
   --password PASSWORD           Target account password
+  --root-password PASSWORD      Separate root password for a non-root account
   --ssh-key KEY                 SSH public key (repeatable)
   --ssh-port PORT               SSH port
   --web-port PORT               Web log viewer port
   --frpc-config PATH            frpc configuration
   --target-disk /dev/DISK       Target disk for automatic installation
+  --filesystem xfs|ext4         Target root filesystem (default: xfs)
   --no-cloud-kernel             Select the non-cloud kernel
-  --kernel CHOICE               Official kernel: auto/cloud/generic/lts/standard
+  --kernel CHOICE               auto/standard/lts/virt/cloud/generic/cachyos
   --hostname NAME               Set target hostname (one ASCII label)
   --timezone ZONE               Set target timezone, e.g. Etc/UTC
   --profile standard|minimal    Select target installation footprint
@@ -244,11 +246,14 @@ where
                 }
                 index += 1;
             }
-            "--profile" | "--dns-mode" | "--dns" | "--dns-search" => {
+            "--profile" | "--filesystem" | "--dns-mode" | "--dns" | "--dns-search" => {
                 let (value, consumed) = take_value(&args, index, &name, inline_value)?;
                 let invalid = || CliError::InvalidValue(name.clone());
                 match name.as_str() {
                     "--profile" => options.system.profile = value.parse().map_err(|_| invalid())?,
+                    "--filesystem" => {
+                        options.system.root_filesystem = value.parse().map_err(|_| invalid())?
+                    }
                     "--dns-mode" => {
                         dns_mode = Some(value.parse::<DnsMode>().map_err(|_| invalid())?)
                     }
@@ -322,6 +327,11 @@ where
                 options.password = Some(crate::model::SecretString::new(value));
                 index += consumed;
             }
+            "--root-password" => {
+                let (value, consumed) = take_value(&args, index, &name, inline_value)?;
+                options.root_password = Some(crate::model::SecretString::new(value));
+                index += consumed;
+            }
             "--ssh-key" | "--public-key" => {
                 let (value, consumed) = take_value(&args, index, &name, inline_value)?;
                 options.ssh_keys.push(value);
@@ -382,6 +392,7 @@ where
     let mut plan = InstallPlan::new(target);
     plan.username = options.username;
     plan.password = options.password;
+    plan.root_password = options.root_password;
     plan.ssh_keys = options.ssh_keys;
     plan.ssh_port = options.ssh_port.or(plan.ssh_port);
     plan.web_port = options.web_port.or(plan.web_port);

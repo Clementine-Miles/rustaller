@@ -1,5 +1,6 @@
 //! Validated disk layouts, partitioning and mount operations.
 use crate::command::{CommandOutput, CommandRunner, CommandSpec, OutputMode, shell_attempt};
+use crate::config::RootFilesystem;
 use crate::model::{BootMode, Target};
 use crate::worker::live::ValidatedLivePlan;
 use std::{
@@ -31,7 +32,7 @@ impl std::fmt::Display for StorageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidDisk => f.write_str("Invalid Live target disk or size"),
-            Self::InsufficientRootSpace => f.write_str("XFS root must have at least 512 MiB after boot partitions; this is a formatting floor, not a distro installation size guarantee"),
+            Self::InsufficientRootSpace => f.write_str("Root must have at least 512 MiB after boot partitions; this is a formatting floor, not a distro installation size guarantee"),
             Self::UnsupportedGeometry => f.write_str("Target disk must be writable with 512-byte sectors, or 4096-byte sectors under UEFI; unknown geometry and BIOS on 4Kn are unsupported"),
             Self::RescuePlan => f.write_str("Alpine Live rescue must not partition a disk"),
             Self::ConflictingDisk => {
@@ -154,6 +155,7 @@ pub struct DiskLayout {
     target: Target,
     boot_mode: BootMode,
     large_disk: bool,
+    root_filesystem: RootFilesystem,
 }
 
 impl DiskLayout {
@@ -195,6 +197,7 @@ impl DiskLayout {
             target: plan.plan().target,
             boot_mode,
             large_disk,
+            root_filesystem: plan.plan().system.root_filesystem,
         })
     }
 
@@ -206,6 +209,9 @@ impl DiskLayout {
     }
     pub fn target(&self) -> Target {
         self.target
+    }
+    pub fn root_filesystem(&self) -> RootFilesystem {
+        self.root_filesystem
     }
     pub fn root_partition(&self) -> String {
         self.partition(if self.boot_mode == BootMode::Efi || self.large_disk {
@@ -250,7 +256,12 @@ pub fn create_partitions<R: CommandRunner>(
     layout: &DiskLayout,
     environment: &PartitionEnvironment,
 ) -> Result<(), StorageError> {
-    apk(runner, &["add", "parted", "xfsprogs"])?;
+    let filesystem = layout.root_filesystem.as_str();
+    let tools = match layout.root_filesystem {
+        RootFilesystem::Xfs => "xfsprogs",
+        RootFilesystem::Ext4 => "e2fsprogs",
+    };
+    apk(runner, &["add", "parted", tools])?;
     if layout.boot_mode == BootMode::Efi {
         apk(runner, &["add", "dosfstools"])?;
     }
@@ -265,7 +276,7 @@ pub fn create_partitions<R: CommandRunner>(
     let mut args = vec![device.as_str(), "-s", "--", "mklabel"];
     if layout.boot_mode == BootMode::Efi {
         args.extend([
-            "gpt", "mkpart", "\" \"", "fat32", "1MiB", "513MiB", "mkpart", "\" \"", "xfs",
+            "gpt", "mkpart", "\" \"", "fat32", "1MiB", "513MiB", "mkpart", "\" \"", filesystem,
             "513MiB", "100%", "set", "1", "esp", "on",
         ]);
     } else if layout.large_disk {
@@ -273,12 +284,12 @@ pub fn create_partitions<R: CommandRunner>(
             "gpt",
             "mkpart",
             "\" \"",
-            "xfs",
+            filesystem,
             "1MiB",
             "2MiB",
             "mkpart",
             "\" \"",
-            "xfs",
+            filesystem,
             "2MiB",
             "100%",
             "set",
@@ -288,7 +299,7 @@ pub fn create_partitions<R: CommandRunner>(
         ]);
     } else {
         args.extend([
-            "msdos", "mkpart", "primary", "xfs", "1MiB", "100%", "set", "1", "boot", "on",
+            "msdos", "mkpart", "primary", filesystem, "1MiB", "100%", "set", "1", "boot", "on",
         ]);
     }
     checked(runner, &command("parted", args, "live-partition-disk"))?;
@@ -313,7 +324,24 @@ pub fn create_partitions<R: CommandRunner>(
         "nrext64=0",
         &root,
     ];
-    checked(runner, &command("mkfs.xfs", args, "live-format-root"))?;
+    match layout.root_filesystem {
+        RootFilesystem::Xfs => checked(runner, &command("mkfs.xfs", args, "live-format-root"))?,
+        // Fully initialize inode tables/journal before the target's first boot.
+        // Avoid whole-volume discard on thin-provisioned VPS disks.
+        RootFilesystem::Ext4 => checked(
+            runner,
+            &command(
+                "mkfs.ext4",
+                [
+                    "-F",
+                    "-E",
+                    "nodiscard,lazy_itable_init=0,lazy_journal_init=0",
+                    &root,
+                ],
+                "live-format-root",
+            ),
+        )?,
+    }
     refresh_partition_table(runner, layout, environment)?;
     if layout.target == Target::Alpine {
         apk(runner, &["del", "parted"])?;
@@ -471,7 +499,7 @@ pub fn mount_target<R: CommandRunner>(
             "mount",
             [
                 std::ffi::OsStr::new("-t"),
-                std::ffi::OsStr::new("xfs"),
+                std::ffi::OsStr::new(layout.root_filesystem.as_str()),
                 layout.root_partition().as_ref(),
                 root.as_os_str(),
             ],

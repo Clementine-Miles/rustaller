@@ -97,11 +97,13 @@ host/handoff、worker/install、targets/install、targets/rolling、shared/swapf
 ## 不可破坏的约束
 
 - 核心无第三方运行时依赖；ratatui/crossterm 仅 host 可选 tui feature。worker 用 --no-default-features。
-- 计划 schema=5；部署清单 schema=1；兼容标记 PERSONAL-LINUX-XFS-20261102-05。改变交接协议必须同步校验与测试。
+- 计划 schema=6；部署清单 schema=1；兼容标记 RUSTALLER-CONFIG-20261112-06。拒绝旧计划；改变交接协议须同步校验与测试。
 - Alpine netboot 与 Gentoo stage3 有固定发布密钥/签名/摘要验证；APT/APK/pacman 使用原生信任链。audit-sources 只检查元数据和可达性。
 - 清盘以稳定磁盘身份为依据，Live 重绑后再验挂载、swap、RAM 和只读/扇区状态。
 - UEFI 要求 64 位固件与未启用 Secure Boot；512 MiB FAT32 ESP；GRUB 使用 removable/no-nvram。平台限制见验收文档。
-- 原系统和 Live 不执行 swapon/swapoff；可选新目标 XFS /swapfile 仅在目标启动后激活。
+- 根文件系统可选 XFS（默认）/ext4，格式化、fstab、initramfs 与 GRUB 校验随选择配置；原系统和 Live 不执行 swapon/swapoff，目标 /swapfile 仅开机激活。
+- 非 root 安装的 root 密码单独遮蔽、确认并私密交接；CLI 在交互终端可提示补齐，root SSH 保持禁用。hostname 在原系统检测并写入计划，缺失时使用发行版名。
+- DNS 预设/自定义只提交选中值。Arch CachyOS 使用固定官方脚本与密钥、OS 可用 ISA 检测、目标首次开机完整更新；其余内核不引入该仓库。
 - 失败不请求最终重启；不能自动退回两次重启。当前只适配 systemd/openrc-init 原系统 PID 1。
 
 ## 构建与分发
