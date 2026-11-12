@@ -7,9 +7,9 @@ cargo xtask bundle
 ./target/x86_64-unknown-linux-musl/release/rustaller
 ```
 
-The Release binary embeds its matching worker. The VPS does not need a Rust toolchain. Build and download instructions are in [GITHUB-RELEASE.md](GITHUB-RELEASE.md).
+The release host embeds its worker; the VPS needs no Rust toolchain. See [builds and downloads](GITHUB-RELEASE.md).
 
-All menus, hints and generated messages use English. The Home screen displays a horizontally centered ASCII RUSTALLER title; narrower terminals use a compact ASCII title. The minimum terminal size is 48 columns by 16 rows.
+Menus and messages use English. Home shows a centered RUSTALLER title, compact on narrow terminals. Minimum size: 48 columns × 16 rows.
 
 ## Choose a route first
 
@@ -31,7 +31,7 @@ Main menu
 └── Quit
 ```
 
-An installation target is selected before its configuration directories appear. Current-system configuration has its own route and draft; selecting it does not create an installation plan or select a target disk.
+Choose a target before configuring installation. Current-system settings use a separate draft without an installation plan or target disk.
 
 ## Installation directories
 
@@ -80,17 +80,15 @@ System configuration
 └── Back to previous menu
 ```
 
-The kernel choices map to official distribution packages. Alpine/musl does not expose glibc address preference. BBR requires `fq` and target-kernel support. DNS and network values use the common typed model rather than arbitrary Shell commands. Full ranges and behavior are described in [CONFIGURATION.md](CONFIGURATION.md); package profiles are described in [MINIMAL.md](MINIMAL.md).
+Kernel choices use official packages; BBR requires `fq` and target-kernel support, and Alpine/musl rejects glibc address preference. Ranges are in [CONFIGURATION.md](CONFIGURATION.md), profiles in [MINIMAL.md](MINIMAL.md).
 
-Hidden options are not submitted: automatic DNS does not submit stale static DNS entries, disabled swap does not submit its size, and standard profile does not submit hidden minimal retention flags. Each target keeps an independent draft for this session.
-
-The installation review submits the same validated plan used by the CLI. Before proceeding, the installation callback temporarily restores the native terminal for disk-identity confirmation and progress output. An identity or preparation failure returns to a result page; returning from that page does not retry automatically. Real BIOS/UEFI acceptance is recorded separately and must not be inferred from TUI or unit-test success.
+Each target has a session draft. Hidden values are not submitted: stale static DNS in automatic mode, disabled swap size, or minimal-only flags in standard mode. Review uses the CLI's validated plan, then restores the native terminal for disk confirmation and progress. Errors return to a result page; navigating back never retries installation.
 
 ## Configure the current system
 
-This route detects Alpine, Debian-compatible, Arch or Gentoo configuration semantics. Applying changes requires root on Linux x86_64. Opening the route and editing or saving its draft do not change system configuration.
+Supports Alpine, Debian-compatible, Arch and Gentoo configuration semantics. Apply requires root on Linux x86_64; opening, editing or saving drafts changes no system files.
 
-Available directories are:
+Directories:
 
 ```text
 Current system
@@ -110,13 +108,11 @@ Current system
 └── Back to previous menu
 ```
 
-The default draft is a no-op. Only explicitly configured fields are submitted. Public keys are appended for an existing account; this mode accepts inline OpenSSH public keys or absolute local public-key files, and rejects remote key sources. It does not create accounts, set passwords, install a system, choose a disk, replace a kernel or create a swapfile.
+Only explicit fields are applied. Existing-account public keys accept inline OpenSSH values or absolute local files, not remote sources. This route does not create accounts, set passwords, select disks, install kernels or create swap.
 
-Applying validates the requested files and native SSH configuration, prepares private backups, and then publishes configuration files. The result page lists the changed relative paths, backup directory and relevant notes. Existing access restrictions are preserved; unsupported or conflicting network/SSH layouts are rejected rather than guessed.
+Apply validates paths and native SSH settings, prepares private backups and publishes files. The result lists changes, backups and notes; unsupported/conflicting layouts are rejected, existing access restrictions retained.
 
-The mode does not restart SSH or networking, apply sysctl values to the running kernel, or activate swap. Static resolver changes can affect new DNS lookups immediately. SSH changes require a deliberate reload from a retained working session; socket-activated SSH listeners may need separate socket configuration. Keep the backup directory if manual restoration is needed.
-
-Successful application establishes the saved baseline for the draft. Discarding later draft edits does not undo already applied system changes. If publication reports a partial failure, use the reported backups and changed paths to inspect the system; draft navigation is not a rollback mechanism.
+No services restart, sysctl load or swap activation occurs. Static DNS may affect lookups immediately. Reload SSH deliberately from a retained session; socket activation may need separate configuration. Keep backups for restoration. Apply establishes the saved draft baseline; discarding later edits does not undo applied changes. Inspect reported partial failures using backups and changed paths.
 
 ## Back, save, discard and cancel
 
@@ -126,9 +122,9 @@ Every configuration directory has an explicit **Back to previous menu** item. `E
 - **Discard changes and go back**: restore that directory's entry snapshot and return.
 - **Cancel - keep editing**: stay in the directory with its changes intact.
 
-An unchanged directory returns immediately. Parent snapshots include changes made in child directories: saving DNS settings and later discarding the parent network directory restores the network draft as it was when that parent was entered. Other previously saved directories remain intact.
+Unchanged directories return immediately. Discarding a parent restores its entry snapshot, including child edits; other directories remain intact.
 
-Drafts are session-only; they are not automatically written to a configuration file or credential store. `Ctrl-C` exits immediately. Generated SSH key files remain on disk even if their associated draft/public-key entry is discarded. Saving a draft never runs an installation or applies current-system settings.
+Drafts last only for the session; Save never installs or applies settings. `Ctrl-C` exits immediately. Discarding a draft does not remove generated key files.
 
 ## Native SSH key generation
 
@@ -140,9 +136,9 @@ Configure the type, KDF rounds, cipher, comment, output path and optional RSA bi
 ssh-keygen -o -a 512 -Z aes256-ctr -t ed25519 -C YYYYMMDD -f /absolute/output/path
 ```
 
-The date is obtained from the system date tool. Arguments are passed separately; no Shell expansion is used. Selecting **Generate and add public key** leaves raw/alternate-screen mode while the real system `ssh-keygen` asks for and confirms the passphrase. The TUI does not collect it or pass it through an argument, environment variable or installation plan. An empty passphrase has no KDF protection.
+The system date supplies the comment. Arguments are passed without Shell expansion. **Generate and add public key** restores the native terminal for ssh-keygen's passphrase prompt, then returns to the TUI. The passphrase never enters fields, argv, environment or plan; an empty value has no KDF protection.
 
-The tool rejects overwriting existing keys and unsafe output paths. It publishes the private key with mode 0600 and public key with mode 0644, then adds only the public key to the active draft. Back up the private key to your client before erasing its disk. This is a client login key, not a server host key.
+Existing keys and unsafe paths are rejected. Private/public files use 0600/0644; only the public key enters the draft. This is a client login key, not a host key: back it up before erasing its disk.
 
 ## Editing and privacy
 
@@ -154,13 +150,10 @@ The tool rejects overwriting existing keys and unsafe output paths. It publishes
 - `Up/Down/PgUp/PgDn`, `Home/End`: scroll review and result pages.
 - `Ctrl-C`: quit and restore the terminal.
 
-Text input is one line and at most 8192 bytes. A paste containing controls/newlines or exceeding the limit is rejected as a whole. Password confirmation preserves exact leading/trailing spaces. At most 128 public-key sources are supported. Passwords, public keys, frpc input, matching-resource credentials and ISO arguments are masked where appropriate; callback results redact configured secrets and remove terminal control characters.
+Fields are single-line, at most 8192 bytes; control/newline or oversized pastes are rejected whole. Password spaces are preserved. Up to 128 public-key sources are supported. Sensitive values are masked; callback results redact configured secrets and terminal controls.
 
-Resizing below 48x16 blocks hidden actions until the terminal is usable again. Input and drafts survive resizing. Tests cover English navigation, independent routes, save/discard/cancel snapshots, selected-field submission, privacy, scrolling, terminal restoration and native encrypted-key generation. These tests do not establish successful OS installation.
-# 2026-11-02 操作调整
+Below 48×16, hidden actions are blocked while drafts survive resizing. Navigation, privacy, terminal restoration and encrypted-key tests do not establish OS installation success.
 
-新安装入口显示 `New host settings`：hostname 留空使用 `rustaller`，当前系统
-配置留空保持不变。启用 Target swapfile 后光标移到大小字段，Enter 编辑 MiB；
-关闭时保留大小/swappiness 草稿但不提交。空大小显示必填，不再显示 Kernel default。
-返回仍使用 Save/Discard/Cancel，草稿按发行版独立保存。EFI Stub 选项尚未接入
-执行菜单，方案见 [EFI Stub 评估](EFI-STUB-OPTIONS.md)。
+## 2026-11-02 界面调整
+
+新安装 hostname 留空使用 `rustaller`，当前系统留空不变。启用 swapfile 后焦点转至 MiB 大小，空值必填；关闭保留草稿但不提交。返回使用 Save/Discard/Cancel。EFI Stub 已取消，不接入执行菜单，方案见 [EFI Stub 评估](EFI-STUB-OPTIONS.md)。

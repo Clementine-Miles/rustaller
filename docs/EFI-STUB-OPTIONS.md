@@ -1,47 +1,20 @@
-# EFI Stub 引导方案评估
+# EFI Stub 历史评估
 
-状态：用户已取消 EFI Stub，保留 GRUB 的 BIOS/UEFI 路径。以下仅为历史设计记录。
-不再将本文作为待实施任务。
-当前可执行安装路径仍为 GRUB + XFS；Alpine Live 和 Alpine 目标保留 OpenRC。
+**用户已取消此方案，不作为待实施任务。** 当前执行路径为 GRUB BIOS/UEFI + XFS，Alpine Live/目标保留 OpenRC。以下仅保留方案差异与验收要求。
 
-## 已选方案的 VPS 兼容性要求
+## 兼容性前提
 
-- CPU 范围继续为 x86_64。KVM 是虚拟化平台，不代表 UEFI：SeaBIOS 客体
-  不可使用 EFI Stub；OVMF 客体仍须通过 EFI 64 位、Secure Boot、kexec、
-  NVRAM 与磁盘启动检查。TUI 不得把 force-boot-mode 当作固件转换能力。
-- EFI Stub 安装请求在 BIOS 上清盘前拒绝；不自动改用 GRUB、UKI 或二次
-  重启。保留原有独立 GRUB 实现，不将其宣称为 EFI Stub fallback。
-- 原系统执行只读预检。Live 清盘前必须重新检查 EFI runtime services、
-  efivarfs 与启动项管理能力；挂载 rw 和读取成功均不证明写入成功。
-  写入探测需设计可恢复的专用启动项，不能改写无关 BootOrder/BootNext。
-  即使探测通过，安装后的写入仍须检查返回值并读回验证，失败不最终重启。
-- virtio-blk、virtio-scsi、AHCI/SATA、NVMe 的根设备驱动和 XFS 必须由
-  目标内核提供并进入 initramfs；不能只打包 Live 当前用到的设备模块。
-  网卡至少验收 virtio-net；e1000、vmxnet3、Hyper-V netvsc 另做对应测试。
-- VMware UEFI、Hyper-V Gen2、Xen HVM/UEFI 作为条件支持目标，分别检查
-  PVSCSI、storvsc/VMBus、Xen 前端驱动。Xen PV/PVH、容器、外部内核启动、
-  已检测到的受限 confidential VM 保持拒绝或待提供商适配。
-- 使用实际 XFS UUID 绑定根分区，NVRAM 内核和 initrd 路径均指向目标 ESP。
-  串口名和速率不能按平台品牌猜测，保留可配置入口及 tty0 控制台。
-- 更新必须生成配对的内核/initramfs，使用版本化 ESP 路径，验证后再切换
-  受管理启动项，保留恢复入口和对应模块。不要覆盖发行版自带 mkinitfs。
-  Alpine kernel-hooks 提供 /etc/kernel-hooks.d，但其 trigger 可能只报告
-  钩子错误后返回成功；必须另设明确更新状态和失败提示，不能把 apk 成功
-  当作 ESP 更新成功。核对目标稳定分支的钩子顺序，不能依赖 master 行为。
-- EFI Stub 验收必须让 OVMF 从安装磁盘启动；QEMU -kernel 直接加载内核
-  不算通过。TCG+OVMF 结果不能替代真实 KVM 或具体 VPS 提供商验收。
+- 仅 x86_64 UEFI；KVM 不等于 UEFI，SeaBIOS 不能使用 EFI Stub，force-boot-mode 不能转换固件。
+- BIOS 上须清盘前拒绝，不静默改用 GRUB/UKI 或两次重启。原系统与 kexec 后 Live 分别检查 EFI runtime、efivarfs 及启动项管理能力。
+- efivarfs 可读/挂载 rw 不证明可写。探测须用可恢复专用项，不改无关 BootOrder/BootNext；正式写入仍检查返回值和读回，失败不重启。
+- 目标内核/initramfs 须含 XFS、根盘控制器和 NIC 驱动；Live 当前加载模块不构成完整清单。VMware/Hyper-V/Xen HVM 须分别验证 PVSCSI、storvsc/VMBus、Xen 前端；PV/PVH、容器、外部内核及受限 confidential VM 拒绝或另行适配。
+- 根以 XFS UUID 绑定，内核/initrd 指向目标 ESP。串口按提供商配置，保留 tty0；不按品牌猜参数。
+- 更新采用版本化内核/initramfs 配对，验证后切换受管理启动项，保留旧版本和恢复入口。Alpine kernel-hooks 的错误可能不使 apk 失败，须独立检查更新状态及稳定分支钩子顺序。
+- OVMF 必须从安装磁盘启动；QEMU `-kernel` 不算验收，TCG 不替代真实平台/提供商测试。
 
-最低矩阵：Alpine/OpenRC + OVMF + virtio-blk/virtio-scsi，随后 SATA/NVMe；
-每项验证 kexec 后变量可用性、首次磁盘启动、XFS、SSH、路由/DNS、swap、
-内核升级、参数修改、冷启动及备用入口。故障用例包括 NVRAM 只读/满/丢失、
-ESP 未挂载/空间不足、驱动缺失和目标启动项写入失败。
+## A. EFI Stub + NVRAM
 
-## A. Linux EFI Stub + NVRAM 启动项
-
-UEFI 加载 ESP 上启用 CONFIG_EFI_STUB 的 Linux 内核，启动项的 LoadOptions
-携带内核参数及外部 initramfs 的 ESP 路径。ESP 保持 FAT32，真实根为 XFS。
-
-建议文件布局（Alpine virt 示例）：
+固件加载启用 `CONFIG_EFI_STUB` 的内核，通过 LoadOptions 传入命令行和外部 initramfs。FAT32 ESP、XFS 根，建议布局：
 
 ```text
 /boot/efi/EFI/rustaller/current/vmlinuz-virt.efi
@@ -50,55 +23,30 @@ UEFI 加载 ESP 上启用 CONFIG_EFI_STUB 的 Linux 内核，启动项的 LoadOp
 /etc/kernel/cmdline
 ```
 
-示例参数（UUID 由安装器读取，不能照抄占位符）：
+参数示例中的 UUID 须读取实际目标值：
 
 ```text
 root=UUID=<XFS-UUID> rootfstype=xfs rw initrd=\EFI\rustaller\current\initramfs-virt console=tty0 console=ttyS0,115200n8
 ```
 
-最后一个 console 是主控制台；串口名称/速率应按提供商配置。保留发行版
-默认 init，不强制 init=，不添加 dinit。hostname、账户、时区、DNS、swap
-属于目标配置，不进入内核命令行。普通 swapfile 不需要 resume 参数。
+最后一个 console 为主控制台。保留原生 init，不强制 init= 或 dinit；账户、hostname、时区、DNS、swap 不入 cmdline，普通 swapfile 无需 resume。
 
-`/etc/kernel/cmdline` 只是项目约定的参数源，固件不会读取它。修改后必须
-由受控更新器刷新管理的 NVRAM 启动项。升级内核时重建 initramfs，验证
-配对版本和 EFI PE 头，检查 ESP 挂载/容量，先部署新版本，再更新启动项。
-保留上一对内核/initramfs 和恢复启动项；不能宣称自动回滚。
+`/etc/kernel/cmdline` 是更新器的参数源，固件不读取它。参数修改/内核升级后须重建配对 initramfs，验证 EFI PE 头和 ESP 挂载/容量，再部署、更新启动项；保留旧版本不等于自动回滚。
 
-关键前提：kexec 后 Live 的 EFI runtime services 可用且 efivarfs 可写。
-必须在清盘前验证；无法满足则停止。旧系统可写 NVRAM 不证明 Live 也可写。
-只把内核复制为 EFI/BOOT/BOOTX64.EFI 不能保证外部 initramfs 和命令行被传入。
+清盘前须证明 kexec 后 Live 能写 EFI 变量，不能以原系统可写代替。仅复制 `EFI/BOOT/BOOTX64.EFI` 不保证命令行和外部 initramfs 传入。
 
-## B. UKI + fallback 路径
+## B. UKI + fallback
 
-把 EFI stub、内核、initramfs、命令行封装成单个 EFI 文件，部署到
-EFI/BOOT/BOOTX64.EFI。无需依靠 NVRAM 来携带参数，更贴近当前 removable/
-no-nvram 安装策略。适合 NVRAM 行为不稳定的 VPS，但固件仍须支持 fallback。
+将 stub、内核、initramfs、命令行封装为单个 EFI 文件，放入 `EFI/BOOT/BOOTX64.EFI`，无需 NVRAM 携带参数但仍依赖固件 fallback。参数或内核更新须重建 UKI，并保留旧版/恢复方法；FAT32 替换无事务或自动回滚保证。systemd-stub 不要求 systemd PID 1，可配 OpenRC；与固件直启原始内核不同。
 
-参数源同为 /etc/kernel/cmdline；每次修改参数或升级内核后必须重建 UKI。
-保留上一份 UKI 和恢复方法，FAT32 文件替换不等于事务或自动回滚。
-常用 systemd-stub 属于 EFI 加载组件，不要求 systemd PID 1，兼容 OpenRC。
-这不是“固件直接启动原始 Linux EFI Stub 内核”的相同实现，须明确选择。
+## C. 轻量启动管理器
 
-## C. EFI Stub + 轻量启动管理器
+如 systemd-boot，在 ESP 上管理内核/initramfs 与文本 options，便于参数更新和备用版本选择，但增加了启动管理器，不是纯固件直启；OpenRC 不受影响。
 
-使用支持 Linux EFI Stub 的启动管理器（例如 systemd-boot）管理 ESP 上的
-内核/initramfs 和文本 options。参数修改通常无需写 NVRAM，方便选择当前/
-备用内核；但增加一个启动管理器，不是纯固件直启。OpenRC 不受影响。
+## 原设计的界面与验收范围
 
-## TUI 与实现范围
+保留现有独立目标草稿和 Save/Discard/Cancel。swapfile 按 MiB 输入，启用后转至大小字段，空值必填；关闭保留但不提交。新安装 hostname 留空为 rustaller，当前系统留空不变。
 
-- swapfile 大小由 TUI 输入 MiB；启用后焦点移到大小字段，关闭保留草稿但
-  不提交。空大小是必填错误。Save/Discard/Cancel 和发行版独立草稿保留。
-- New host settings 配置 hostname、时区和内核；账户/SSH、网络/DNS 独立。
-  新安装 hostname 留空使用 rustaller，当前系统配置留空保持不变。
-- 未来 Disk and boot 应区分固件模式和引导方式：EFI Stub/UKI 仅 UEFI，
-  BIOS 明确报不支持或由用户选择现有 GRUB，不静默降级。
-- 参数界面建议分为根设备（自动生成）、控制台（类型/端口/速率）、高级
-  参数；拒绝覆盖安装器管理的 root/initrd/init 等关键参数，限制长度，
-  不允许凭据、任意 Shell 钩子或未经校验的重复键。
-- 接通时须同步计划 schema/兼容标记、包策略、ESP 布局、引导安装、最终
-  校验、原生内核更新钩子与 VM probe。不能只替换 grub-install 一条命令。
-- 先验收 Alpine/UEFI/XFS，再扩展其他发行版。测试首次启动、参数更新、
-  内核升级、NVRAM 不可写/丢失、ESP 空间不足及失败不重启。Secure Boot
-  仍按当前策略拒绝；签名 UKI 是另一项工作。
+若未来重新授权，须分开固件模式/引导方式，限制 root/initrd/init 等管理参数，拒绝凭据、Shell 钩子、过长值和冲突重复键；同步 schema/标记、包策略、ESP、引导校验、内核更新钩子及 VM probe，不能只替换 grub-install。
+
+最小矩阵为 Alpine/OpenRC + OVMF + virtio-blk/scsi，再扩展 SATA/NVMe 和其他发行版/NIC。验证 kexec 后 EFI 变量、磁盘冷启动、XFS、SSH、路由/DNS、swap、内核/参数更新与备用入口；覆盖 NVRAM 只读/满/丢失、ESP 缺失/不足、缺驱动及写项失败。Secure Boot 仍拒绝，签名 UKI 另行设计。

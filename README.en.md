@@ -1,18 +1,13 @@
 # rustaller — Personal VPS reinstall tool (Linux-only)
 
-A scoped derivative of [bin456789/reinstall](https://github.com/bin456789/reinstall), based on
-`98f1e21013233d42750cc2e7a298a0818461d686`. rustaller is licensed under GNU GPLv3 (`GPL-3.0-only`); see [LICENSE](LICENSE). Upstream source notices and attribution are retained.
+A derivative of [bin456789/reinstall](https://github.com/bin456789/reinstall), based on `98f1e21013233d42750cc2e7a298a0818461d686`. Licensed under GNU GPLv3 (`GPL-3.0-only`); see [LICENSE](LICENSE). Upstream source notices and attribution are retained.
 
-The Rust/musl rewrite has an optional lightweight ratatui interface with hierarchical configuration menus. **Host preparation, authenticated Alpine Live, kexec handoff and the four-target installation driver are connected and include real disk-erasing actions. Full BIOS/UEFI installation acceptance is still in progress; releases remain development previews.**
-The English TUI selects a system before opening its account/SSH, host, kernel, network, DNS, minimal-profile and optional target-swapfile settings. It also provides a separate current-system route, native ssh-keygen, and Save/Discard/Cancel when returning from a changed directory. See the [TUI guide](docs/TUI.md).
-The [configuration guide](docs/CONFIGURATION.md) explains kexec into Live followed by one final reboot. See [minimal profiles](docs/MINIMAL.md) for package scope and size limitations.
-See the [source audit](docs/SOURCES.md) for official artifact/repository checks and [target configuration](docs/POSTINSTALL.md) for official kernel, hostname and timezone options. Installation uses native signature verification and checked target directories; a metadata audit does not establish installation success.
-See the [GitHub release guide](docs/GITHUB-RELEASE.md) for builds, CI, release assets, curl startup and size measurements; the [agent handoff](docs/AGENT-HANDOFF.md) lists the current implementation priorities. The interface below describes the retained Shell baseline.
-See [Chinese documentation](README.md), [architecture and asset map](docs/ARCHITECTURE.md), [change and verification notes](docs/TRIMMING.md), and [historical decisions](docs/HISTORY.md).
+The static Rust/musl host provides an English TUI and installs Alpine, Debian, Arch or Gentoo through authenticated Alpine Live and kexec. **This development preview includes real disk-erasing actions. Full BIOS/UEFI installation, XFS boot and swap activation acceptance remain pending.**
 
-> Automatic reinstallation erases the entire target disk, including all partitions.
-> Rust automatic installation leaves the source OS through kexec, then rebuilds the target disk and GRUB. Target UEFI uses the removable fallback path. The retained Shell boot/reset interfaces below can also write NVRAM/BootNext.
-> Back up your data and have provider console/VNC access. Disposable VM acceptance is in progress; the four-target BIOS/UEFI matrix has not passed yet.
+> Automatic installation erases every partition on the target disk. Back up data and retain provider console/VNC access before testing.
+> Rust uses kexec into Live and one final reboot with GRUB's UEFI fallback path. Retained Shell boot/reset interfaces can also write NVRAM/BootNext.
+
+[中文](README.md) · [Architecture](docs/ARCHITECTURE.md) · [Configuration](docs/CONFIGURATION.md) · [TUI](docs/TUI.md) · [Builds and releases](docs/GITHUB-RELEASE.md) · [Acceptance](docs/ACCEPTANCE.md)
 
 ## Rust entry point
 
@@ -21,49 +16,40 @@ cargo xtask bundle
 ./target/x86_64-unknown-linux-musl/release/rustaller
 ```
 
-Running without arguments on an interactive terminal opens the English TUI with a centered ASCII RUSTALLER title. See the [release guide](docs/GITHUB-RELEASE.md) for pinned GitHub download commands; the VPS needs no Rust toolchain.
+An interactive terminal with no arguments opens the TUI. Prebuilt downloads need no Rust toolchain; see the release guide.
 
-Use `./rustaller debian --inspect` to view the detected disk, firmware and identity confirmation token without installing or executing kexec. Installation requires an SSH public key or password and the complete confirmation token in the native terminal. Non-interactive installation requires explicit `--confirm-erase`. Rust embeds its matching worker and log page, uses official authenticated resources, and does not require a custom `confhome`.
+Use `./rustaller debian --inspect` to read the disk, firmware and confirmation token without installation or kexec. Installation requires a public key or password and the full disk-identity token; non-interactive use requires `--confirm-erase`. The host embeds its matching worker and log page, authenticates official resources and needs no custom `confhome`.
 
-The source shutdown adapters currently require systemd or openrc-init as PID 1. Unsupported hosts stop rather than falling back to two reboots. Alpine Live rescue uses `hold=1` without automatic partitioning. Rust retains local ISO/netboot.xyz/reset menus and validation components, but their execution is not connected; the Shell baseline below still provides these interfaces.
+Source PID 1 must be systemd or openrc-init. Failed kexec support stops preparation without a two-reboot fallback. `hold=1` enters Alpine Live rescue without automatic partitioning. Rust ISO/netboot.xyz/reset execution is not connected; the retained Shell interfaces below provide those routes.
 
-`Configure current system` persists existing-account public keys, SSH port, hostname, timezone, DNS and supported network settings, with private backups and a changed-file report. It does not restart services or load sysctl values into the running kernel. Static DNS file changes can affect new lookups immediately. Drafts last only for this session; Save does not apply them.
+`Configure current system` persists existing-account keys, SSH port, hostname, timezone, DNS and supported network settings, with private backups and a changed-file report. It does not restart services or load sysctl values. Static DNS changes may affect lookups immediately. Save keeps a session draft; Apply writes configuration.
 
 ## Scope
 
-**Hosts and target systems are Linux x86_64 only.** Compatibility with different x86_64 Linux source distributions is preserved.
-Automatic targets are latest stable Alpine, latest stable Debian, rolling Arch and rolling Gentoo; **all four install from Alpine Live**. Arch Linux ARM and all other ARM paths are unsupported.
+- Linux x86_64 hosts and targets only. Containers, enabled Secure Boot and tmpfs-root source systems are rejected.
+- All four targets install from Alpine Live: latest stable Alpine/Debian and rolling Arch/Gentoo. Versions come from official metadata; version arguments are rejected.
+- Debian uses `debootstrap --variant=minbase`, systemd-networkd, SSH, a kernel and GRUB, without desktop/standard tasks or recommends. Gentoo retains systemd stage3, gentoo-kernel-bin/dracut and GRUB.
+- Rust uses XFS roots, FAT32 ESPs, Alpine/OpenRC and schema 5 plans. Optional GNU-dd-backed `/swapfile` activates only at target boot. Defaults and Shell preserve existing swap; source/Live swap is never changed and no swap partition is added.
+- Static/DHCP, IPv4/IPv6, multiple NICs, SSH credentials, ports, frpc and disk-ID discovery remain. Windows, ARM, Debian Installer, other automatic targets, geographic detection and arbitrary RAW/DD targets are excluded; use Live for manual recovery/DD.
 
-Alpine and Debian versions are resolved from official stable metadata; version arguments are rejected. Debian is bootstrapped from Alpine with `debootstrap --variant=minbase`, then configured with systemd-networkd, SSH, a kernel and GRUB. No desktop/standard task or recommended packages are installed. Arch and Gentoo retain their upstream rolling installers; Gentoo retains its upstream systemd stage3, GRUB and gentoo-kernel-bin/dracut path.
+RAM floors are Alpine/Debian 512 MB, Arch 1024 MB and Gentoo 2048 MB, checked on the host and again before Live cleanup/partitioning. See [minimal profiles](docs/MINIMAL.md), [source authentication](docs/SOURCES.md) and platform limits in the acceptance record.
 
-The retained Shell baseline and Rust defaults preserve existing swap state. Rust also supports explicit target /swapfile configuration, activated by the new system's native boot process without changing source/Live swap. No swap partition is added. The Shell baseline retains direct netboot.xyz, local Linux ISO loopback and reset; Rust execution of those manual-media/reset routes is pending. Windows, Debian Installer, ARM target paths, other target installers, arbitrary RAW/DD targets and geographic detection have been removed. Use Alpine Live for manual recovery/DD.
+## Shell baseline: matching assets
 
-Networking (IPv4/IPv6, static/DHCP and multiple NICs), SSH keys/passwords, ports, frpc and disk-ID identification remain. Physical RAM floors: Alpine 512 MB, Debian 512 MB, Arch 1024 MB and Gentoo 2048 MB. Both host preflight and Alpine Live check these floors; Alpine Live checks again before disk cleanup or partitioning. Containers, enabled Secure Boot and preparation from a tmpfs-root Live OS are rejected.
+Serve exactly these 4 matching runtime assets from a VPS-readable HTTPS directory, preserving relative paths: `trans.sh`, `initrd-network.sh`, `fix-eth-name.sh`, `logviewer.html`. Never combine the trimmed `reinstall.sh` with upstream's untrimmed `trans.sh`.
 
-## Shell baseline: host your own matching assets
+TTY/frpc helpers and service templates are inline. The entry script, examples, docs and tests are excluded from the four assets. Upgrade all assets together with marker `PERSONAL-LINUX-ONLY-20261119-04`.
 
-Do not run a trimmed `reinstall.sh` while downloading the untrimmed upstream `trans.sh`.
-Serve these files from a VPS-readable HTTPS directory, preserving relative paths:
-
-`trans.sh`, `initrd-network.sh`, `fix-eth-name.sh`, `logviewer.html`.
-
-There are 4 runtime assets, excluding the entry script, example, documentation and tests. TTY selection, frpc URL resolution, and Alpine/systemd service templates are now in `trans.sh`, so they are not downloaded or executed as separate scripts. Debian Installer is removed; `debian.cfg` and `get-xda.sh` are no longer present or deployed.
-The current compatibility marker is `PERSONAL-LINUX-ONLY-20261119-04`. Upgrade all matching assets together.
-
-Use an immutable directory or your own pinned Git commit. URLs with embedded credentials/query strings or special characters are currently unsupported; this is not a private GitHub token download interface.
+Use a pinned commit or immutable directory. Embedded credentials, query strings and special URL characters are unsupported.
 
 ```console
 export REINSTALL_CONFHOME=https://your.example/reinstall/pinned-version
 bash reinstall.sh alpine
 ```
 
-Alternatively pass `--confhome https://your.example/reinstall/pinned-version`.
-This is required for automatic installation and Alpine Live, but not for reset, netboot.xyz or local ISO boot.
-There is no upstream fallback; original upstream GitHub/CNB asset bases are rejected. Runtime version mismatches fail closed, including `trans.sh update`.
+Alternatively use `--confhome https://your.example/reinstall/pinned-version`. Automatic installation and Live require it; reset/netboot.xyz/ISO do not. Upstream GitHub/CNB asset bases are rejected, with no fallback. Mismatches stop execution, including `trans.sh update`.
 
 ## Shell baseline: commands
-
-These commands document the interface; they are not automatically executed:
 
 ```console
 bash reinstall.sh alpine
@@ -75,26 +61,17 @@ bash reinstall.sh netboot.xyz
 bash reinstall.sh reset
 ```
 
-`alpine --hold 1` boots a memory OS with SSH without automatically partitioning disks.
-netboot.xyz opens an interactive network-boot menu, not an extension of the four-target automatic installer.
-`reset` can cancel prepared boot entries before reboot; it cannot undo formatting that has already happened.
+`alpine --hold 1` starts memory-based rescue with SSH and no automatic partitioning. netboot.xyz is an interactive menu, not an extension of automatic target support. `--hold 2` retains the installed target for inspection before manual reboot; it is not for ISO/netboot.xyz. `reset` cancels pending boot entries but cannot undo formatting.
 
-Options: `--username`, `--password`, `--ssh-key`, `--ssh-port`, `--web-port`,
-`--frpc-config`, `--no-cloud-kernel` (generic Alpine/Debian kernel), `--hold 0|1|2`,
-`--target-disk /dev/DISK`, `--force-boot-mode bios|efi`, `--confhome`, `--debug`, `--help`.
+Options: `--username`, `--password`, `--ssh-key`, `--ssh-port`, `--web-port`, `--frpc-config`, `--no-cloud-kernel`, `--hold 0|1|2`, `--target-disk /dev/DISK`, `--force-boot-mode bios|efi`, `--confhome`, `--debug`, `--help`.
 
-Keys can be literal public keys, local files, HTTP(S) URLs, `github:user` or `gitlab:user`.
-Passwords and SSH keys are mutually exclusive. Unspecified credentials prompt interactively; blank passwords generate random passwords.
-Do not put secrets on the command line unless you accept shell-history exposure.
-The frpc example is SSH-only: replace its documentation address and token with your own frps settings. Additional Linux service proxies can still be configured manually.
-netboot.xyz/local ISO reject credentials, SSH/Web ports, frpc, hold and target-disk options.
-`--help` does not require root or access the network.
-Removed options include `--ci`, `--installer`, `--img`, `--minimal`, Windows-specific options and `--force-cn`.
+Keys accept inline values, local files, HTTP(S), `github:user` or `gitlab:user`; keys and passwords are exclusive. Missing credentials prompt; blank passwords generate random values. Command-line passwords remain in history. Replace the frpc example's server and token. `--target-disk` selects the whole disk; `--no-cloud-kernel` selects generic Alpine/Debian kernels. `--help` needs neither root nor network.
 
-## Shell baseline: already-downloaded local Linux ISO
+ISO/netboot.xyz reject credentials, ports, frpc, hold and target-disk options. Shell does not support `--ci`, `--installer`, `--img`, `--minimal`, Windows options or `--force-cn`; Rust minimal profiles are separate. The source OS need not be one of the four targets.
 
-This is an interactive GRUB loopback boot interface, not an ISO-to-disk writer or universal unattended installer.
-It does not copy the large ISO or automatically repartition the disk.
+## Shell baseline: local Linux ISO
+
+GRUB loopback boots an already-downloaded ISO for console installation. It neither copies the ISO nor automatically repartitions/writes it to disk.
 
 For an ISO containing `/boot/grub/loopback.cfg`:
 
@@ -102,7 +79,7 @@ For an ISO containing `/boot/grub/loopback.cfg`:
 bash reinstall.sh iso --iso /images/systemrescue.iso
 ```
 
-Use `--iso-config /path/inside/iso` to select another loopback config. Otherwise supply real Linux kernel/initrd paths and the ISO-specific media-discovery arguments:
+Use `--iso-config /path/inside/iso` to override it. Otherwise supply real kernel/initrd paths and media-discovery arguments; this example is Debian-live-specific:
 
 ```console
 bash reinstall.sh iso --iso /images/custom-live.iso \
@@ -110,34 +87,24 @@ bash reinstall.sh iso --iso /images/custom-live.iso \
   --iso-cmdline 'boot=live findiso=%ISO_PATH%'
 ```
 
-The example is Debian-live style and is not applicable to arbitrary ISOs.
-`%ISO_PATH%` expands to the ISO's GRUB filesystem path; `%ISO_UUID%` expands to its filesystem UUID.
+`%ISO_PATH%` and `%ISO_UUID%` expand to the ISO's GRUB filesystem path and filesystem UUID.
 
-Limitations:
+- The initramfs must support loopback media discovery; GRUB loading the kernel is insufficient.
+- Requires grub-probe/grub-mkrelpath or grub2 equivalents. Encrypted storage and BIOS hosts using only extlinux are rejected.
+- Paths must be absolute, without whitespace, dot segments or Shell/GRUB metacharacters. Explicit cmdlines reject quotes, newlines, semicolons, backslashes, `$`, parentheses and braces.
+- Read-only mounting checks config/kernel/initrd files. Non-Linux layouts, `/reinstall-tmp/` and managed boot paths are rejected.
+- Do not erase the ISO's partition until reading finishes. Same-disk erasure needs ISO-specific RAM-loading support and enough RAM, or an independent retained disk.
+- No generic network/SSH/unattended setup is injected. UEFI may still download auxiliary GRUB and write NVRAM.
 
-- The ISO/initramfs must support loopback media discovery. GRUB reading a kernel does not prove that the kernel can find its installer media.
-- Requires grub-probe/grub-mkrelpath or grub2 equivalents. BIOS hosts using only extlinux are rejected rather than having their bootloader replaced.
-- Encrypted storage is unsupported; GRUB must be able to read the ISO filesystem.
-- Paths must be absolute without whitespace, dot segments or shell/GRUB metacharacters.
-- Explicit cmdlines do not support quoting, newlines, semicolons, backslashes, `$`, parentheses or braces.
-- The ISO is mounted read-only to check the configuration/kernel/initrd paths; common non-Linux installer layouts are rejected.
-- ISO files in `/reinstall-tmp/` or managed boot-file paths are rejected before cleanup.
-- Do not erase the ISO-containing partition until the installer has finished reading it. Erasing that same disk requires ISO-specific RAM-loading support and sufficient RAM, or an independent retained disk.
-- No generic network/SSH/unattended configuration is injected. Use the provider console/VNC.
-- UEFI boot can still download an auxiliary GRUB EFI binary and write NVRAM.
+## Shell baseline: downloads and networking
 
-## Shell baseline: download policy and retained upstream details
+Geographic detection is removed. Official/non-mainland sources remain, including the IPv6-only frpc fallback to an IPv6-capable Nanjing mirror when GitHub releases are unreachable. Fedora 44 supplies only auxiliary EFI GRUB, not an installation target.
 
-No `is_in_china`, location probing, China override or geographic netconf fields remain.
-Official/non-mainland distribution sources are used. The original overseas IPv6-only frpc fallback to an IPv6-capable Nanjing mirror remains because GitHub releases lack IPv6; this is independent of geography.
-Fedora 44 remains solely an auxiliary EFI GRUB binary source, not an installation target. Its version is independent of target validation and will need future maintenance.
-
-The log viewer uses websocketd and a pinned library from official cdnjs.cloudflare.com. Unused Nginx/Lighttpd backends have been removed.
-First-boot NIC repair supports the generated ifupdown/systemd-networkd formats only; this does not restrict Linux source-host compatibility.
+Logs use websocketd and a pinned cdnjs.cloudflare.com library. First-boot NIC repair handles generated ifupdown/networkd formats only.
 
 ## Verification
 
-The test driver is Rust; there are no new Python/Node test scripts. Development requires Rust, Bash, BusyBox and Git:
+Development requires Rust, Bash, BusyBox, Git and OpenSSH client; test orchestration uses Rust:
 
 ```console
 cargo test --manifest-path tests/verify/Cargo.toml
@@ -145,7 +112,6 @@ shellcheck --severity=warning reinstall.sh trans.sh initrd-network.sh fix-eth-na
 shellcheck --severity=warning --shell=sh tests/fixtures/fix-eth-name-openrc.initd
 ```
 
-The Shell tests above use syntax-only parsing, isolated functions, unique temporary files, mocks and byte-for-byte upstream/fixture comparisons. Coverage includes x86_64 routing, RAM floors, no swap mutation and Debian debootstrap/networkd/fstab/GRUB. They never execute the installer entry point except safe `--help`. Use `cargo xtask check` for the Rust checks as well. Destructive acceptance runs separately inside disposable QEMU guests, never on the development host.
-Set `TEST_BASH` and `TEST_BUSYBOX` to absolute executable paths if necessary. Upstream parity tests require the recorded upstream commit in Git.
+Shell tests use syntax checks, isolated functions, temporary mocks and byte-for-byte upstream comparisons, executing only safe entry `--help`. Set `TEST_BASH`/`TEST_BUSYBOX` as needed and retain the pinned upstream Git object. `cargo xtask check` runs the full checks; destructive acceptance is restricted to disposable QEMU guests.
 
-Passing tests do not establish successful installation. Disposable BIOS/UEFI VPS acceptance tests are still required before production use.
+Tests do not establish installation success. Four-target BIOS/UEFI acceptance remains pending. See the [handoff](docs/AGENT-HANDOFF.md), [trimming notes](docs/TRIMMING.md) and [history](docs/HISTORY.md).

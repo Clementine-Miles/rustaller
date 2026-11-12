@@ -1,6 +1,6 @@
 # Rust 结构精简与执行优化（2026-10-28）
 
-本轮以重构开始时的工作树为基准，不与尚无 Rust 实现的上游 Git 提交比较。原始源码快照位于 `/workspace/scratch/refactor-20261028/before.tar.gz`。功能范围、CLI 参数、计划 schema 4、运行时标记和 host/worker 分工保持一致；内部 Rust 模块路径已更新，不额外保留一套转发 API。
+历史重构以当时工作树为基准，快照 `/workspace/scratch/refactor-20261028/before.tar.gz` 不随源码提供。保持当时功能、CLI、schema 4、标记和 host/worker 分工，更新内部模块路径，不保留转发 API。
 
 ## 实际阅读的参考源码
 
@@ -22,9 +22,7 @@
 | embedded | `src/lib.rs` |
 | targets/install/rolling | `src/targets/rolling.rs`，去掉仅容纳单文件的目录 |
 
-删除了没有生产调用者、已经被实际 Live 驱动替代的 Rust 函数：Alpine `run_setup_disk`、`cleanup_setup_disk_packages`、`add_openrc_service`、`kernel_flavor` 和配置转发包装；旧 Arch `pacstrap`；旧 Gentoo `run_emerge`；旧存储 `mount_pseudo_filesystems`、`unmount_previous`、`unmount_pseudo_filesystems` 及其两项内部匹配函数。对应旧包装器测试退出，仍在使用的内核/包选择断言并入 `target_config`。
-
-原来的宽范围卸载匹配只用于早期 Shell 对拍，实际驱动采用身份绑定和仅卸载自身目标树的逻辑。保留 Shell 文件及其独立验证 crate，仍保留有效的分区/挂载命令对拍，不删除正式安装需要的身份、权限、签名或输入校验。
+删除被 Live 驱动替代的 Alpine/Arch/Gentoo 调度包装、配置转发和宽范围卸载函数；有效断言并入 `target_config`。实际驱动绑定磁盘身份，只卸载自身目标树；保留 Shell 独立验证及分区/挂载对拍，不削弱身份、权限、签名或输入检查。
 
 ## 执行与内存
 
@@ -33,7 +31,7 @@
 - kexec 与网络模块能力检查用迭代器检查唯一值，省去收集临时 `Vec`，仍拒绝重复或冲突的 Kconfig 项。
 - 未新增运行时依赖。worker 继续不包含 TUI，主机 TUI 仍由可选 feature 控制。
 
-`unsafe` 不是编译加速开关。zoxide 的环境变量修改、fd 的信号处理都有特定用途；本轮没有为优化添加 unchecked 索引或扩大裸指针使用。保留必需的 Linux FFI，并补充私密计划原子发布的 ABI、指针寿命和参数安全说明。
+未增加 unchecked 索引或裸指针范围；保留必要 Linux FFI，补充计划原子发布的 ABI、指针寿命和参数安全说明。
 
 ## 测量与验证
 

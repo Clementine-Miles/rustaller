@@ -31,7 +31,7 @@ rustaller/
 └── docs/                     当前接口、架构、验收、续接与历史说明
 ```
 
-删除了四个仅含模块声明的 mod.rs，原有公开 Rust 模块路径不变。TUI 的 mod.rs 包含实际逻辑，继续保留。没有为了减少文件而合并安装调度、存储操作和用户界面。
+模块按职责划分，公开路径保持稳定；TUI 的 mod.rs 含界面逻辑。
 
 ## 运行流程
 
@@ -51,9 +51,7 @@ flowchart TD
     A --> M[独立配置当前系统：备份与持久修改]
 ```
 
-自动目标为 Alpine 最新 stable、Debian 最新 stable/minbase、Arch rolling、Gentoo systemd stage3。四者都在 Alpine Live 安装。运行时依赖发行版原生包管理器和系统工具；静态 Rust 入口不是一个内含全部发行版的镜像。
-
-CLI 和 TUI 共用模型与安装回调；TUI 不重复安装流程。多级目录先选系统，按目标保存草稿，返回支持 Save/Discard/Cancel。原生 ssh-keygen 会暂时恢复终端，仅公钥进入计划。当前系统配置独立于清盘流程，详细边界见 [CONFIGURATION.md](CONFIGURATION.md)。
+Alpine 最新稳定版、Debian stable/minbase、Arch rolling、Gentoo systemd stage3 均从 Alpine Live 安装，依赖发行版原生工具。CLI/TUI 共用模型和回调，按目标保存草稿；ssh-keygen 暂时恢复终端，仅公钥进入计划。当前系统配置独立于清盘，见 [CONFIGURATION.md](CONFIGURATION.md)。
 
 ## 模块边界
 
@@ -67,11 +65,11 @@ CLI 和 TUI 共用模型与安装回调；TUI 不重复安装流程。多级目�
 | command | 明确 argv/env/I/O、并发捕获、mock、swap 限制 | 解释并执行自由输入的 Shell |
 | xtask | 开发检查、静态打包、源审计、隔离 VM | 随运行时部署 |
 
-公共 Live 命令默认 cwd=/、stdin=null、输出继承；targets 仍保留各自 locale、PATH、非交互环境及错误/重试语义，避免“合并”改变原生工具行为。
+Live 命令默认 cwd=/、stdin=null、输出继承；适配器保留各自环境及错误/重试语义。
 
 ## 相似代码的归并（2026-11-12）
 
-初次整理按用户要求仅审阅源码；随后经用户授权完成验证：cargo xtask check 通过（278 项 workspace 测试、49 项 Shell 对拍测试、Rustfmt、Clippy、ShellCheck、Bash/ash 语法及 diff 检查），cargo xtask bundle 完成静态 musl host/worker 构建及精确嵌入匹配校验，两个入口的 --help 冒烟测试通过。没有新增 BIOS/UEFI 完整安装验收证据。
+此次重构通过 278 项 workspace、49 项 Shell 测试及格式/lint/语法检查，静态 bundle、worker 精确嵌入与两个入口的 --help 检查通过；无新增 BIOS/UEFI 完整安装证据。
 
 | 公共入口 | 合并的职责 | 调用方继续负责 |
 |---|---|---|
@@ -81,20 +79,20 @@ CLI 和 TUI 共用模型与安装回调；TUI 不重复安装流程。多级目�
 | shared::dns::write_config | 检查目标路径、准备父目录、按指定权限原子写入 | 目标 root 的隔离校验、配置内容、目标发行版和权限选择 |
 | shared::dns::walk_parents | 检查每级祖先是否为真实目录；按入口决定是否创建缺失目录 | validate_planned_parent 保持只检查，ensure_parent 允许创建 |
 
-host/handoff、worker/install、targets/install、targets/rolling 和 shared/swapfile 共用 capture_checked。host 的输出大小限制、各模块的解码错误、stderr 捕获或继承策略均留在调用方。worker/install 的命令默认值复用 live_command，并继续指定 LC_ALL=C。
+host/handoff、worker/install、targets/install、targets/rolling、shared/swapfile 共用 capture_checked；输出上限、解码错误和 stderr 策略留在调用方。worker/install 复用 live_command 并保留 LC_ALL=C。
 
-目标文件写入逻辑暂沿用 dns 模块现有的路径检查设施，不新增跨层工具模块。批量 DNS/网络配置继续先准备并校验整批文件，再发布；没有把逐文件检查写入套进批量发布，从而改变失败前的修改范围。
+目标写入复用 dns 路径检查，不新增跨层模块；批量 DNS/网络仍先校验整批再发布，保持失败前的修改范围。
 
-若干代码看似相似，但语义不同，继续分开：UUID 校验有宽松/长度受限/规范 36 字符三种；Gentoo 元数据解析与实际安装的签名认证职责不同；Debian 与公共 fstab 模板的注释、ESP 路径和 fsck pass 值不同。安装阶段的磁盘、内存和挂载复验也是有意设置的安全边界，不属于应删除的重复代码。
+保留语义不同的实现：三种 UUID 校验、Gentoo 元数据解析与签名认证、Debian/公共 fstab 的注释/ESP/fsck 差异。磁盘、内存、挂载复验属于安全检查，不作为重复代码删除。
 
 ## 作用原理与阅读顺序
 
-1. 从 bin/rustaller.rs 开始：CLI 与 TUI 最终生成同一 InstallPlan，进入同一安装回调。model/config/postinstall 定义允许的配置，codec 和 plan_file 负责跨环境传递及私密文件生命周期。
-2. 读 host/handoff.rs：discover 收集原系统事实并给出磁盘身份确认令牌；prepare 验证资源并组装私密 Live 环境；execute 再校验后委托原生 PID 1 有序退出并 kexec。kexec 直接切换运行内核，因此这一步不经过固件重启。
-3. 读 bin/rustaller-worker.rs 和 worker/install.rs：Live 入口验证自身来源，恢复网络/SSH；以 manifest 中的稳定身份重新寻找目标盘，检查 RAM、挂载、swap 和扇区后才建立分区。这里运行的 / 已是内存中的 Alpine，目标文件系统挂在 /os。
-4. 读 targets/install.rs，再读 debian/rolling/packages：公共驱动串联 prepare、bootstrap、configure 与最终验证；差异由 APK、debootstrap/APT、pacman 和 Gentoo stage3/Portage 等原生工具实现。Rust 控制参数和顺序，不自行实现这些发行版的包管理器。
-5. 读 shared：storage 负责布局/格式化/挂载，configure/dns/network/swapfile 负责受检目标目录内的持久配置。目标验证成功、卸载并 sync 后才请求最终重启；失败时保留 Live 恢复环境。
-6. 当前系统编辑走 host/current.rs 的备份与文件发布流程，与自动清盘独立；TUI 仅负责草稿、字段编辑和结果展示。xtask、测试与 Shell 对拍属于开发工具，保留的 Shell 实现也不由 Rust 自动安装入口调用。
+1. bin/rustaller.rs：CLI/TUI 共用 InstallPlan 与回调；model/config/postinstall 定义配置，codec/plan_file 负责交接与私密文件生命周期。
+2. host/handoff.rs：discover 收集原系统事实和磁盘令牌，prepare 认证资源/组装 Live，execute 复验后由 PID 1 有序退出并 kexec，不经过固件重启。
+3. bin/rustaller-worker.rs、worker/install.rs：验证 Live 来源、恢复网络/SSH，以 manifest 稳定身份重绑磁盘，复验 RAM/挂载/swap/扇区后分区。Live 根在内存，目标挂载于 /os。
+4. targets/install.rs、debian/rolling/packages：串联 prepare/bootstrap/configure/最终验证，以原生 APK、APT、pacman、Portage 实现发行版差异；Rust 控制参数与顺序。
+5. shared：storage 布局/格式化/挂载，其余模块配置受检目标。验证成功、卸载、sync 后才最终重启，失败保留 Live 恢复环境。
+6. host/current.rs：独立备份/发布当前系统配置；TUI 负责草稿和展示。xtask、测试、Shell 对拍为开发工具，Rust 自动入口不调用保留 Shell 实现。
 
 ## 不可破坏的约束
 
@@ -108,13 +106,13 @@ host/handoff、worker/install、targets/install、targets/rolling 和 shared/swa
 
 ## 构建与分发
 
-cargo xtask bundle 先构建无 TUI worker，验证静态 ELF 与版本，再嵌入 host 并验证匹配字节。cargo xtask dist 默认拒绝脏源码；GitHub Release 继续为 draft/prerelease，installer_complete=false。源码复制到新仓库后，CI 会获取固定上游对拍对象，无需把整个上游历史装入源码包。见 [发布指南](GITHUB-RELEASE.md)。
+`cargo xtask bundle` 验证无 TUI worker 的静态 ELF/版本，再嵌入 host 并核对精确字节。`cargo xtask dist` 默认拒绝脏源码，Release 保持 draft/prerelease、`installer_complete=false`；CI 获取固定上游对拍对象。见[发布指南](GITHUB-RELEASE.md)。
 
 ## 保留的 Shell 基线
 
 Shell 兼容标记仍为 PERSONAL-LINUX-ONLY-20261119-04；Rust 的新标记和 schema 不用于这些保留资源。
 
-reinstall.sh 是原系统准备入口，trans.sh 是 Live 安装脚本；Rust 与 Shell 是两条实现，不能混用各自的授权与资源模型。Shell 留作对拍及尚未迁移接口，不能在 Rust 完整验收前删除。
+`reinstall.sh` 准备原系统，`trans.sh` 执行 Live 安装；保留作对拍及未迁移接口，验收前不能删除，也不能混用 Rust/Shell 的确认与资源模型。
 
 Shell 部署除 reinstall.sh 外仍恰好四个资源：trans.sh、initrd-network.sh、fix-eth-name.sh、logviewer.html。TTY/frpc helpers 和服务模板已内联；资源必须来自用户控制的匹配 HTTPS 部署。Rust 内嵌 worker 与日志页面，不套用这条四文件部署规则。
 

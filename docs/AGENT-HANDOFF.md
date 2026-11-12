@@ -1,38 +1,22 @@
-# rustaller：给下一位 agent 的续接指南
+# rustaller 续接指南
 
-更新日期：2026-11-02。此文件随完整源码包提供，不要求获得旧会话、旧 Git 历史或本机构建产物。
+先读根目录 `AGENTS.md`、[架构](ARCHITECTURE.md)与[验收记录](ACCEPTANCE.md)。本文列开发优先级，[历史](HISTORY.md)解释旧决策；无需依赖旧会话或未随源码提供的本地文件。
 
-本轮用户授权优先完成 XFS 根文件系统及 TUI swapfile，保留 Alpine/OpenRC 和现有 GRUB。Rust 四目标默认根已改为 XFS，Live 在清盘前 modprobe xfs；mkfs 禁用 reflink/bigtime/inobtcount/nrext64 以限制磁盘特性。swapfile 使用 Live GNU dd 写零、0600、mkswap、fstab，OpenRC 在目标开机激活。计划 schema=5，Rust 标记 PERSONAL-LINUX-XFS-20261102-05；Shell 四资源及其旧标记不变。未进行新的 VM 安装；P0 Live 复验及 P1 安装矩阵仍待完成，不能承诺 XFS 实机启动成功。
+## 当前状态
 
-## 先读这段
+- Linux x86_64，英文多级 TUI；四目标经认证的 Alpine Live 和 kexec 安装，最后只重启一次。已有真实清盘能力，四系统 BIOS/UEFI 完整验收尚未通过，保持开发预览。
+- 根为 XFS，保留 GRUB（SeaBIOS/UEFI）与 Alpine/OpenRC。EFI Stub 已取消，[评估](EFI-STUB-OPTIONS.md)仅为历史记录。
+- Live 清盘前检查 XFS 模块及扣除 ESP/对齐后的根容量；mkfs 禁用 reflink/bigtime/inobtcount/nrext64，以 `-K` 跳过整卷 discard。swapfile 用 GNU dd 写零、核对长度/块数，0600、mkswap、fstab，仅目标开机激活；容量解析固定 `LC_ALL=C`。
+- 计划 schema=5、manifest schema=1、Rust 标记 `PERSONAL-LINUX-XFS-20261102-05`，拒绝旧计划及混用 worker。Shell 四资源及旧标记保持不变。
+- 仓库：https://github.com/Clementine-Miles/rustaller 。Cargo 主包、CLI 为 `rustaller`，worker 为 `rustaller-worker`；GNU GPLv3，保留上游声明与署名。
+- 主 crate + xtask，`tests/verify` 独立。核心无第三方运行时依赖；tui 可选，libc 仅测试、sha2 仅开发工具。模块声明集中在 `lib.rs`，公共 Live 命令默认值在 `command::live_command`，环境与重试留在适配器。
+- 源码包保留 Cargo.lock、公开密钥、fixture、`.github`/`.cargo`，排除 `.git`、构建产物、VM、日志与私钥。
 
-最新用户范围：取消 EFI Stub，保留 GRUB 对 SeaBIOS/UEFI 的路径，只优化 XFS。
-本轮新增清盘前根分区容量下限、mkfs.xfs -K 跳过整卷 discard、swapfile 分配
-块数核对与固定 LC_ALL=C 的容量解析。EFI-STUB-OPTIONS.md 仅为历史记录。
+历史 XFS 修改通过 273 workspace + 49 Shell 测试，参考项目修复后为 277 + 49；这些记录及静态构建不代表新的 VM 安装证据。最新检查以对应提交的 CI 为准。
 
-用户目标是：在 x86_64 Linux VPS 上下载并运行一个静态入口，进入英文多级 TUI，先选 Alpine / Debian / Arch / Gentoo，再完成账户、SSH、网络、DNS、内核、minimal、swap 等配置；kexec 进入 Alpine Live，最后只进行一次固件重启进入新系统。另有独立当前系统配置和手动本地 ISO 接口需求。
+## 恢复开发环境
 
-当前代码已连接实际自动安装与清盘，绝不是无副作用的演示程序。但四系统 BIOS/UEFI 完整安装矩阵尚未通过，不能发布为稳定版。最高优先级是验证并修复 Live 入口，随后完成真实目标安装；不要重新从头实现 TUI 或仅增加界面占位功能。
-
-先读根目录 AGENTS.md，再读 ARCHITECTURE.md、ACCEPTANCE.md。本文件列当前任务，HISTORY.md 仅解释历史。原先八份计划/续接文档已合并，旧文件名中的日期及早期约束不代表当前授权。
-
-## 交付源码的状态
-
-- 2026-11-02 XFS/swapfile 修改：273 项 workspace + 49 项 Shell 测试、格式/lint/语法检查、静态 musl bundle 通过。没有进行新 VM 验收，仍保留开发预览；P0/P1 未完成。
-
-- 仓库地址：https://github.com/Clementine-Miles/rustaller 。本次没有 commit、push 或创建线上 Release。
-- Rust workspace 为主 crate + xtask；tests/verify 是独立 crate。核心零第三方运行时依赖，tui 可选，libc 仅测试、sha2 仅开发工具。
-- src 有 44 个 Rust 文件。host/shared/targets/worker 的模块声明在 lib.rs；目录下业务文件及公开模块路径不变。
-- 公共命令默认值在 command::live_command，发行版环境与重试仍留在各适配器。
-- 当前计划 schema=5，部署 manifest schema=1，兼容标记 PERSONAL-LINUX-XFS-20261102-05。不能随意接受旧计划或拼接不同构建的 worker。
-- 源码包排除 .git、target、artifacts、dist、VM、日志和测试私钥；保留公开验证密钥、测试 fixture、Cargo.lock、.github 和 .cargo。
-- 2026-10-30 本轮 271 项 workspace + 49 项 Shell 测试通过，Rustfmt、Clippy、ShellCheck、Bash/ash、diff 检查及静态 musl bundle 构建通过；没有重跑完整 VM 安装。静态检查和构建不等于成功安装。
-
-## 如何恢复开发环境
-
-Rust 版本和 musl target 以 rust-toolchain.toml 为准。需要 Bash、Git、BusyBox、ShellCheck 0.11+、ssh-keygen；VM 测试另需 QEMU、SeaBIOS、OVMF、xorriso 和可丢弃源镜像。
-
-在有 Git 的项目根目录获取对拍对象，然后运行检查：
+工具链/musl target 见 `rust-toolchain.toml`。需要 Bash、Git、BusyBox、ShellCheck 0.11+、ssh-keygen；VM 另需 QEMU、SeaBIOS、OVMF、xorriso 与经过认证的可丢弃源镜像。
 
 ```console
 git fetch --no-tags --depth=1 https://github.com/bin456789/reinstall.git 98f1e21013233d42750cc2e7a298a0818461d686:refs/rustaller/upstream-baseline
@@ -41,9 +25,9 @@ cargo xtask bundle
 target/x86_64-unknown-linux-musl/release/rustaller --help
 ```
 
-直接解压且没有 Git 元数据时，可以先在解压根目录 git init；若要上传已有仓库，优先 clone 该仓库再复制源码，保留隐藏目录。上游对象获取已写入 GitHub Check 工作流，并在前一轮独立空仓中实测成功。
+已有仓库先 clone 再复制源码，保留隐藏目录与历史；裸源码可先 git init。CI 自动获取固定上游对拍对象。
 
-检查需要的可执行文件可用 TEST_BUSYBOX、TEST_BASH、TEST_SHELLCHECK 指定。当前旧工作区中可用的路径仅供参考，换环境不能假定存在：
+可通过 `TEST_BUSYBOX`、`TEST_BASH`、`TEST_SHELLCHECK` 指定工具。以下是旧工作区路径示例，换环境须替换：
 
 ```console
 PATH=/home/agent/.cargo/bin:$PATH \
@@ -52,9 +36,9 @@ TEST_SHELLCHECK=/workspace/scratch/rustaller-tools-current/usr/bin/shellcheck \
 cargo xtask check
 ```
 
-不要在项目检查/构建过程中修改源码；只针对失败或新变更追加验证。原有大量未跟踪 Rust 文件是实际项目内容，不是临时垃圾，不能 git clean/reset 清除。
+检查/构建期间不要修改源码；仅针对失败或新变更追加验证。未跟踪源码不得当作垃圾用 git clean/reset 清除。
 
-## 已实现的功能及入口
+## 功能入口
 
 | 功能 | 代码入口 | 当前边界 |
 |---|---|---|
@@ -68,28 +52,24 @@ cargo xtask check
 | ISO/netboot.xyz/reset | host/iso.rs、boot.rs、args.rs、TUI | Rust 实际交接未接通，不得描述为可用 |
 | 开发与 VM 验收 | xtask/src/ | 不随目标运行时分发 |
 
-## P0：先复验并修复 Live 入口
+## P0：复验 Live 入口
 
-前轮真实 QEMU 结果：SeaBIOS/virtio-blk 和 OVMF/virtio-scsi 均已通过原系统 kexec 进入 Alpine Live，未完成目标安装。UEFI 首次在 SecureBoot 变量缺失处误拦截；已按 Linux 策略区分“可访问 efivarfs 上确实不存在变量”与“变量文件系统未挂载/不可读”，第二轮通过源检查。
+SeaBIOS/virtio-blk、OVMF/virtio-scsi 已实际 kexec 进入 Live，均未完成安装。UEFI 的 SecureBoot 变量误拦截已区分可读 efivarfs 中确实缺失与未挂载/不可读。
 
-BIOS VGA 截图明确记录两处错误，源码已修复，但还没有完整重跑证明修复成功：
+BIOS 发现两处启动故障，源码已修但缺少新一轮完整复验：
 
-1. OpenRC 设置 output_log/error_log 却没启用后台执行，start-stop-daemon 拒绝启动。host/handoff.rs 的 LIVE_SERVICE 现有 command_background=yes、pidfile，并 need modloop。
-2. stock Alpine modloop 服务遍历挂载介质时排除 RAM 根，找不到私密 overlay 内 /modloop-virt。现在覆盖该服务，调用 Rust worker 的 live-modules。
+1. OpenRC 日志重定向缺少后台模式；`host/handoff.rs::LIVE_SERVICE` 已加 `command_background=yes`、pidfile、`need modloop`。
+2. stock modloop 搜索排除 RAM 根；现由 `worker/install.rs::prepare_live_modules` 要求 root、Alpine、`rustaller_live=1` 和内存根，只读挂载认证 squashfs，核对运行内核后建立模块/固件链接。串口 console 放在 cmdline 最后。
 
-live-modules 在 worker/install.rs::prepare_live_modules：要求 root、Alpine、rustaller_live=1、内存根；只读挂载已验证 archive 中的本地 squashfs，核对 uname -r 对应目录，再建立 Live 模块/固件链接。Live 命令行最后指定串口 console，让 OpenRC 错误可见。
+下一步：
 
-下一步具体操作：
+1. 从当前源码重新 bundle，先跑 Alpine BIOS/virtio-blk，再跑 UEFI/virtio-scsi。
+2. 缺少 `RUSTALLER_LIVE_START` 时查 modloop/rustaller 服务、APK 覆盖、`/lib/modules`、findmnt、`/var/log/rustaller.log` 和串口。
+3. 确认模块、存储/NIC、恢复 SSH 后定位首个失败命令；修复并复跑对应案例，添加针对实际故障的回归验证。
 
-1. 从当前源码重新 cargo xtask bundle，不复用 preview.8/9 或旧打包二进制。
-2. 首先用 Alpine + BIOS/virtio-blk，再用 Alpine + UEFI/virtio-scsi 运行全链路。
-3. 若没有 RUSTALLER_LIVE_START，先检查 OpenRC modloop/rustaller 服务、APK 是否保留私密覆盖服务、/lib/modules、findmnt、/var/log/rustaller.log 与串口日志。
-4. 确认模块版本、存储/NIC 可见、恢复 SSH 可用后，定位后续首次失败的原生命令，修复后再跑对应案例。
-5. 对实际故障加有意义的回归验证；不要以字符串包含某个参数的测试代替原生服务/安装验收。
+旧证据在原工作区 `/workspace/scratch/virt-audit-20261029/`（含 `alpine-bios-console.ppm`、BIOS/EFI 日志），不随源码分发；新环境须重建镜像与证据。
 
-旧原工作区证据位于 /workspace/scratch/virt-audit-20261029/，包括 alpine-bios-console.ppm、alpine-bios-blk/、alpine-efi-scsi-v9/。它们不在源码包；换环境时以本文和 ACCEPTANCE.md 恢复问题上下文，重新生成镜像和证据。
-
-## P1：完成四系统与虚拟硬件验收
+## P1：完整安装与虚拟硬件验收
 
 ```console
 cargo xtask vm-acceptance --help
@@ -102,39 +82,28 @@ cargo xtask vm-acceptance install \
   --timeout 1800 --output /absolute/new-results-directory
 ```
 
-源镜像须验证发行者来源/摘要；prepare-source 的接口与镜像认证细节见 ACCEPTANCE.md。为每轮创建新目录、磁盘 overlay 和 UEFI 变量副本；不得挂宿主机块设备。代理与 CA 按开发环境策略继承，不绕过 TLS。
+认证源镜像后使用 prepare-source；每次创建独立目录、qcow2 overlay、OVMF 变量副本，不挂宿主块设备，继承代理/CA 并保持 TLS。详细接口见 [ACCEPTANCE.md](ACCEPTANCE.md)。
 
-依次覆盖 Alpine、Debian、Arch、Gentoo × BIOS/UEFI，再扩展 virtio-scsi、SATA、NVMe、PVSCSI。测试工具支持这些磁盘总线，但源镜像内核也必须支持控制器。当前工具使用 TCG；真实 KVM、ESXi、Hyper-V、Xen HVM 结果必须另记，不能用 QEMU 设备模拟替代平台验收。
+覆盖四系统 × BIOS/UEFI，再扩展 virtio-scsi、SATA、NVMe、PVSCSI；源内核也须支持控制器。TCG 设备模拟不替代真实 KVM/ESXi/Hyper-V/Xen HVM 验收。
 
-每例通过要求：Live/start 与 install-complete 标记、dispatch 后 QMP 恰好一次 RESET、从新磁盘启动、正确 distro/hostname/kernel、SSH 公钥登录、XFS 与 UUID fstab、GRUB/UEFI fallback、DNS 和默认路由、原生包元数据更新、显式测试 swapfile 在目标启动后激活。IPv6-only、多 NIC、提供商特殊路由、真实 4Kn 启动另验。
+每例须看到 Live/start 与 install-complete、dispatch 后 QMP 恰好一次 RESET、新磁盘启动、正确 distro/hostname/kernel、公钥 SSH、XFS/UUID fstab、GRUB/UEFI fallback、DNS/默认路由、原生包元数据更新和目标开机激活 swapfile。IPv6-only、多 NIC、特殊路由及真实 4Kn 另验。
 
-故障场景至少检查：身份改变/同身份多盘、目标盘被挂载或用于 swap、只读盘、低 RAM、下载/签名失败、目标内核缺驱动、GRUB/SSH 校验失败。清盘前应停止的故障不能延后到 wipefs；安装失败不能请求最终重启。
+故障覆盖身份改变/多盘同身份、挂载/swap 占用、只读盘、低 RAM、下载/签名失败、缺驱动、GRUB/SSH 校验失败。清盘前的拒绝条件不得延后，安装失败不得最终重启。
 
-UEFI 当前使用 512 MiB FAT32 ESP、显式 FAT32/单扇区簇、removable/no-nvram、EFI loader PE 头校验；Secure Boot 开启、32-bit EFI、Xen PV/PVH/control domain、容器、已检测的受限 confidential VM 都有拒绝路径。BIOS/4Kn 明确不支持。外部内核启动型 VPS 和固件回退策略仍需提供商适配，不可按品牌自动承诺兼容。
+UEFI 为 64 位、Secure Boot 关闭，512 MiB FAT32 ESP、单扇区簇、removable/no-nvram、PE 头校验。拒绝 BIOS/4Kn、32-bit EFI、Xen PV/PVH/control domain、容器及已检测受限 confidential VM。外部内核启动和提供商固件回退策略须另行适配。
 
-## P2：接通剩余用户功能
+## P2：剩余功能
 
-- 手动 ISO：绝对路径只读预检、介质支持检查、GRUB loopback/安全交接及回滚，不能宣称任意 ISO 均支持；此路径由用户进入介质自主安装，不混入自动清盘调度。
-- netboot.xyz/reset：沿用已验证的模型和引导组件，补真正执行及失败恢复，并测试不会误触自动目标路径。
-- 当前系统配置：如扩展创建账户、密码、内核或 swap，先明确现有能力边界并补安全的持久配置/恢复；现在这些不属于 current 入口已实现能力。
-- minimal：先测实际目标根占用和启动内存，再按各发行版官方包依赖精简。保留 SSH、网络、证书、内核模块、引导及原生包维护能力。
-- curl/GitHub：保持固定版本下载和校验、英文 TUI；发布前完成安装矩阵。不能把未公开 draft 当成已可下载资产，也不能擅自 push。
+- ISO：接通只读预检、介质校验、GRUB loopback、安全交接与回滚；不承诺通用 ISO，不混入自动清盘。
+- netboot.xyz/reset：补执行和失败恢复，防止误触自动安装。
+- 当前系统配置：目前不创建账户、设密码、换核或建 swap；扩展前须明确恢复边界。
+- minimal：测量根占用与启动 RAM，再按原生依赖裁剪，保留 SSH、网络、CA、模块、引导、包维护能力。
+- 发布：固定版本下载和校验；完整安装验收前保持预览，未公开 draft 不作为匿名下载入口。
 
-## 必须保留的工程边界
+## 工程与交付要求
 
-Linux x86_64；四目标统一 Alpine Live；RAM floor 为 512/512/1024/2048 MB，源/Live 双重检查；完整磁盘身份确认，无通用 --yes；私密计划 0600，凭据不写 cmdline；签名不能降级为“只下载成功”；失败不最终重启；不能跳过校验换取精简。
+遵守 `AGENTS.md`：四目标统一 Live，RAM 下限 512/512/1024/2048 MB 双检，完整身份确认，无通用 `--yes`，计划 0600，凭据不写 cmdline，签名不可降级，失败不重启。TUI 仅 host，开发编排使用 Rust；保留 Shell 四资源和上游 Git 对拍对象。
 
-核心零第三方运行时依赖、TUI host-only；不为文件数减少而混合职责。不新增 Shell/Python/Node 编排工具，开发验证用 Rust；原生服务配置模板保留。unsafe 仅在必要系统接口边界使用，并有明确安全前提，不为“优化”无证据引入。
+更新验收记录中的版本/固件/控制器、结果、首个故障和证据位置，更新 P0/P1。打包源码及 SHA-256 时排除产物、镜像、日志和私钥；无用户明确要求不 commit/push/发布。
 
-Shell 基线四资源及上游 Git 对象继续用于对拍。原 Shell 的弱验证不能复制到 Rust 新实现。源码裁剪范围和历史决策见 TRIMMING.md/HISTORY.md。
-
-## 下一轮完成时请交付
-
-更新 ACCEPTANCE.md：每例版本/固件/控制器、通过或失败、首个故障、证据位置；更新本文件 P0/P1 状态。检查通过后重新打包源码及 SHA-256，排除构建产物、.git、镜像、日志和私钥。明确未完成项，保持预览标记；没有用户明确要求时不要 commit/push/发布。
-
-## 最新参考项目审查
-
-已对照用户指定 bohanwood/debi 与 bin456789/reinstall 的 README/安装脚本，
-记录在 REFERENCE-REVIEW.md。修复目标 fstab 写入顺序、全新目标 hosts、Alpine
-Hyper-V PCI 模块；最终增加 GRUB XFS 识别和语法检查。277 workspace + 49 Shell
-测试与静态 bundle 通过；没有新增 VM 安装验收。保持 GRUB + XFS，EFI Stub 已取消。
+参考项目审查已修复 fstab 顺序、新目标 hosts、Hyper-V PCI 模块，并增加 GRUB XFS 识别/语法检查，见 [REFERENCE-REVIEW.md](REFERENCE-REVIEW.md)；没有新增 VM 安装通过证据。

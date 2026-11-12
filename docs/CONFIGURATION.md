@@ -1,6 +1,6 @@
 # 安装前配置与一次重启目标
 
-2026-10-26：TUI/CLI、schema 5 计划、目标配置组件已实现；**Rust 主入口仍仅执行预检，不能实际重装，也尚未实现一次重启进入新系统。** SSH 密钥生成是当前可实际使用的本机工具，会写入指定的本机文件。其余新配置组件只在隔离目录/命令 mock 中验证，尚未由完整 Live 安装器调用。
+配置通过 TUI/CLI 写入 schema 5 计划。**确认磁盘身份后会执行真实安装；仅检查须加 `--inspect`。** 四目标 BIOS/UEFI 完整验收仍待完成，见[验收记录](ACCEPTANCE.md)。原生 ssh-keygen 会立即写入指定本机文件。
 
 ## 执行顺序
 
@@ -17,13 +17,11 @@
   → 最后重启一次，进入配置完成的新系统
 ```
 
-当前保留的 Shell 基线是“先重启进入 Live，安装后再重启”的路线，不满足这个目标。Rust 不应在 kexec 不可用时静默退回该路线。`src/host/preflight.rs` 提供只读输入校验：运行内核需启用 `CONFIG_KEXEC_FILE`/`CONFIG_KEXEC_CORE`，kexec 未被管理员禁用、未处于 lockdown 且工具存在。这只是必要条件；实际加载结果、内存余量、驱动复位、固件模式与平台兼容性还需验证，不能据此保证 kexec 成功。
-
-**尚缺**：收集并绑定这些实机事实、受验证资源下载、加载/执行 kexec、有序停止原系统、Live 安装入口与生命周期、四目标完整安装适配器及最终启动验收。现有入口不会加载 kexec、修改引导、安装或重启。ISO/netboot.xyz 是独立交互介质，不承诺这一自动安装流程；hold=2 保留安装现场时由用户执行最后一次重启。
+Rust 通过 kexec 进入 Live，仅在安装验证成功后最终重启；不静默退回 Shell 的两次重启流程。原系统 PID 1 须为 systemd/openrc-init；预检要求内核 kexec 配置、未禁用/lockdown 及可用工具，实际加载和平台兼容性仍需验收。ISO/netboot.xyz 为独立交互介质；`hold=2` 时由用户最终重启。
 
 ## 网络参考脚本取舍
 
-仅下载阅读了 `https://box.dmitstock.com`，没有执行。2026-10-26 读取的脚本为 534595 字节，SHA-256：`b70844acb181b9b6c82f0904b682bdfb5908d188c3b73328568edc21e6766fda`；远程地址内容可能变化，未将脚本作为运行时依赖或复制进项目。
+2026-10-26 仅阅读 `https://box.dmitstock.com`：534595 字节，SHA-256 `b70844acb181b9b6c82f0904b682bdfb5908d188c3b73328568edc21e6766fda`。未执行、复制或作为运行时依赖；远程内容可能变化。
 
 保留可映射到四目标原生配置的选项：
 
@@ -46,14 +44,14 @@
 
 不纳入安装配置：动态测速/BDP/HTB、第三方内核、NAT66 随机出网、IPv6 地址池、全量防火墙规则、服务商专用“默认值”、已过时的 `tcp_adv_win_scale`、`kernel.panic=-1`、强制 RA=2、自动重启当前网络服务等。它们不能作为四系统通用安装默认。
 
-网络配置仅用于目标系统，Live 下载仍使用原系统网络信息。禁用 IPv6 与 IPv6 DNS 同选会拒绝；最终安装预检还必须证明有可用 IPv4 路径，避免断开 IPv6-only VPS。手动 IP/路由替换尚未在 TUI 提供，原网络采集/继承的实际接线仍待完整驱动完成。
+配置仅用于目标，Live 沿用原系统网络。拒绝禁用 IPv6 与 IPv6 DNS 同选，并须证明 IPv4 路径可用。TUI 尚不提供手动 IP/路由替换；IPv6-only 与提供商特殊网络另行验收。
 
 ### 原生落盘组件
 
 - `shared::dns`：静态 `/etc/resolv.conf`；Alpine 全局关闭 dhcpcd/udhcpc 的 DNS 覆盖；networkd 文件设置 DNS/Domains 并禁止 DHCPv4/v6/RA 替换。自动模式不写文件。拒绝回环、多播、未指定及无作用域的链路本地 DNS，允许内网 DNS；不测试地址可达性。
 - `shared::network`：目标 `/etc/sysctl.d/90-rustaller-network.conf`；模块加载配置；glibc 完整 precedence 表；MTU 写入已有 networkd 文件或 Alpine ifupdown stanza。修改在网络文件内部，首启按网卡名重命名文件不会丢失选项。
 - OpenRC 的 sysctl/modules 服务以目标 runlevel 链接离线启用；服务脚本必须已存在且可执行。systemd 通过原生 modules-load/sysctl 读取配置。
-- BBR/qdisc 组件要求调用方提供**目标已安装内核**的 Kconfig，而非运行中的旧内核。完整驱动仍须绑定该 Kconfig 与内核版本，并检查模块实际存在、启动后验证生效。
+- BBR/qdisc 使用**目标已安装内核**的 Kconfig，须与版本绑定、核对模块并在启动后验证。
 
 这些函数只接收受检独立根目录，拒绝宿主 `/`、路径逃逸、符号链接父目录和不安全配置文件。resolver 最终链接通过 rename 替换而不跟随。所有可预检项先检查，各文件分别原子替换；不提供跨文件事务，调用方必须独占目标树。
 
@@ -70,19 +68,13 @@
 | RSA 位数 `-b` | 4096；2048/3072/4096/8192，仅 RSA 显示 |
 | 保存位置 `-f` | 本机绝对路径；默认当前用户 `.ssh/id_rustaller_ed25519` |
 
-默认配置相当于 `ssh-keygen -o -a 512 -Z aes256-ctr -t ed25519 -C 日期 -f 指定路径`。每个参数独立传给系统工具，不启动 Shell，不展开 `$()`。选“生成并添加公钥”后暂时退出 raw/备用屏幕，由原生 ssh-keygen 询问并确认私钥口令，完成后恢复 TUI。**口令不经过 TUI 字段、安装计划、环境变量或进程参数；空口令没有 KDF 保护。** 不自动安装缺失的 ssh-keygen。
+参数独立传入系统 ssh-keygen，不经过 Shell。生成时暂退 raw/备用屏幕，由原生工具询问口令，完成后恢复 TUI；口令不经过字段、计划、环境或 argv，空口令无 KDF 保护。不自动安装缺失工具。
 
-使用 0700 私有暂存目录，拒绝覆盖已有私钥/.pub、符号链接路径和可由其他用户写入的最终父目录。私钥按 0600、公钥按 0644 发布；成功后只将公钥内容加入选中的认证方式。私钥不会进入新系统的 authorized_keys 或计划文件。
-
-在待重装 VPS 上生成的是**客户端登录私钥**，不是服务端 host key。必须先安全备份到自己的客户端；保存在将被清空的磁盘会丢失。TUI 的字段提示、原生工具开始前和结果页都有此说明。普通“添加公钥”仍支持现有文件、URL、github:/gitlab: 来源。
+私有暂存目录为 0700；拒绝覆盖、符号链接和他人可写父目录。私钥 0600、公钥 0644，仅公钥加入认证计划。**这是客户端登录密钥，清盘前须备份到自己的客户端。**普通添加公钥支持文件、URL、github:/gitlab:。
 
 ## 目标 swapfile
 
-XFS/VPS 补充：保留 GRUB BIOS/UEFI。清盘前扣除 ESP/分区起点，要求根分区
-至少 512 MiB（仅为格式化保护下限，不代表足够安装发行版或 swap）。mkfs.xfs
-使用 -K，跳过格式化期间的整卷 discard；不改变后续挂载/TRIM 策略，不保证
-实际性能提升。保留默认挂载策略，不强制 stripe/logbuf/noatime 参数。
-swapfile 在 dd 同步后核对长度及已分配块数；这不是实际 swapon 成功的替代证明。
+保留 GRUB BIOS/UEFI。清盘前扣除 ESP/对齐，根至少 512 MiB；这只是格式化下限。`mkfs.xfs -K` 跳过整卷 discard，不修改挂载/TRIM 策略。dd 同步后核对长度与分配块数，仍需目标实际激活验收。
 
 菜单：`目标 swapfile → 启用 → 大小 MiB / swappiness`。默认不创建；这是本次用户明确要求后加入的 Rust 选项，保留 Shell 基线的无 swap 行为。
 
@@ -107,4 +99,4 @@ swapfile 在 dd 同步后核对长度及已分配块数；这不是实际 swapon
   --mtu 1450 --swapfile-mib 2048 --swappiness 10
 ```
 
-这条命令是实际安装入口，确认后会进入 Live 并清盘；仅检查时必须显式添加 --inspect。密钥生成在 TUI 工具分支中立即调用本机工具，不作为 worker/系统安装字段。新计划 schema 为 5，拒绝旧 schema 1/2/3/4。没有新增第三方运行依赖、Shell 自动化或任意命令钩子。
+示例确认后会进入 Live 清盘；仅检查须加 `--inspect`。schema 5 拒绝旧计划；密钥生成是立即执行的本机工具，不交给 worker。

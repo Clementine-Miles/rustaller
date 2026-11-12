@@ -1,8 +1,6 @@
 # debi / rustaller 对照审查
 
-本轮读取用户指定的 bohanwood/debi 与 bin456789/reinstall 的 README 和安装
-脚本，通过 GitHub connector 获取；未执行参考项目安装入口，也未修改保留的
-Shell 四资源或固定上游对拍基线。
+阅读 bohanwood/debi 与 bin456789/reinstall 的 README/安装脚本；未执行入口，未修改 Shell 四资源或固定对拍基准。
 
 ## 参考材料与取舍
 
@@ -25,24 +23,16 @@ Shell 四资源或固定上游对拍基线。
 |---|---|
 | debi README.md | 129dcfd2e52c9ada725ba7bbc62f05f37229b43c |
 | debi debi.sh | 10ebcd2141f23271f59eb46e4174539f74fc9293 |
-| rustaller README.md | b22b3a2ea9ec92315424bf3864695be3e8832aa5 |
-| rustaller trans.sh | 345718c2e6e6277fd694f102cd547f3fc15e6bc6 |
+| reinstall README.md | b22b3a2ea9ec92315424bf3864695be3e8832aa5 |
+| reinstall trans.sh | 345718c2e6e6277fd694f102cd547f3fc15e6bc6 |
 
 ## 已修复
 
-1. 原来最终 initramfs 重建完成后才生成目标 fstab。现在在 configure 的内核
-   配置阶段之前写入根分区/ESP UUID，供该阶段原生工具读取；bootstrap 中已
-   运行的钩子不因此被追溯保证，最终重建仍然必须保留。
-2. 原来 hostname 仅写 /etc/hostname，没有为新目标生成匹配的本地解析记录。
-   现在为新目标写 localhost、127.0.1.1 主机名及 IPv6 loopback；仅限全新
-   安装路径，不改当前系统配置入口的 hosts 文件。
-3. Alpine initramfs 自定义模块增加 pci-hyperv 路径，补充已有 VMBus 路径。
-   驱动若未包含在目标内核中仍不能凭配置生成，Hyper-V 实机验收仍待完成。
-4. 最终验证原先只检查 GRUB 配置文件存在且非空。现在增加 chroot 内的
-   grub-probe --target=fs /，要求识别为 xfs，以及 grub-script-check；错误
-   阻止最终重启。这些检查不证明固件或内核实际能够启动。
-5. 纠正文档中“示例只执行预检”的过时陈述。实际安装命令已包含清盘动作；
-   只读检查必须显式使用 --inspect。
+1. 内核配置前写根/ESP UUID fstab，供最终原生 initramfs 重建读取；仍保留最终重建，不能追溯保证 bootstrap 钩子。
+2. 为新目标写 localhost、127.0.1.1 主机名和 IPv6 loopback；不改 current 入口的 hosts。
+3. Alpine 模块增加 pci-hyperv，补充 VMBus；目标内核未含驱动时配置不能生成它。
+4. 最终以 chroot `grub-probe --target=fs /` 要求 XFS，并用 `grub-script-check` 校验配置；失败不重启，但通过不等于实际启动。
+5. 文档明确示例为真实安装入口，仅检查须加 `--inspect`。
 
 ## 验证及剩余边界
 

@@ -2,45 +2,28 @@
 
 ## XFS / dd swapfile change — 2026-11-02
 
-Rust automatic targets now use XFS, with GRUB-compatible feature flags and an
-explicit Live XFS module check before partitioning. Alpine Live and Alpine
-target OpenRC remain unchanged. Optional swapfiles use GNU dd with real zero
-writes, private temporary files, mkswap and one fstab entry; only native target
-boot activates swap. The guest probe now requires XFS and prints free -h,
-swapon --show and fstab after boot.
+Automatic roots use XFS with GRUB-compatible flags and a pre-partition Live module check. Alpine retains OpenRC. Optional swapfiles use GNU dd zero writes, private files, mkswap and one fstab entry; only target boot activates them. The guest probe requires XFS and prints free -h, swapon --show and fstab.
 
-No new BIOS/UEFI installation VM case was run for this change. All four targets,
-both firmware modes, XFS root boot, and actual XFS swap activation remain NOT
-VERIFIED. Previous Live-only evidence below does not establish XFS acceptance.
-Unit tests exercise real dd writes to temporary regular files, mocked inventory
-and mkswap, allocation/format failures, collisions, and OpenRC service linkage.
+**No complete installation VM case passed for this change.** All four targets, both firmware modes, XFS boot and swap activation remain NOT VERIFIED. Live-only evidence below does not establish acceptance.
 
-Validation completed in this workspace: 273 workspace tests and 49 Shell tests;
-Rustfmt, Clippy, ShellCheck 0.11, Bash/BusyBox ash syntax, git diff --check,
-and the matching static musl host/worker bundle all passed. Logs are in
-`/workspace/scratch/check.log` and `/workspace/scratch/bundle.log` (not shipped
-in the source archive). These results do not replace the pending VM cases.
+Historical validation: 273 workspace + 49 Shell tests, formatting/lints/syntax and matching static musl bundle passed. Unit cases cover real dd writes to temporary files, mocked inventory/mkswap, failures, collisions and OpenRC links. Logs: `/workspace/scratch/check.log`, `bundle.log`; not shipped with source.
 
-The VM harness is a development tool under `xtask`, separate from the distributed host and worker. It runs unprivileged QEMU with software emulation. It never attaches a host block device, changes host networking, writes host firmware variables, or reboots the development machine. Guest installation and formatting are limited to a fresh per-case qcow2 overlay and a private copy of OVMF variables.
+The `xtask` harness uses unprivileged QEMU/TCG, fresh per-case qcow2 overlays and private OVMF variables. It never attaches host block devices, changes host networking/firmware or reboots the development host.
 
 ## UEFI and virtualization audit — 2026-10-29
 
-The Rust installer now checks these conditions before handing off or wiping a disk:
+Before handoff/wipe:
 
-- Source EFI must report 64-bit firmware and disabled Secure Boot. The actual `SecureBoot` UEFI global variable is read; firmware without that variable is accepted only when an accessible efivarfs mount establishes genuine absence, following Linux's `EFI_NOT_FOUND` policy. An unmounted variable directory, unreadable state or malformed variable stops preparation; expose efivarfs read-only if it was not mounted. CPU architecture and kernel lockdown alone are insufficient. The installer does not disable Secure Boot, enroll keys or install a signed shim chain.
-- The firmware mode and bitness are checked again in Live. EFI runtime variables can be unavailable after kexec, so the Secure Boot check is made in the source and repeated immediately before handoff.
-- Container marker fallbacks cover Docker, Podman, systemd containers, OpenVZ and PID 1's `container=` environment even without `systemd-detect-virt`. Xen PV/PVH, unknown Xen guest modes and control domains are rejected. Xen HVM passes this gate but still needs the ordinary kexec/storage/network checks. Detected SEV-SNP/TDX guest devices are rejected pending confidential-VM acceptance; absence of such a device is not proof that every confidential-computing mode was excluded.
-- `lsblk` must report a writable disk and known logical sector size, both in the source and immediately before Live formatting. 512-byte sectors are accepted; 4096-byte logical sectors are accepted only with EFI. BIOS on 4Kn is deliberately unsupported by this installer.
+- Source EFI must be 64-bit with Secure Boot disabled. Missing `SecureBoot` is accepted only on accessible efivarfs establishing genuine absence (`EFI_NOT_FOUND`); unmounted, unreadable or malformed state stops preparation. Check again before handoff; Live rechecks firmware mode/bitness because variables may be unavailable after kexec. No Secure Boot disabling, key enrollment or signed shim is provided.
+- Reject containers (including marker/PID 1 fallbacks), Xen PV/PVH, unknown modes/control domains and detected SEV-SNP/TDX guests. Xen HVM still needs normal kexec/storage/network checks; missing confidential-VM markers do not prove universal compatibility.
+- Require a writable disk with known logical sectors in source and immediately before formatting: 512-byte accepted, 4096-byte only under EFI; BIOS/4Kn rejected.
 
-Boot and storage changes:
+Boot/storage requirements:
 
-- EFI layouts use a 512 MiB GPT ESP (`1MiB` to `513MiB`), the ESP flag and `mkfs.fat -F 32 -s 1`. The previous 100 MiB/default-FAT layout could produce FAT16 and did not accommodate FAT32's minimum cluster count on 4Kn. This reserved capacity is separate from minimal root filesystem size.
-- Target kernel/initramfs files must be nonempty regular files. The fallback `EFI/BOOT/BOOTX64.EFI` is checked for an x86_64 PE32+ EFI application header. GRUB remains `--removable --no-nvram`; stale provider boot entries and firmware fallback policies still require actual platform acceptance.
-- Alpine mkinitfs explicitly includes ATA, SCSI, VirtIO, NVMe, Xen PCI/front-end and Hyper-V bus module paths, resolving native module dependencies. Debian explicitly uses `MODULES=most`. Arch skips Live-based `autodetect` during its final mkinitcpio rebuild. Gentoo retains `dracut --no-hostonly`. These settings include drivers supplied by the selected kernel; they cannot manufacture drivers omitted from a cloud kernel.
-- Partition refresh removes device links only for the bound target disk and its partitions. Other data disks, similar device names, ordinary files and symlink targets remain intact.
-- The private Alpine apkovl disables tiny-cloud so an attached provider/NoCloud `cidata` disk cannot take over the installer's configuration.
-
-Platform boundaries:
+- GPT ESP: 512 MiB (`1MiB`–`513MiB`), ESP flag, `mkfs.fat -F 32 -s 1`. This replaces the undersized/default-FAT layout and accommodates FAT32 clusters on 4Kn; ESP capacity is separate from root size.
+- Kernel/initramfs must be nonempty regular files; `EFI/BOOT/BOOTX64.EFI` must be x86_64 PE32+ EFI. GRUB uses `--removable --no-nvram`; provider fallback behavior still needs testing.
+- Alpine includes ATA/SCSI/VirtIO/NVMe/Xen/Hyper-V module paths; Debian uses `MODULES=most`, Arch skips Live-based `autodetect`, Gentoo uses `dracut --no-hostonly`. Configuration cannot supply drivers absent from the target kernel.
+- Partition refresh removes only bound-target device links. Private apkovl disables tiny-cloud to prevent provider/NoCloud `cidata` overriding installer configuration.
 
 | Environment | Current policy | Acceptance needed |
 |---|---|---|
@@ -51,17 +34,17 @@ Platform boundaries:
 | Xen PV/PVH, Xen control domain, containers | Rejected | Separate provider-aware boot workflow would be necessary |
 | Confidential guests / microVMs / provider-supplied kernels | Known confidential guest markers rejected; other boot contracts not established | No general disk-boot or one-reboot guarantee |
 
-Guest-side inspection cannot establish a provider's next-boot policy. A provider that supplies the kernel outside the disk, changes firmware or controllers at restart, or never tries the fallback EFI path is outside the accepted workflow. Retaining a recovery console is still necessary.
+Provider-supplied kernels, changed firmware/controllers and firmware ignoring fallback paths require separate adaptation. Retain console access.
 
-Regression validation: 271 workspace tests and 49 Shell baseline tests passed, plus Rustfmt, Clippy with warnings denied, ShellCheck, Bash/ash syntax and diff checks. The unchanged Shell comparison trace records three intentional EFI deviations: ESP size, ESP flag and FAT32 formatting. The new controller selector is `--disk-bus virtio-blk|virtio-scsi|sata|nvme|pvscsi`; confirmation binds `/dev/vda`, `/dev/sda` or `/dev/nvme0n1` accordingly, and every case records its emulated hardware.
+Historical checks: 271 workspace + 49 Shell tests and lints/syntax passed. Shell parity records three intentional EFI changes: ESP size, ESP flag and FAT32 formatting. `--disk-bus virtio-blk|virtio-scsi|sata|nvme|pvscsi` binds the corresponding disk identity and records emulated hardware.
 
 ### Actual VM findings in this audit
 
-The initial preview.8 UEFI/virtio-scsi run refused firmware without a SecureBoot variable. After the mounted-efivarfs distinction was fixed, preview.9 passed source inspection and reached Live under OVMF/virtio-scsi. The BIOS/virtio-blk run also completed actual kexec into Live. Neither completed target installation: BIOS was stopped for diagnosis; the UEFI case timed out. No complete-install pass is claimed.
+preview.8 rejected UEFI without SecureBoot; after the efivarfs distinction, preview.9 reached Live under OVMF/virtio-scsi. SeaBIOS/virtio-blk also completed kexec into Live. BIOS stopped for diagnosis and UEFI timed out; neither completed installation.
 
-The BIOS VGA console identified two concrete startup faults: OpenRC rejected `output_log`/`error_log` without background execution, and the stock Alpine modloop service excluded the RAM root when looking for its image. The current source enables background execution with a PID file, makes the installer depend on modloop, and supplies a native OpenRC module service invoking Rust `live-modules`. That helper requires the private Live marker, root and an in-memory root filesystem, mounts the authenticated local squashfs read-only, verifies the running kernel release and installs module/firmware links. Serial console is now last on the Live kernel command line so init errors are visible remotely. These final startup fixes passed static checks but **have not completed a new full VM installation run**.
+BIOS exposed OpenRC log redirection without background mode and stock modloop excluding the RAM root. Source fixes add background/pidfile, depend on modloop, and invoke Rust `live-modules`. It requires root, Alpine, the private Live marker and memory root; mounts authenticated squashfs read-only, matches the kernel and links modules/firmware. Serial console is last. **These fixes still lack a completed fresh VM installation.**
 
-Evidence: `/workspace/scratch/virt-audit-20261029/`, including `alpine-bios-console.ppm`, separate BIOS and EFI serial/QMP logs, and `check-source-final.log`. These machine-specific files and VM images are excluded from the source distribution. All audit VMs have stopped. Four-target BIOS/UEFI acceptance, actual KVM/ESXi/Hyper-V/Xen HVM, and real 4Kn boot remain pending.
+Evidence in the original workspace: `/workspace/scratch/virt-audit-20261029/`, including `alpine-bios-console.ppm`, BIOS/EFI serial/QMP logs and `check-source-final.log`. VMs stopped; files/images are excluded from source. Real KVM/ESXi/Hyper-V/Xen HVM and 4Kn boot remain pending.
 
 Research used primary sources:
 
@@ -73,7 +56,6 @@ Research used primary sources:
 - [Linux Hyper-V confidential-computing documentation](https://docs.kernel.org/virt/hyperv/coco.html): additional memory-sharing and kexec requirements.
 - [Alpine mkinitfs](https://github.com/alpinelinux/mkinitfs/blob/master/mkinitfs.in) and its [Live init](https://github.com/alpinelinux/mkinitfs/blob/master/initramfs-init.in): feature/module dependency handling and tiny-cloud selection.
 - [Arch mkinitcpio manual source](https://github.com/archlinux/mkinitcpio/blob/master/man/mkinitcpio.8.adoc): presets and skipping autodetect for the final rebuild.
-
 ## Evidence recorded on 2026-10-26
 
 | Check | BIOS / SeaBIOS | UEFI / OVMF | Meaning |
@@ -84,41 +66,35 @@ Research used primary sources:
 | Rust host → kexec → Alpine Live → Arch target | NOT RUN | NOT RUN | Requires the integrated installer binary |
 | Rust host → kexec → Alpine Live → Gentoo target | NOT RUN | NOT RUN | Requires the integrated installer binary |
 
-**Firmware / Live smoke is not complete OS installation acceptance.** A successful smoke run cannot change `installer_complete` or justify a stable release.
+Firmware/Live smoke cannot change `installer_complete` or justify a stable release. The v5b serial log reached Live after kexec/apkovl/package loading, then timed out without `RUSTALLER_INSTALL_COMPLETE`. Earlier v5 failed on noexec `/run`; the harness now stages executables in private `/var/tmp`. preview.7's later fixes did not establish a complete pass.
 
-Status reviewed on 2026-10-28: `install-alpine-bios-v5b/alpine-bios/serial.log` records kexec, loading the private apkovl, successful Live package installation and the Alpine login prompt. No `RUSTALLER_INSTALL_COMPLETE` appeared, and the case timed out. The earlier v5 attempt failed before installer execution because `/run` was noexec; the harness now uses private `/var/tmp` for executable files. These are separate failures. Preview.7 contains the subsequent package and structural fixes but has not passed a new complete VM run. All guest processes from these attempts have stopped; failed overlays and logs remain available under `/workspace/scratch/rustaller-vm-tools/`.
-
-Actual smoke evidence is under `/workspace/scratch/rustaller-vm-tools/smoke-20261026-0654/`: separate serial logs, QEMU diagnostics, QMP events and `results.txt`. Both firmware modes reached `Welcome to Alpine Linux 3.24`, kernel `6.18.58-0-virt`, x86_64 and a serial login prompt. The harness did not use QEMU `-kernel`; SeaBIOS/syslinux and OVMF/GRUB loaded the ISO normally. Only boot-loader command lines were remastered to add `console=ttyS0,115200`; the vendor kernel, initramfs and userspace were unchanged.
-
-Tooling: Debian QEMU `10.0.13`, SeaBIOS `1.16.3`, OVMF `2025.02`, xorriso `1.5.6`, provisioned user-locally from APT-authenticated Debian repositories. No KVM device is available, so tests use TCG and run more slowly than hardware virtualization.
+Smoke evidence: `/workspace/scratch/rustaller-vm-tools/smoke-20261026-0654/` (serial/QEMU/QMP/results). Both firmware modes reached Alpine 3.24, kernel `6.18.58-0-virt`, x86_64 login. Normal SeaBIOS/syslinux and OVMF/GRUB ISO boot was used, not QEMU `-kernel`; only console arguments changed. Historical tools: QEMU 10.0.13, SeaBIOS 1.16.3, OVMF 2025.02, xorriso 1.5.6 from authenticated Debian APT. No KVM device was available; tests used TCG.
 
 ## Input authentication
 
 Alpine smoke input:
 
-- Official ISO: `https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/alpine-virt-3.24.3-x86_64.iso`.
-- Its detached OpenPGP signature was actually verified against primary fingerprint `0482D84022F52DF1C4E7CD43293ACD0907D9495A`, also advertised by Alpine's official download page.
-- ISO SHA-256: `cdc1bc0efc64d8d611bf3733f54868172a545888dfd726f518bf279bcb0ff1af`.
+- ISO: `https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/alpine-virt-3.24.3-x86_64.iso`.
+- Detached signature verified against official primary fingerprint `0482D84022F52DF1C4E7CD43293ACD0907D9495A`.
+- SHA-256: `cdc1bc0efc64d8d611bf3733f54868172a545888dfd726f518bf279bcb0ff1af`.
 
-Disposable source-system image for kexec testing:
+Disposable source image:
 
 - `https://cloud.debian.org/images/cloud/trixie/20261021-2638/debian-13-genericcloud-amd64-20261021-2638.qcow2`.
 - SHA-512: `16e0965312c56feb331049d45d2b1b5778f3f942a33d4300eedbb97527707f2bea87c0006f3e4cc7a25fadbff739c4e235a51fb9bcd1b66fd554f7f8e80ba45c`.
-- The image was fetched over certificate-validated HTTPS and its actual bytes matched Debian's published SHA512SUMS, also fetched over HTTPS. This is **TLS and publisher-checksum authentication, not an OpenPGP signature**. Debian's [official Cloud FAQ](https://cloud.debian.org/images/cloud/) explicitly states that current per-distribution images use TLS/checksums; detached checksum signatures exist for legacy OpenStack images. `SHA512SUMS.sign` for this current image returned 404.
+- Actual bytes matched Debian SHA512SUMS over validated HTTPS. This is TLS/publisher-checksum authentication, not OpenPGP; current image checksum signatures are not supplied (`SHA512SUMS.sign` returned 404), consistent with the [Cloud FAQ](https://cloud.debian.org/images/cloud/).
 
-The cloud image is a disposable development source host. It is not a target installation image or a replacement for the installer's signed Alpine/Arch/Debian/Gentoo package and release verification.
-
-The harness checks file hashes supplied by the caller; it does not establish the origin of an arbitrary caller-supplied hash. Obtain that value from authenticated publisher metadata first. Input paths must be nonempty regular files, not devices or symlinks; source qcow2 images with an existing backing chain are rejected.
+The source image is a disposable development host, not a target rootfs or substitute for installer package/signature verification. The harness checks supplied hashes, not their origin: obtain them from authenticated publisher metadata. Inputs must be nonempty regular files, not symlinks/devices; qcow2 backing chains are rejected.
 
 ## Commands
 
-After building the project, inspect the interface with:
+Inspect the interface:
 
 ```console
 cargo xtask vm-acceptance --help
 ```
 
-Example smoke run with user-local tools:
+Smoke example:
 
 ```console
 cargo xtask vm-acceptance smoke \
@@ -129,7 +105,7 @@ cargo xtask vm-acceptance smoke \
   --output /absolute/path/to/new-smoke-results
 ```
 
-`prepare-source` boots the authenticated Debian Cloud image with native NoCloud configuration, a test-only SSH public key, required host tools, and the inherited proxy/CA transport. It powers off that guest and creates a standalone source image plus a new checksum. A new output directory is mandatory:
+`prepare-source` boots the authenticated Debian image with NoCloud, dedicated SSH key, host tools and inherited proxy/CA, then powers off and writes a standalone source image plus checksum. Output directories must be new:
 
 ```console
 cargo xtask vm-acceptance prepare-source \
@@ -140,7 +116,7 @@ cargo xtask vm-acceptance prepare-source \
   --timeout 1500 --output /absolute/path/to/new-source-results
 ```
 
-After the static installer bundle is ready, full installation acceptance is explicit:
+Full installation acceptance requires a static installer bundle:
 
 ```console
 cargo xtask vm-acceptance install \
@@ -153,43 +129,28 @@ cargo xtask vm-acceptance install \
   --output /absolute/path/to/new-install-results
 ```
 
-The installer is copied into the disposable source guest. The harness invokes its read-only `--inspect`, reads the exact identity-bound confirmation token for the selected bus's disk, then passes that token through `--confirm-erase`. It does not use a generic `--yes` switch. SSH uses only the dedicated public key; password/keyboard-interactive authentication is disabled. Source and installed-target host keys use separate per-case known-host files because reinstalling legitimately replaces the guest's host key. Repeat with `--disk-bus virtio-scsi`, `sata`, `nvme` or `pvscsi` to exercise additional controllers; the source kernel must support that controller too.
+The harness copies it into the disposable guest, runs `--inspect`, then passes the exact bus-specific token through `--confirm-erase`, never generic `--yes`. Only the test public key is accepted; source/target known-host files are separate because reinstallation changes host keys. Repeat for additional disk buses; source kernels must support them too.
 
 ## Full-case pass criteria
 
-A full case passes only if all of these are observed:
+1. Selected firmware boots the source and dedicated public-key SSH works.
+2. Confirmed real installation reaches `RUSTALLER_LIVE_START` and `RUSTALLER_INSTALL_COMPLETE`.
+3. QMP records exactly one reset after dispatch: the final reboot, not kexec.
+4. The new disk boots the requested distro/hostname and public-key SSH works again.
+5. Probe verifies x86_64, selected kernel, XFS root, UUID fstab, GRUB and applicable EFI fallback.
+6. IPv4 default route, repository DNS resolution and native metadata refresh work.
+7. Target boot activates the requested 64 MiB swapfile, 0600 with one fstab entry and swappiness=10.
 
-1. The source guest boots using the selected firmware and accepts the dedicated public SSH key.
-2. The real host installer dispatches the confirmed installation; serial output reaches `RUSTALLER_LIVE_START` and `RUSTALLER_INSTALL_COMPLETE`.
-3. QMP records exactly **one** machine reset after dispatch. kexec itself must not cause a firmware reset; the final reboot does.
-4. The installed disk boots to the requested hostname and distribution; public-key-only SSH works again.
-5. The static guest probe verifies x86_64, the selected cloud/virt kernel where applicable, XFS root, UUID-bound fstab, GRUB and the UEFI fallback loader where applicable.
-6. IPv4 has a default route, DNS resolves an official repository host, and the native package manager successfully refreshes metadata.
-7. The explicitly requested 64 MiB swapfile is activated by target boot, has 0600 permissions and one fstab entry, and boot applies swappiness=10.
+The probe uses controlled native argv, not arbitrary scripts, and never installs/reboots the host. IPv6 Internet, multiple NICs and provider layouts require separate tests.
 
-The probe does not install or reboot the host, and does not execute an arbitrary script. Native guest programs are invoked through Rust-controlled arguments. IPv6 Internet connectivity and provider-specific hardware/network layouts require separate acceptance; an IPv4/QEMU result does not establish them.
+Inherited proxy and public CA remain enabled. The Rust relay forwards only to that proxy; private transport config remains private, with public CA readable by `_apt`. Production removes temporary transport configuration through its own lifecycle. TLS/policy are not bypassed.
 
-The environment's inherited HTTP proxy and public CA bundle are preserved. A Rust TCP relay forwards guest proxy requests only to that inherited proxy, without bypassing policy or disabling TLS. Private proxy environment/configuration remains in private files; public CA certificates must be readable by the native `_apt` download sandbox. Post-boot metadata probes copy a public CA bundle into the disposable guest and use a private transport configuration. The production installer removes temporary installer transport configuration according to its own lifecycle.
-
-Every case retains serial/QMP/SSH/probe diagnostics and a result. Large disposable disk overlays are removed only after recording the result; source images, logs and OVMF variable copies are retained. Failed or unrun cases remain labelled accordingly.
+Retain per-case serial/QMP/SSH/probe diagnostics and explicit pass/fail/unrun results. Remove large overlays only after recording results; preserve source images, logs and OVMF copies.
 
 ## XFS VPS follow-up
 
-EFI Stub was cancelled by the user; GRUB BIOS/UEFI remains the execution path.
-Added a pre-wipe root-size floor accounting for ESP/alignment, mkfs.xfs -K to
-skip whole-volume discard during formatting, and swap allocation block-count
-validation after dd sync. Capacity parsing runs with LC_ALL=C.
-Validation: 275 workspace + 49 Shell tests, formatting/lints/syntax checks and
-static musl bundle passed. Logs: /workspace/scratch/xfs-check.log and
-/workspace/scratch/xfs-bundle.log. No additional VM installation was run.
+EFI Stub was cancelled. GRUB remains; pre-wipe capacity accounts for ESP/alignment, `mkfs.xfs -K` skips whole-volume discard, dd allocation checks block counts, and parsing uses `LC_ALL=C`. Historical 275 workspace + 49 Shell tests, lints/syntax and musl bundle passed (`/workspace/scratch/xfs-check.log`, `xfs-bundle.log`); no new installation VM case.
 
 ## Reference review follow-up
 
-Reviewed bohanwood/debi and bin456789/reinstall via GitHub; see
-REFERENCE-REVIEW.md for inspected blob IDs and scope. Corrected target fstab
-ordering before final initramfs generation, fresh-target hostname resolution,
-and the Alpine Hyper-V PCI module list. Added final native GRUB filesystem and
-configuration checks. 277 workspace + 49 Shell tests, all lint/syntax checks,
-and matching musl host/worker bundle passed. Logs: reference-check.log and
-reference-bundle.log under /workspace/scratch. No new VM installation evidence;
-previous outstanding acceptance cases remain outstanding.
+[REFERENCE-REVIEW.md](REFERENCE-REVIEW.md) records inspected upstream blobs. Fixes cover fstab order, fresh-target hosts, Alpine Hyper-V PCI and final GRUB XFS/config checks. Historical 277 workspace + 49 Shell tests and bundle passed (`/workspace/scratch/reference-check.log`, `reference-bundle.log`); no new VM acceptance evidence.

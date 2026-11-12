@@ -10,7 +10,7 @@
 | Arch 目标 | pacstrap、core/extra 软件仓库 | `geo.mirror.pkgbuild.com` | 可信 `archlinux-keyring`，软件包签名必需，数据库签名可选 |
 | Gentoo 目标 | amd64 systemd stage3、软件仓库 | `distfiles.gentoo.org` | 可信 Gentoo release 密钥 → 签名索引/DIGESTS → 选定 stage3 SHA512 |
 
-静态 Rust 入口不包含发行版、完整安装介质、包管理工具或信任密钥。GitHub Release 是本项目程序的分发渠道；四个系统的安装资源继续来自各自官方来源。
+GitHub Release 分发程序，发行版资源与包来自各自官方来源。静态入口不内含完整发行版或安装介质；认证所需密钥与工具由各安装阶段建立。
 
 ## Rust 源解析与只读在线审计
 
@@ -27,11 +27,9 @@
 cargo xtask audit-sources
 ```
 
-该命令使用系统 `curl`，首参 `--disable` 禁用用户 `.curlrc`，保持代理/CA 环境和 TLS 校验；只允许 HTTPS 和 HTTPS 重定向，设置连接/总超时及重定向上限。只 GET 小型元数据和摘要文件（每次最多 1 MiB），大文件和签名附件只执行 HEAD。任何源失败都会报告并返回失败，不切换为未知镜像或旧版本。
+审计用系统 `curl --disable` 禁用 `.curlrc`，继承代理/CA、保持 TLS，仅允许 HTTPS/HTTPS 重定向并设超时及次数上限。只 GET 每次最多 1 MiB 的元数据/摘要，大文件和签名仅 HEAD；失败不回退未知镜像或旧版本。
 
-输出严格区分：URL 可达、摘要已解析、摘要 sidecar 一致、签名尚未验证、完整文件尚未下载/计算摘要。ASCII armor 结构解析不执行 OpenPGP 验证；这个审计命令也不下载密钥、不安装软件、不进入 chroot、不运行分区或引导命令。
-
-真实安装接入时，必须先获得并验证可信密钥、签名及完整文件摘要，才允许解压或使用资源。当前 Rust 主安装流程仍未接通，不能因只读审计通过而将版本标为可实际安装。
+输出区分可达性、摘要解析/sidecar 一致与尚未执行的签名/完整文件验证。ASCII armor 解析不验证 OpenPGP；审计不下载密钥、不安装软件或执行分区/引导。实际安装须先验证信任密钥、签名及完整载荷，再解压使用；当前驱动已接通，但只读审计不证明安装成功。
 
 ## 2026-10-25 在线观察
 
@@ -50,9 +48,7 @@ cargo xtask audit-sources
 | Gentoo 对应 stage3、DIGESTS、`.asc` | HEAD/小文件请求成功；DIGESTS 为 clearsigned，包含 SHA512/BLAKE2B |
 | 辅助 Fedora 44 GRUB EFI 文件 | 原 HTTPS CloudFront 地址 HEAD 成功；Fedora 不是安装目标 |
 
-本次未下载或散列完整 tar/ISO，也未进行 OpenPGP 签名真实性验证。可达性和摘要文件的存在不能替代这些检查。
-
-新增内核选项还检查了官方包页面：Alpine v3.24 `linux-virt`/`linux-lts`、Debian trixie `linux-image-cloud-amd64`/`linux-image-amd64`、Arch `linux-lts`、Gentoo `sys-kernel/gentoo-kernel-bin` 最终均返回 200。Debian generic 包页首次返回 503，一次有界重试后成功；网页可达不代替仓库中的包签名/摘要检查。
+上述历史审计未下载/散列完整 tar/ISO，也未验证 OpenPGP。内核包页检查覆盖 Alpine virt/lts、Debian cloud/generic、Arch lts、Gentoo kernel-bin，最终均返回 200；Debian generic 首次 503，有界重试成功。网页可达不替代包签名/摘要。
 
 ## 保留 Shell 基线中的待替换问题
 
@@ -63,4 +59,4 @@ Shell 文件为行为对拍基线，本轮不修改或实际运行其安装入�
 - Gentoo stage3 当前下载后直接解压，没有消费对应 DIGESTS/签名。最终实现必须先验证可信签名和完整 stage3 摘要。
 - 旧 `test_url` 的可达性/格式检查不是密码学验证；Rust 稳定版文本解析本身也不是签名验证。
 
-这些问题尚不能因裁剪基线、解析 sidecar 或只读在线审计而宣称修复。只有完整安装链路实际使用上述信任检查并通过验收后，才可删除旧实现。
+这些是保留 Shell 的已知问题，不可复制到 Rust。解析或只读审计不能证明修复，完整信任链与安装须独立验收。
