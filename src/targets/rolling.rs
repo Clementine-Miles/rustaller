@@ -6,13 +6,10 @@
 //! Portage verifies repository and binary-package signatures independently.
 use super::install::VerifiedStage3;
 use crate::command::{CommandError, CommandRunner, CommandSpec, OutputMode, run_checked};
-use crate::fsutil::atomic_replace;
 use crate::host::sources::{ALPINE_ARCHIVE, ARCH_MIRROR};
 use crate::model::{BootMode, PlanError, Target};
 use crate::shared::configure::{ConfigurationError, validate_root};
-use crate::shared::dns::{
-    ensure_parent, read_config, replace_managed_block, validate_planned_file,
-};
+use crate::shared::dns::{read_config, replace_managed_block, validate_planned_file};
 use crate::targets::packages;
 use crate::targets::packages::arch_policy;
 use crate::worker::live::ValidatedLivePlan;
@@ -508,24 +505,16 @@ fn write_target(root: &Path, name: &str, bytes: &[u8]) -> Result<(), RollingErro
     write_file(&root.join(name), bytes)
 }
 fn write_file(path: &Path, bytes: &[u8]) -> Result<(), RollingError> {
-    validate_planned_file(path)?;
-    ensure_parent(path)?;
-    atomic_replace(path, bytes, 0o644)?;
-    Ok(())
+    crate::shared::dns::write_config(path, bytes, 0o644)
 }
 fn command<I, S>(program: &str, args: I, phase: &str) -> CommandSpec
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    crate::command::live_command(program, args, phase)
-        .env(
-            "PATH",
-            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        )
+    crate::command::target_command(program, args, phase)
         .env("LANG", "C.UTF-8")
         .env("TERM", "dumb")
-        .env("SYSTEMD_OFFLINE", "1")
 }
 fn checked<R, I, S>(runner: &mut R, program: &str, args: I, phase: &str) -> Result<(), RollingError>
 where
@@ -573,18 +562,8 @@ where
     let command = chroot_command(root, args, phase)
         .env("LC_ALL", "C")
         .stdout_mode(OutputMode::Capture);
-    let output = runner.run(&command).map_err(|error| CommandError::Start {
-        program: command.program.clone(),
-        error,
-    })?;
-    if output.status != Some(0) {
-        return Err(CommandError::Failed {
-            program: command.program,
-            status: output.status,
-        }
-        .into());
-    }
-    String::from_utf8(output.stdout)
+    let bytes = crate::command::capture_checked(runner, &command)?;
+    String::from_utf8(bytes)
         .map_err(|_| RollingError::InvalidInput("native profile output encoding"))
 }
 

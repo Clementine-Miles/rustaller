@@ -1,8 +1,6 @@
 //! Identity-bound Alpine Live entry. Never call this on the source host.
 //! There is exactly one final reboot, and only after a verified target install.
-use crate::command::{
-    CommandError, CommandInput, CommandRunner, CommandSpec, OutputMode, run_checked,
-};
+use crate::command::{CommandError, CommandRunner, CommandSpec, OutputMode, run_checked};
 use crate::deployment::{DeploymentError, DeploymentManifest, DiskIdentity, read_manifest};
 use crate::host::handoff::read_disk_identity;
 use crate::model::Target;
@@ -601,13 +599,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    CommandSpec::new(program, args)
-        .phase(phase)
-        .cwd("/")
-        .stdin(CommandInput::Null)
-        .stdout_mode(OutputMode::Stream)
-        .stderr_mode(OutputMode::Stream)
-        .env("LC_ALL", "C")
+    crate::command::live_command(program, args, phase).env("LC_ALL", "C")
 }
 fn capture<R, I, S>(
     runner: &mut R,
@@ -621,18 +613,8 @@ where
     S: AsRef<OsStr>,
 {
     let spec = command(program, args, phase).stdout_mode(OutputMode::Capture);
-    let output = runner.run(&spec).map_err(|error| CommandError::Start {
-        program: spec.program.clone(),
-        error,
-    })?;
-    if output.status != Some(0) {
-        return Err(CommandError::Failed {
-            program: spec.program,
-            status: output.status,
-        }
-        .into());
-    }
-    String::from_utf8(output.stdout)
+    let bytes = crate::command::capture_checked(runner, &spec)?;
+    String::from_utf8(bytes)
         .map_err(|_| LiveInstallError::Invalid("native inventory output is not UTF-8"))
 }
 fn program_exists(name: &str) -> bool {

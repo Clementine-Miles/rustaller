@@ -1485,22 +1485,11 @@ fn capture<R: CommandRunner>(
         .clone()
         .stdout_mode(OutputMode::Capture)
         .stderr_mode(OutputMode::Capture);
-    let output = runner.run(&command).map_err(|error| CommandError::Start {
-        program: command.program.clone(),
-        error,
-    })?;
-    if output.status != Some(0) {
-        return Err(CommandError::Failed {
-            program: command.program,
-            status: output.status,
-        }
-        .into());
-    }
-    if output.stdout.len() > MAX_TEXT {
+    let bytes = crate::command::capture_checked(runner, &command)?;
+    if bytes.len() > MAX_TEXT {
         return Err(HandoffError::Invalid("oversized command output"));
     }
-    String::from_utf8(output.stdout)
-        .map_err(|_| HandoffError::Invalid("command returned invalid UTF-8"))
+    String::from_utf8(bytes).map_err(|_| HandoffError::Invalid("command returned invalid UTF-8"))
 }
 struct CheckedPipelines<'a, R>(&'a mut R);
 impl<R: CommandRunner> CommandRunner for CheckedPipelines<'_, R> {

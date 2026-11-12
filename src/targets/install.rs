@@ -2072,25 +2072,16 @@ fn write_target_hosts(root: &Path, hostname: &str) -> Result<(), InstallError> {
     )
 }
 fn write_target(root: &Path, name: &str, bytes: &[u8], mode: u32) -> Result<(), InstallError> {
-    let path = root.join(name);
-    validate_planned_file(&path)?;
-    ensure_parent(&path)?;
-    atomic_replace(&path, bytes, mode)?;
-    Ok(())
+    crate::shared::dns::write_config(&root.join(name), bytes, mode)
 }
 pub(crate) fn command<I, S>(program: &str, args: I, phase: &str) -> CommandSpec
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    crate::command::live_command(program, args, phase)
-        .env(
-            "PATH",
-            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        )
+    crate::command::target_command(program, args, phase)
         .env("LC_ALL", "C")
         .env("DEBIAN_FRONTEND", "noninteractive")
-        .env("SYSTEMD_OFFLINE", "1")
 }
 pub(crate) fn checked<R, I, S>(
     runner: &mut R,
@@ -2110,20 +2101,8 @@ pub(crate) fn capture<R: CommandRunner>(
     runner: &mut R,
     spec: &CommandSpec,
 ) -> Result<String, InstallError> {
-    let output = runner
-        .run(&spec.clone().stdout_mode(OutputMode::Capture))
-        .map_err(|error| CommandError::Start {
-            program: spec.program.clone(),
-            error,
-        })?;
-    if output.status != Some(0) {
-        return Err(CommandError::Failed {
-            program: spec.program.clone(),
-            status: output.status,
-        }
-        .into());
-    }
-    String::from_utf8(output.stdout)
+    let bytes = crate::command::capture_checked(runner, spec)?;
+    String::from_utf8(bytes)
         .map_err(|_| InstallError::Invalid("native command returned invalid UTF-8"))
 }
 fn chroot_command<I, S>(root: &Path, args: I, phase: &str) -> CommandSpec

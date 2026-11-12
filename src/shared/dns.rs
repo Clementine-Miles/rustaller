@@ -104,6 +104,18 @@ pub(crate) fn publish_files(files: Vec<ConfigFile>) -> Result<(), ConfigurationE
     Ok(())
 }
 
+/// Validate a target destination before creating parents and publishing bytes.
+/// Batch publishers keep their separate validate-all-before-write phase.
+pub(crate) fn write_config<E>(path: &Path, contents: &[u8], mode: u32) -> Result<(), E>
+where
+    E: From<ConfigurationError> + From<io::Error>,
+{
+    validate_planned_file(path)?;
+    ensure_parent(path)?;
+    atomic_replace(path, contents, mode)?;
+    Ok(())
+}
+
 /// Missing future directories are allowed; existing ancestors may not be links.
 pub(crate) fn validate_planned_file(path: &Path) -> Result<(), ConfigurationError> {
     validate_planned_parent(path)?;
@@ -111,24 +123,14 @@ pub(crate) fn validate_planned_file(path: &Path) -> Result<(), ConfigurationErro
 }
 
 pub(crate) fn validate_planned_parent(path: &Path) -> Result<(), ConfigurationError> {
-    let mut prefix = PathBuf::new();
-    for component in path
-        .parent()
-        .ok_or(ConfigurationError::UnsafePath)?
-        .components()
-    {
-        prefix.push(component);
-        match fs::symlink_metadata(&prefix) {
-            Ok(metadata) if metadata.file_type().is_dir() => {}
-            Ok(_) => return Err(ConfigurationError::UnsafePath),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
-    Ok(())
+    walk_parents(path, false)
 }
 
 pub(crate) fn ensure_parent(path: &Path) -> Result<(), ConfigurationError> {
+    walk_parents(path, true)
+}
+
+fn walk_parents(path: &Path, create_missing: bool) -> Result<(), ConfigurationError> {
     let mut prefix = PathBuf::new();
     for component in path
         .parent()
@@ -139,7 +141,11 @@ pub(crate) fn ensure_parent(path: &Path) -> Result<(), ConfigurationError> {
         match fs::symlink_metadata(&prefix) {
             Ok(metadata) if metadata.file_type().is_dir() => {}
             Ok(_) => return Err(ConfigurationError::UnsafePath),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => fs::create_dir(&prefix)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                if create_missing {
+                    fs::create_dir(&prefix)?;
+                }
+            }
             Err(error) => return Err(error.into()),
         }
     }

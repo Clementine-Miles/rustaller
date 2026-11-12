@@ -69,6 +69,33 @@ CLI 和 TUI 共用模型与安装回调；TUI 不重复安装流程。多级目�
 
 公共 Live 命令默认 cwd=/、stdin=null、输出继承；targets 仍保留各自 locale、PATH、非交互环境及错误/重试语义，避免“合并”改变原生工具行为。
 
+## 相似代码的归并（2026-11-12）
+
+初次整理按用户要求仅审阅源码；随后经用户授权完成验证：cargo xtask check 通过（278 项 workspace 测试、49 项 Shell 对拍测试、Rustfmt、Clippy、ShellCheck、Bash/ash 语法及 diff 检查），cargo xtask bundle 完成静态 musl host/worker 构建及精确嵌入匹配校验，两个入口的 --help 冒烟测试通过。没有新增 BIOS/UEFI 完整安装验收证据。
+
+| 公共入口 | 合并的职责 | 调用方继续负责 |
+|---|---|---|
+| command::checked_output | 启动命令、要求退出码为零、构造统一命令错误 | 阶段名、argv、环境、工作目录及 I/O 策略 |
+| command::run_checked / capture_checked | 分别执行并检查、捕获 stdout 并检查；复用同一状态检查 | UTF-8 解码、领域错误及输出长度限制 |
+| command::target_command | 两套目标适配器共同的 Live 默认值、PATH 和 SYSTEMD_OFFLINE | install 的 LC_ALL/DEBIAN_FRONTEND；rolling 的 LANG/TERM |
+| shared::dns::write_config | 检查目标路径、准备父目录、按指定权限原子写入 | 目标 root 的隔离校验、配置内容、目标发行版和权限选择 |
+| shared::dns::walk_parents | 检查每级祖先是否为真实目录；按入口决定是否创建缺失目录 | validate_planned_parent 保持只检查，ensure_parent 允许创建 |
+
+host/handoff、worker/install、targets/install、targets/rolling 和 shared/swapfile 共用 capture_checked。host 的输出大小限制、各模块的解码错误、stderr 捕获或继承策略均留在调用方。worker/install 的命令默认值复用 live_command，并继续指定 LC_ALL=C。
+
+目标文件写入逻辑暂沿用 dns 模块现有的路径检查设施，不新增跨层工具模块。批量 DNS/网络配置继续先准备并校验整批文件，再发布；没有把逐文件检查写入套进批量发布，从而改变失败前的修改范围。
+
+若干代码看似相似，但语义不同，继续分开：UUID 校验有宽松/长度受限/规范 36 字符三种；Gentoo 元数据解析与实际安装的签名认证职责不同；Debian 与公共 fstab 模板的注释、ESP 路径和 fsck pass 值不同。安装阶段的磁盘、内存和挂载复验也是有意设置的安全边界，不属于应删除的重复代码。
+
+## 作用原理与阅读顺序
+
+1. 从 bin/rustaller.rs 开始：CLI 与 TUI 最终生成同一 InstallPlan，进入同一安装回调。model/config/postinstall 定义允许的配置，codec 和 plan_file 负责跨环境传递及私密文件生命周期。
+2. 读 host/handoff.rs：discover 收集原系统事实并给出磁盘身份确认令牌；prepare 验证资源并组装私密 Live 环境；execute 再校验后委托原生 PID 1 有序退出并 kexec。kexec 直接切换运行内核，因此这一步不经过固件重启。
+3. 读 bin/rustaller-worker.rs 和 worker/install.rs：Live 入口验证自身来源，恢复网络/SSH；以 manifest 中的稳定身份重新寻找目标盘，检查 RAM、挂载、swap 和扇区后才建立分区。这里运行的 / 已是内存中的 Alpine，目标文件系统挂在 /os。
+4. 读 targets/install.rs，再读 debian/rolling/packages：公共驱动串联 prepare、bootstrap、configure 与最终验证；差异由 APK、debootstrap/APT、pacman 和 Gentoo stage3/Portage 等原生工具实现。Rust 控制参数和顺序，不自行实现这些发行版的包管理器。
+5. 读 shared：storage 负责布局/格式化/挂载，configure/dns/network/swapfile 负责受检目标目录内的持久配置。目标验证成功、卸载并 sync 后才请求最终重启；失败时保留 Live 恢复环境。
+6. 当前系统编辑走 host/current.rs 的备份与文件发布流程，与自动清盘独立；TUI 仅负责草稿、字段编辑和结果展示。xtask、测试与 Shell 对拍属于开发工具，保留的 Shell 实现也不由 Rust 自动安装入口调用。
+
 ## 不可破坏的约束
 
 - 核心无第三方运行时依赖；ratatui/crossterm 仅 host 可选 tui feature。worker 用 --no-default-features。

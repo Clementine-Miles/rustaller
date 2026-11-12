@@ -215,16 +215,6 @@ fn capture<R: CommandRunner>(runner: &mut R, spec: &CommandSpec) -> Result<Strin
         .stdin(CommandInput::Null)
         .stdout_mode(OutputMode::Capture)
         .stderr_mode(OutputMode::Capture);
-    let output = runner.run(&spec).map_err(|error| CommandError::Start {
-        program: spec.program.clone(),
-        error,
-    })?;
-    if output.status != Some(0) {
-        return Err(CommandError::Failed {
-            program: spec.program,
-            status: output.status,
-        }
-        .into());
-    }
-    String::from_utf8(output.stdout).map_err(|_| SwapfileError::InvalidInventory)
+    let bytes = crate::command::capture_checked(runner, &spec)?;
+    String::from_utf8(bytes).map_err(|_| SwapfileError::InvalidInventory)
 }

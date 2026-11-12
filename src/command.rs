@@ -20,6 +20,21 @@ where
         .stderr_mode(OutputMode::Stream)
 }
 
+/// Target adapters share tool lookup and offline service policy; each adapter
+/// still selects its own locale and package-manager environment.
+pub(crate) fn target_command<I, S>(program: &str, args: I, phase: &str) -> CommandSpec
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    live_command(program, args, phase)
+        .env(
+            "PATH",
+            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        )
+        .env("SYSTEMD_OFFLINE", "1")
+}
+
 #[derive(Clone, Eq, PartialEq)]
 pub enum CommandInput {
     Inherit,
@@ -212,12 +227,30 @@ pub fn run_checked<R: CommandRunner>(
     runner: &mut R,
     command: &CommandSpec,
 ) -> Result<(), CommandError> {
+    checked_output(runner, command).map(|_| ())
+}
+
+/// Capture stdout after a successful command. Stderr, stdin, environment and
+/// working directory retain the caller's policy; decoding and bounds belong to
+/// the domain that consumes the bytes.
+pub(crate) fn capture_checked<R: CommandRunner>(
+    runner: &mut R,
+    command: &CommandSpec,
+) -> Result<Vec<u8>, CommandError> {
+    checked_output(runner, &command.clone().stdout_mode(OutputMode::Capture))
+        .map(|output| output.stdout)
+}
+
+fn checked_output<R: CommandRunner>(
+    runner: &mut R,
+    command: &CommandSpec,
+) -> Result<CommandOutput, CommandError> {
     let output = runner.run(command).map_err(|error| CommandError::Start {
         program: command.program.clone(),
         error,
     })?;
     if output.status == Some(0) {
-        Ok(())
+        Ok(output)
     } else {
         Err(CommandError::Failed {
             program: command.program.clone(),
