@@ -1,0 +1,16 @@
+PASS: reservation exclusion; apply/rollback; idempotent rollback
+PASS: failure after write uses durable INTENT inverse
+PASS: conflicting administrator state is preserved; explicit retry works
+PASS: failed inverse remains retryable and never reports restored
+PASS: matching hashes do not bypass failed restore postconditions
+PASS: staged policy, second fresh proof, no locks while reading proof
+PASS: expired transaction never mutates a resource
+PASS: modified durable plan is refused
+PASS: concurrent administrators produce exactly one reservation winner
+PASS: failed preparation releases only its own reservation metadata
+PASS: canonical target ownership defeats alternate resource labels
+PASS: equal restore priorities preserve reverse stage order
+PASS: inverse retry reconciles runtime even when file already matches before
+PASS: input expected versions are validated rather than silently rebased
+PASS: only a successful pinned adapter predicate authorizes a known kernel reset
+PASS: symlink and FIFO lock paths are refused before redirection

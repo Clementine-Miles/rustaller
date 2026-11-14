@@ -1,0 +1,7 @@
+dmitbox: pool: duplicate-address detection failed
+dmitbox: pool: DAD did not reach a preferred state within the bound
+dmitbox: pool: external verifier did not return complete matching reachability evidence
+dmitbox: pool: external verifier did not return complete matching reachability evidence
+dmitbox: pool: explicit external_probes:true and count 1..16 are required
+PASS: pool mock lifecycle, independent idempotent restore, partial native failure, DAD failure/timeout, blocked probes, ownership conflict, verifier integrity and strict prefix validation
+UNVERIFIED: real remote verifier honesty/reachability, native DAD and reboot recovery

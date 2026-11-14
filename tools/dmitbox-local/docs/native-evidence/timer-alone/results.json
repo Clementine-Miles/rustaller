@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "classification": "minimal systemd timer-alone fixture under QEMU TCG; no full distro or network-access claim",
+  "artifact_sha256": "7cb505a6b2921170cf135cb397078836585fb25d7bce5e8d353da4f6f25c5544",
+  "artifact_unchanged": true,
+  "status": "PASS",
+  "qemu_exit_code": 0,
+  "markers": {
+    "APPLY_RC=0 resource=after": true,
+    "DMITBOX_TIMER_WATCHER_PAUSED_PASS": true,
+    "DMITBOX_VM_CLOCK_CHANGE_PASS": true,
+    "DMITBOX_SYSTEMD_DEADLINE_PASS": true
+  },
+  "assertions": [
+    "armed public CLI file transaction reached intended after bytes",
+    "polling watcher MainPID deliberately SIGSTOPped",
+    "guest wall clock moved forwards and backwards",
+    "independent monotonic timer restored original file bytes and ROLLED_BACK state"
+  ]
+}

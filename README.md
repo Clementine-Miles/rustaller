@@ -144,3 +144,15 @@ shellcheck --severity=warning --shell=sh tests/fixtures/fix-eth-name-openrc.init
 Shell 测试仅做语法检查、隔离调用、临时目录 mock 和上游逐字节对拍，仅允许入口 `--help`。`TEST_BASH`、`TEST_BUSYBOX` 可指定工具路径；须保留固定上游 Git 对象。完整检查用 `cargo xtask check`，破坏性验收仅在可丢弃 QEMU 客体进行。
 
 静态测试不证明安装成功。四目标 BIOS/UEFI 全流程仍待验收；开发续接见[指南](docs/AGENT-HANDOFF.md)，改动记录见[裁剪](docs/TRIMMING.md)、[重构](docs/REFACTOR.md)和[历史](docs/HISTORY.md)。
+
+## 本机管理工具
+
+仓库集成了独立的 [DMITBox 本机管理组件](tools/dmitbox-local/README.md)，提供受事务保护的 SSH/nftables、DNS、MTU、静态 IPv6、TCP 与新建 Swap 管理。它保持单文件 Bash 分发，使用独立状态目录，不由重装流程自动执行。
+
+```console
+cargo xtask local-tool build
+bash tools/dmitbox-local/dist/dmitbox-local.sh --help
+cargo xtask local-tool check
+```
+
+修改现有系统前须按[配置说明](tools/dmitbox-local/docs/CONFIGURATION.md)登记资源所有权和恢复后端。该组件仍是开发候选：[原生恢复证据](tools/dmitbox-local/docs/NATIVE-EVIDENCE.md)已包含重启与定时恢复；[完整发行版矩阵及随机/外部 NAT66 验证](tools/dmitbox-local/docs/LIMITATIONS.md)尚未完成。

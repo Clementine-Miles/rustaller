@@ -1,0 +1,5 @@
+dmitbox: Existing precedence policy has independent ownership
+dmitbox: Existing precedence policy has independent ownership
+dmitbox: No unique verified committed gai restore point
+dmitbox: Generic filesystem mutation requires a supported purpose and its exact owned path
+PASS: gai planning, real ACL/xattrs, apply/readback, no-op reapply, audited inverse, foreign/malformed-policy refusal

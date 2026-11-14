@@ -1,0 +1,113 @@
+{
+  "schema": 1,
+  "classification": "minimal systemd native OpenSSH fixture using QEMU TCG; confirmation primitives only",
+  "source_sha256": {
+    "src/filesystem.sh": "f52aea5dd781a1bdde5be1f7e1a7c78765afe8dcf1c79787bded2440efc7273f",
+    "src/core.sh": "126e0088905469648816b437de73a43da9abed815259dab6c6da95f0ceec7a67",
+    "src/main.sh": "00625b2dcddfc30e748e5ed824bf8b4c2d929b428029562ca4a203da89ae050e",
+    "src/confirmation.sh": "fdc7397bd3469d859a4775cc20070d6d9a4ebffcf3c3a19059187cda0aa429e3",
+    "src/transaction.sh": "110521def83ec1a95c63ec5119388a0369f5692a53b4d3f040122e71e4e82366",
+    "src/gai.sh": "b1198c96ec7e12b1489a1eb49ca02ca50fab214ad2a0e0a1885cd6f32e9761ba",
+    "src/validation.sh": "d932d06c9666d3d585d7535d7a41ad759a8131251d8deea63ebd94ca99ca21a1",
+    "src/adapters/runtime.sh": "734acd046ba7263848fb36faea2aa55567bfa006cd00d17ee0012c8b79416f03",
+    "src/adapters/ipv6.sh": "e27ef47f8a728d904a382bb78d4361955bedd867174b04a9c4e478c3ecc44111",
+    "src/adapters/pool.sh": "892d32fcd7996dd22e876cd5b80c7f1f16c577973bb0041362a4d794930cca45",
+    "src/adapters/nft.sh": "857d80789da344d51a08dc652248827caf7b3613344185488221c7914fe1cfd4",
+    "src/adapters/nat66.sh": "44c2a8cc3f23428c2dd08dc498f92823dfb26e7f3398ab948ca016c2396f8ee2",
+    "src/adapters/routing.sh": "5490485f6b577f611899f9559c9baff2dcce434819f1a489e966172d6049ef6a",
+    "src/adapters/dns.sh": "dc7e94940ae4f3542b1bb4cae7658cc71841b0cb6f30af61757108f0cb8c9b1f",
+    "src/adapters/ssh.sh": "c3fbf041d379d9be33b64319565204062e0bed175d42f38224fdd53bff8c4168",
+    "src/recovery/supervisor.sh": "35cc5709474d8e7800eecf2ad197dca7938a51ff5656c03b9f261f1238b948b6"
+  },
+  "results": [
+    {
+      "case": "real-native-sshd-socket-proof",
+      "pass": true,
+      "proof": {
+        "boot_id": "3b01d012-e226-42a9-b617-a4ce019279ed",
+        "cgroup": "/system.slice/ssh-fixture.service",
+        "exe": "/usr/lib/openssh/sshd-session",
+        "kind": "ssh",
+        "local_address": "10.0.2.15",
+        "local_port": 2222,
+        "login_uid": 0,
+        "login_user": "root",
+        "peer_address": "10.0.2.2",
+        "peer_port": 45754,
+        "pid": 167,
+        "socket_inode": "613",
+        "start_ticks": "871"
+      }
+    },
+    {
+      "case": "older-different-transport-kernel-proof",
+      "pass": true,
+      "proof": {
+        "boot_id": "3b01d012-e226-42a9-b617-a4ce019279ed",
+        "cgroup": "/system.slice/ssh-fixture.service",
+        "exe": "/usr/lib/openssh/sshd-session",
+        "kind": "ssh",
+        "local_address": "10.0.2.15",
+        "local_port": 2222,
+        "login_uid": 0,
+        "login_user": "root",
+        "peer_address": "10.0.2.2",
+        "peer_port": 45768,
+        "pid": 170,
+        "socket_inode": "635",
+        "start_ticks": "896"
+      }
+    },
+    {
+      "case": "same-transport-rejected",
+      "pass": true,
+      "exit_code": 1,
+      "stderr": "",
+      "output": "Confirmation: connection predates the latest applied policy; open a new SSH TCP connection\n"
+    },
+    {
+      "case": "older-different-transport-rejected",
+      "pass": true,
+      "exit_code": 1,
+      "stderr": "",
+      "output": "Confirmation: connection predates the latest applied policy; open a new SSH TCP connection\n"
+    },
+    {
+      "case": "fresh-output-readback",
+      "pass": true,
+      "output": "[test challenge redacted]\nEnter the one-use confirmation challenge: \n{\"generation\":1,\"mode\":\"ssh\",\"remote_access_verified\":true,\"schema\":1,\"transaction_id\":\"tx-00000000000000000000000000000000\",\"transport\":{\"boot_id\":\"3b01d012-e226-42a9-b617-a4ce019279ed\",\"cgroup\":\"/system.slice/ssh-fixture.service\",\"exe\":\"/usr/lib/openssh/sshd-session\",\"kind\":\"ssh\",\"local_address\":\"10.0.2.15\",\"local_port\":2222,\"login_uid\":0,\"login_user\":\"root\",\"peer_address\":\"10.0.2.2\",\"peer_port\":41584,\"pid\":741,\"socket_inode\":\"1701\",\"start_ticks\":\"1738\"},\"transport_id\":\"3723f48ffad0abea8f87fd3d426be0babd14844b191f7731abfde46e01f47412\"}\n"
+    },
+    {
+      "case": "fresh-authentication-challenge-confirmed",
+      "pass": true,
+      "proof": {
+        "generation": 1,
+        "mode": "ssh",
+        "remote_access_verified": true,
+        "schema": 1,
+        "transaction_id": "tx-00000000000000000000000000000000",
+        "transport": {
+          "boot_id": "3b01d012-e226-42a9-b617-a4ce019279ed",
+          "cgroup": "/system.slice/ssh-fixture.service",
+          "exe": "/usr/lib/openssh/sshd-session",
+          "kind": "ssh",
+          "local_address": "10.0.2.15",
+          "local_port": 2222,
+          "login_uid": 0,
+          "login_user": "root",
+          "peer_address": "10.0.2.2",
+          "peer_port": 41584,
+          "pid": 741,
+          "socket_inode": "1701",
+          "start_ticks": "1738"
+        },
+        "transport_id": "3723f48ffad0abea8f87fd3d426be0babd14844b191f7731abfde46e01f47412"
+      }
+    },
+    {
+      "case": "authenticated-account-missing-from-enrollment-rejected",
+      "pass": true,
+      "exit_code": 1
+    }
+  ]
+}

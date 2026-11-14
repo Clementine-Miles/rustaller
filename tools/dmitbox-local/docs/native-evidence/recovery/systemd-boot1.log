@@ -1,0 +1,38 @@
+c[?7l[2J[0mSeaBIOS (version 1.16.3-debian-1.16.3-2)
+Booting from ROM..c[?7l[2Jbrw-------    1 root     root      254,   0 Nov 14 05:46 /dev/vda
+major minor  #blocks  name
+
+ 254        0     262144 vda
+[    2.077240] evm: HMAC attrs: 0x1
+[    2.185566] RAS: Correctable Errors collector initialized.
+[    2.285000] clk: Disabling unused clocks
+[    2.285272] PM: genpd: Disabling unused power domains
+[    2.292917] tsc: Refined TSC clocksource calibration: 2596.141 MHz
+[    2.293293] clocksource: tsc: mask: 0xffffffffffffffff max_cycles: 0x256bfea584d, max_idle_ns: 440795253219 ns
+[    2.293420] clocksource: Switched to clocksource tsc
+[    2.340777] Freeing unused decrypted memory: 2028K
+[    2.415519] Freeing unused kernel image (initmem) memory: 4172K
+[    2.508869] Write protecting the kernel read-only data: 28672k
+[    2.510325] Freeing unused kernel image (rodata/data gap) memory: 460K
+[    2.651428] x86/mm: Checked W+X mappings: passed, no W+X pages found.
+[    2.771538] Run /init as init process
+[    2.771864]   with arguments:
+[    2.771980]     /init
+[    2.772196]   with environment:
+[    2.772218]     HOME=/
+[    2.772309]     TERM=linux
+[    2.929206] virtio_blk virtio0: 1/0/0 default/read/poll queues
+[    2.941552] virtio_blk virtio0: [vda] 524288 512-byte logical blocks (268 MB/256 MiB)
+[    5.640636] systemd[1]: Failed to initialize kmod context: Operation not supported
+[!p]104[?7hBOOT_FIXTURE_START pid1=systemd boot=085e0820-9315-495d-b2cb-960370083fa1
+cat: write error: No space left on device
+DMITBOX_VM_ENOSPC_PASS
+mktemp: failed to create file via template '/mnt/readonly/.dmitbox-write.XXXXXXXXXXXX': Read-only file system
+DMITBOX_VM_READONLY_PASS
+
+One-use confirmation challenge (keep private): [REDACTED]
+[0;1;31mFailed to execute /usr/bin/systemd-tty-ask-password-agent: No such file or directory[0m
+
+APPLY_RC=0 resource=after
+DMITBOX_SYSTEMD_FORCED_REBOOT
+[   61.579696] sysrq: Resetting

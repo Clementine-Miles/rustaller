@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "classification": "minimal native systemd and OpenRC fixtures; not full distribution images",
+  "acceleration": "QEMU TCG, no KVM claim",
+  "network": "no guest NIC; serial console only",
+  "artifact_sha256": "7cb505a6b2921170cf135cb397078836585fb25d7bce5e8d353da4f6f25c5544",
+  "inputs": {
+    "/workspace/dmitbox-local/dist/dmitbox-local.sh": "7cb505a6b2921170cf135cb397078836585fb25d7bce5e8d353da4f6f25c5544",
+    "/workspace/scratch/review-tools/usr/bin/busybox": "7ae95c260622412ceba6eb9f45d68f616cdc091a1d71d6c0a08b5875bb2c31dd",
+    "/workspace/dmitbox-local/.cache/vm-validation/alpine-root/bin/bash": "2a701ecc70c238273c07320611df51b9ad5345483a6782195070aa1b92030f62",
+    "/workspace/dmitbox-local/.cache/vm-validation/alpine-root/sbin/openrc": "98f66d34d62c0bb357e5b97ab7a72204870afb2d3e63a7be5d925eea4c77a18b",
+    "/workspace/dmitbox-local/.cache/vm-validation/tools/usr/bin/qemu-system-x86_64": "d3c1a558ad220e77a4412048c8d96b44f8c2b41c7ad2a4ecfe522a4b122fe067",
+    "/workspace/dmitbox-local/.cache/vm-validation/tools/boot/vmlinuz-6.12.107+deb13-amd64": "2b2358b37674d2505350528875bb17afae2a36522a9e8a9417eaca65a7da0e08",
+    "/workspace/dmitbox-local/.cache/vm-validation/tools/usr/sbin/mke2fs": "14d64b707e37214aff4568470bb4d908232370684c7eff05465d78116c2c9c67",
+    "/workspace/dmitbox-local/.cache/vm-validation/tools/usr/share/seabios/bios-256k.bin": "fc6d2ea888862e6b26d53fb877ab712324726eb8f44eb6baf076c64a31f1c3fb"
+  },
+  "limitations": [
+    "No full Debian/Arch/Alpine manager matrix",
+    "No external SSH or IPv6 reachability proof from this fixture",
+    "No TCP/BBR performance or kernel Swap validation"
+  ]
+}

@@ -1,0 +1,3 @@
+
+# Imported, byte-verified component retains its original whitespace and notices.
+tools/dmitbox-local/** -whitespace

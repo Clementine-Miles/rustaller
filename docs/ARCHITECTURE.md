@@ -119,3 +119,7 @@ Shell 兼容标记仍为 PERSONAL-LINUX-ONLY-20261119-04；Rust 的新标记和 
 Shell 部署除 reinstall.sh 外仍恰好四个资源：trans.sh、initrd-network.sh、fix-eth-name.sh、logviewer.html。TTY/frpc helpers 和服务模板已内联；资源必须来自用户控制的匹配 HTTPS 部署。Rust 内嵌 worker 与日志页面，不套用这条四文件部署规则。
 
 Rust 手动 ISO/netboot.xyz/reset 目前有菜单/模型/部分组件，实际交接未连接。保留代码不等于功能已交付；完整待办见续接指南。
+
+## 独立本机管理组件
+
+`tools/dmitbox-local` 保留模块化开发、单文件 Bash 分发及独立事务状态。`xtask::local_tool` 用 Rust 完成仓库级构建和检查入口，生成字节与原组件构建结果一致。安装器、Live worker、四项 Shell 运行时资产均不自动调用该工具；它的完整发行版/网络验收单独记录。

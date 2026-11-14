@@ -1,0 +1,4 @@
+dmitbox: Writable protected ancestor: /tmp
+dmitbox: Writable protected ancestor: /tmp
+dmitbox: Only regular files with one hard link are supported
+PASS real ACL/xattr/content restoration, conflicts, hardlinks, idempotence

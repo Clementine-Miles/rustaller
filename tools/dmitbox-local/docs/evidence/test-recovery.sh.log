@@ -1,0 +1,15 @@
+PASS: pinned guarded adapter executes in recorded independent process group
+PASS: forced actor termination; orphan cancellation; independent inverse
+PASS: monotonic expiration cancels an in-flight mutator before inverse
+dmitbox recovery: Pinned recovery worker changed: tx-66b3ec25f6fffd706ce4e447d01fd8d8
+PASS: tampered pinned worker is refused
+PASS: service presence/stale ready file does not establish armed recovery
+PASS: systemd monotonic deadline and OpenRC supervise-daemon renderings
+UNVERIFIED: real systemd/OpenRC boot ordering, guest reboot, filesystem I/O faults
+PASS: boot cleans constructor interruption and PREPARED without worker
+PASS: ARMED with missing pinned recovery worker fails closed at boot
+dmitbox recovery: Unenrolled recovery file already exists: /tmp/tmp.PAi1tIesVO/owned-recovery-unit
+dmitbox recovery: Recovery file changed outside its ownership record: /tmp/tmp.PAi1tIesVO/owned-recovery-unit
+dmitbox recovery: Preserving externally modified recovery file: /tmp/tmp.PAi1tIesVO/owned-recovery-unit
+PASS: recovery-file ownership, interrupted publication, foreign edits and idempotent cleanup
+PASS: simultaneous recovery publications retain both ownership records

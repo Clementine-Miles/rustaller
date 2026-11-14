@@ -1,0 +1,25 @@
+name: Bash checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  static-and-unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install development dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends bash jq shellcheck acl attr iproute2 util-linux python3
+      - name: Build standalone artifact
+        run: python3 build/build.py
+      - name: Check generated artifact is current
+        run: git diff --exit-code -- dist/dmitbox-local.sh dist/SHA256SUMS
+      - name: Run syntax, static analysis and unit tests
+        run: bash tests/run.sh

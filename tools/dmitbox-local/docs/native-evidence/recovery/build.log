@@ -1,0 +1,2 @@
+Built 35627596 bytes uncompressed, modules ['virtio_blk', 'crc32c_generic', 'jbd2', 'crc16', 'mbcache', 'ext4']
+Built OpenRC initramfs 32371020 bytes

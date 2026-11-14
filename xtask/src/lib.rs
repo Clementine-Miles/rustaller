@@ -3,6 +3,7 @@ use std::fmt;
 pub mod bundle;
 pub mod check;
 pub mod dist;
+pub mod local_tool;
 pub mod sources;
 pub mod vm;
 

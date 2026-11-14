@@ -1,0 +1,2 @@
+IPv6 explicit selection and destructive-state fail-closed planning tests passed; no addressed-link recovery is claimed.
+Static IPv6 plan decomposition, address restoration order, multiple tables and unsupported-state rejection passed (mocks).

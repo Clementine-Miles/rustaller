@@ -1,0 +1,7 @@
+dist/*
+!dist/dmitbox-local.sh
+!dist/SHA256SUMS
+artifacts/
+.cache/
+__pycache__/
+*.pyc

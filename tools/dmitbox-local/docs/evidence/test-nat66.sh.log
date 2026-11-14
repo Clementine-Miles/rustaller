@@ -1,0 +1,1 @@
+PASS NAT66 typed map, explicit probes, fail-before-publication, independent inverse, retained flows/address guards, conflict and idempotence (mock tools)

@@ -36,6 +36,7 @@ The upstream comparison baseline is `98f1e21013233d42750cc2e7a298a0818461d686`.
 ## Development and safety
 
 - New orchestration/verification tools must be Rust; do not add Python/Node/Shell automation scripts.
+- User-authorized integration (2026-11-14): `tools/dmitbox-local` imports the existing standalone Bash project with its original development fixtures, build scripts and evidence. Preserve that imported component and its provenance; new rustaller integration uses Rust (`cargo xtask local-tool`). Never automatically apply its live-host mutations from installation, worker or TUI paths.
 - Never run `reinstall.sh`/`trans.sh` installation entry points on this device, real VPS disks or production hosts as a test.
 - Never partition/reboot or write NVRAM on the development host or real VPS disks. On 2026-10-26 the user explicitly requested BIOS/UEFI acceptance: guest-only partitioning, installation, kexec/reboot and disposable firmware-variable writes are authorized inside isolated disposable QEMU VMs. Keep per-run guest images/vars/logs under unique workspace scratch paths; never attach host block devices. Unit tests continue to use isolated mocks.
 - Compare preserved behavior against the recorded upstream commit byte-for-byte; retain that Git object.

@@ -1,0 +1,4 @@
+Fixture: external proof was not requested or established
+dmitbox: pool: duplicate-address detection failed
+PASS: native pool /128 creation, preferred DAD, protocol ownership, duplicate-DAD failure, independent idempotent removal and preservation of peer address
+UNVERIFIED: external verifier, upstream /64 routability, enrollment-owner discovery and reboot recovery

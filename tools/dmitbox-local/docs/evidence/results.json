@@ -1,0 +1,178 @@
+{
+  "schema": 1,
+  "generated_at": "2026-11-14T05:49:33Z",
+  "source_root": ".",
+  "failures": 0,
+  "skips": 2,
+  "strict_integration": true,
+  "results": [
+    {
+      "name": "syntax",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "syntax.log"
+    },
+    {
+      "name": "python-syntax",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "python-syntax.log"
+    },
+    {
+      "name": "shellcheck",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "shellcheck.log"
+    },
+    {
+      "name": "test-cli.sh",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "test-cli.sh.log"
+    },
+    {
+      "name": "test-confirmation.sh",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "test-confirmation.sh.log"
+    },
+    {
+      "name": "test-dns.sh",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "test-dns.sh.log"
+    },
+    {
+      "name": "test-filesystem.sh",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "test-filesystem.sh.log"
+    },
+    {
+      "name": "test-gai.sh",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "test-gai.sh.log"
+    },
+    {
+      "name": "test-ipv6.sh",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "test-ipv6.sh.log"
+    },
+    {
+      "name": "test-nat66.sh",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "test-nat66.sh.log"
+    },
+    {
+      "name": "test-nft.sh",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "test-nft.sh.log"
+    },
+    {
+      "name": "test-pool.sh",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "test-pool.sh.log"
+    },
+    {
+      "name": "test-recovery.sh",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "test-recovery.sh.log"
+    },
+    {
+      "name": "test-routing.sh",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "test-routing.sh.log"
+    },
+    {
+      "name": "test-runtime.sh",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "test-runtime.sh.log"
+    },
+    {
+      "name": "test-ssh.sh",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "test-ssh.sh.log"
+    },
+    {
+      "name": "test-transaction.sh",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "test-transaction.sh.log"
+    },
+    {
+      "name": "test-validation.sh",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "test-validation.sh.log"
+    },
+    {
+      "name": "namespace-prerequisites",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "namespace-prerequisites.log"
+    },
+    {
+      "name": "network-adapters",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "network-adapters.log"
+    },
+    {
+      "name": "pool-adapter",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "pool-adapter.log"
+    },
+    {
+      "name": "ipv6-adapter",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "ipv6-adapter.log"
+    },
+    {
+      "name": "nat66-adapter",
+      "status": "SKIP",
+      "exit_code": 77,
+      "detail": "nat66-adapter.log"
+    },
+    {
+      "name": "nft-adapters",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "nft-adapters.log"
+    },
+    {
+      "name": "ssh-guest",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "ssh-guest.log"
+    },
+    {
+      "name": "guest-fixtures",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "guest-fixtures.log"
+    },
+    {
+      "name": "full-distro-matrix",
+      "status": "SKIP",
+      "exit_code": 77,
+      "detail": "Full Debian and Arch systemd plus Alpine OpenRC distribution/manager acceptance matrix remains unverified"
+    },
+    {
+      "name": "source-stability",
+      "status": "PASS",
+      "exit_code": 0,
+      "detail": "Source inputs remained unchanged during the run"
+    }
+  ]
+}

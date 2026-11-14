@@ -2,6 +2,10 @@
 
 先读根目录 `AGENTS.md`、[架构](ARCHITECTURE.md)与[验收记录](ACCEPTANCE.md)。本文列开发优先级，[历史](HISTORY.md)解释旧决策；无需依赖旧会话或未随源码提供的本地文件。
 
+## 本机管理组件
+
+2026-11-14 集成已有独立项目至 `tools/dmitbox-local`；仓库入口为 `cargo xtask local-tool build|check`（Rust 实现）。运行产物为单文件 Bash，保持独立状态和资源所有权验证，不自动挂入重装/TUI/Live。原组件的模块、开发夹具及验收证据一并保留；完整发行版与外部 NAT66 仍未验收。
+
 ## 当前状态
 
 - Linux x86_64，英文多级 TUI；四目标经认证的 Alpine Live 和 kexec 安装，最后只重启一次。已有真实清盘能力，四系统 BIOS/UEFI 完整验收尚未通过，保持开发预览。

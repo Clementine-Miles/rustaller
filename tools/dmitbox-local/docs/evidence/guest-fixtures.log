@@ -1,0 +1,4 @@
+PASS minimal systemd fixture
+PASS minimal openrc fixture
+Fixture evidence: /workspace/dmitbox-local/artifacts/guest-fixtures-20261114T054600Z-3bfoeoiw/results.json
+UNVERIFIED: full Debian/Arch/Alpine manager matrix, external reachability and KVM

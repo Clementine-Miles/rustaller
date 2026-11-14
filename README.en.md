@@ -117,3 +117,7 @@ shellcheck --severity=warning --shell=sh tests/fixtures/fix-eth-name-openrc.init
 Shell tests use syntax checks, isolated functions, temporary mocks and byte-for-byte upstream comparisons, executing only safe entry `--help`. Set `TEST_BASH`/`TEST_BUSYBOX` as needed and retain the pinned upstream Git object. `cargo xtask check` runs the full checks; destructive acceptance is restricted to disposable QEMU guests.
 
 Tests do not establish installation success. Four-target BIOS/UEFI acceptance remains pending. See the [handoff](docs/AGENT-HANDOFF.md), [trimming notes](docs/TRIMMING.md) and [history](docs/HISTORY.md).
+
+## Local administration component
+
+[DMITBox local](tools/dmitbox-local/README.md) is included as an independently invoked standalone Bash component. Build it with `cargo xtask local-tool build`, inspect `bash tools/dmitbox-local/dist/dmitbox-local.sh --help`, and run `cargo xtask local-tool check`. It is not automatically applied by the installer or worker. Review its [ownership prerequisites](tools/dmitbox-local/docs/CONFIGURATION.md), [native evidence](tools/dmitbox-local/docs/NATIVE-EVIDENCE.md) and [unverified boundaries](tools/dmitbox-local/docs/LIMITATIONS.md) before use.

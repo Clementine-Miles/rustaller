@@ -13,12 +13,19 @@ fn main() -> ExitCode {
     }
 }
 fn run(args: Vec<String>) -> Result<(), String> {
+    if args.first().is_some_and(|arg| arg == "local-tool") {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .to_owned();
+        return rustaller_xtask::local_tool::run(&root, &args[1..]);
+    }
     if args.first().is_some_and(|arg| arg == "vm-acceptance") {
         return vm::run(&args[1..]);
     }
     if args.is_empty() || args.iter().any(|a| a == "--help" || a == "-h") {
         println!(
-            "Usage: cargo xtask <COMMAND>\n\n  bundle [--no-tui] [--target x86_64-unknown-linux-musl]\n  dist --tag vVERSION[-preview] [--output dist] [--no-tui] [--allow-dirty]\n  check [--skip-shellcheck]\n  audit-sources\n\nBundle defaults to a TUI host and a worker with no TUI dependencies.\nDist makes a development-preview package; it never publishes to GitHub.\nAudit-sources checks official metadata and endpoint reachability without downloading images."
+            "Usage: cargo xtask <COMMAND>\n\n  bundle [--no-tui] [--target x86_64-unknown-linux-musl]\n  dist --tag vVERSION[-preview] [--output dist] [--no-tui] [--allow-dirty]\n  check [--skip-shellcheck]\n  audit-sources\n  local-tool [build|check]\n\nBundle defaults to a TUI host and a worker with no TUI dependencies.\nDist makes a development-preview package; it never publishes to GitHub.\nAudit-sources checks official metadata and endpoint reachability without downloading images."
         );
         return Ok(());
     }

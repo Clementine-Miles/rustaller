@@ -28,7 +28,7 @@ jobs:
       - name: Install Rust toolchain
         run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy --target x86_64-unknown-linux-musl
       - name: Install test utilities
-        run: sudo apt-get update && sudo apt-get install --yes busybox openssh-client
+        run: sudo apt-get update && sudo apt-get install --yes busybox openssh-client jq acl attr iproute2 util-linux coreutils shellcheck
       - name: Static checks and isolated tests
         run: cargo xtask check --skip-shellcheck
       - name: ShellCheck runtime baseline
@@ -39,6 +39,10 @@ jobs:
         uses: docker://koalaman/shellcheck:v0.11.0
         with:
           args: --severity=warning --shell=sh tests/fixtures/fix-eth-name-openrc.initd
+      - name: Check standalone local administration component
+        run: |
+          cargo xtask local-tool check
+          git diff --exit-code -- tools/dmitbox-local/dist
       - name: Build static bundle
         if: inputs.release_tag == ''
         run: cargo xtask bundle

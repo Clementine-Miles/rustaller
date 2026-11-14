@@ -1,0 +1,4 @@
+PASS native IPv6 SNAT typed batch/readback, original-direction/new-flow selector and unrelated IPv4 NAT preservation
+internal:0:0-0: Error: No such file or directory; did you mean table 'unrelated_nat' in family ip?
+
+SKIP random NAT66 kernel expression unavailable; fixed-SNAT evidence does not qualify the random-map adapter

@@ -1,0 +1,2 @@
+PASS: native static IPv6 granular disable/inverse, DAD, address order, multiple routing tables, peer preservation, idempotent inverse, interruption after every primitive
+MOCKED: manager ownership discovery and fixture filesystem ancestry; UNVERIFIED: reboot identity and external IPv6/SSH reachability

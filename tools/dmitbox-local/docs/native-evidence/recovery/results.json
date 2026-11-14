@@ -1,0 +1,105 @@
+{
+  "schema": 1,
+  "classification": "minimal native systemd and OpenRC fixtures; not full distribution images",
+  "acceleration": "QEMU TCG, no KVM claim",
+  "network": "no guest NIC; serial console only",
+  "artifact_sha256": "7cb505a6b2921170cf135cb397078836585fb25d7bce5e8d353da4f6f25c5544",
+  "inputs": {
+    "/workspace/dmitbox-local/dist/dmitbox-local.sh": "7cb505a6b2921170cf135cb397078836585fb25d7bce5e8d353da4f6f25c5544",
+    "/workspace/scratch/review-tools/usr/bin/busybox": "7ae95c260622412ceba6eb9f45d68f616cdc091a1d71d6c0a08b5875bb2c31dd",
+    "/workspace/dmitbox-local/.cache/vm-validation/alpine-root/bin/bash": "2a701ecc70c238273c07320611df51b9ad5345483a6782195070aa1b92030f62",
+    "/workspace/dmitbox-local/.cache/vm-validation/alpine-root/sbin/openrc": "98f66d34d62c0bb357e5b97ab7a72204870afb2d3e63a7be5d925eea4c77a18b",
+    "/workspace/dmitbox-local/.cache/vm-validation/tools/usr/bin/qemu-system-x86_64": "d3c1a558ad220e77a4412048c8d96b44f8c2b41c7ad2a4ecfe522a4b122fe067",
+    "/workspace/dmitbox-local/.cache/vm-validation/tools/boot/vmlinuz-6.12.107+deb13-amd64": "2b2358b37674d2505350528875bb17afae2a36522a9e8a9417eaca65a7da0e08",
+    "/workspace/dmitbox-local/.cache/vm-validation/tools/usr/sbin/mke2fs": "14d64b707e37214aff4568470bb4d908232370684c7eff05465d78116c2c9c67",
+    "/workspace/dmitbox-local/.cache/vm-validation/tools/usr/share/seabios/bios-256k.bin": "fc6d2ea888862e6b26d53fb877ab712324726eb8f44eb6baf076c64a31f1c3fb"
+  },
+  "limitations": [
+    "No full Debian/Arch/Alpine manager matrix",
+    "No external SSH or IPv6 reachability proof from this fixture",
+    "No TCP/BBR performance or kernel Swap validation"
+  ],
+  "fixture_inputs": {
+    "systemd": {
+      "initramfs_sha256": "b37ab44ff082aa43dacb8061613391a5f414f2e7d1316a441b57ad3c641546a4",
+      "copied_artifact_sha256": "7cb505a6b2921170cf135cb397078836585fb25d7bce5e8d353da4f6f25c5544",
+      "copied_source_sha256": {
+        "src/adapters/dns.sh": "dc7e94940ae4f3542b1bb4cae7658cc71841b0cb6f30af61757108f0cb8c9b1f",
+        "src/adapters/ipv6.sh": "e27ef47f8a728d904a382bb78d4361955bedd867174b04a9c4e478c3ecc44111",
+        "src/adapters/nat66.sh": "44c2a8cc3f23428c2dd08dc498f92823dfb26e7f3398ab948ca016c2396f8ee2",
+        "src/adapters/nft.sh": "857d80789da344d51a08dc652248827caf7b3613344185488221c7914fe1cfd4",
+        "src/adapters/pool.sh": "892d32fcd7996dd22e876cd5b80c7f1f16c577973bb0041362a4d794930cca45",
+        "src/adapters/routing.sh": "5490485f6b577f611899f9559c9baff2dcce434819f1a489e966172d6049ef6a",
+        "src/adapters/runtime.sh": "734acd046ba7263848fb36faea2aa55567bfa006cd00d17ee0012c8b79416f03",
+        "src/adapters/ssh.sh": "c3fbf041d379d9be33b64319565204062e0bed175d42f38224fdd53bff8c4168",
+        "src/confirmation.sh": "fdc7397bd3469d859a4775cc20070d6d9a4ebffcf3c3a19059187cda0aa429e3",
+        "src/core.sh": "126e0088905469648816b437de73a43da9abed815259dab6c6da95f0ceec7a67",
+        "src/filesystem.sh": "f52aea5dd781a1bdde5be1f7e1a7c78765afe8dcf1c79787bded2440efc7273f",
+        "src/gai.sh": "b1198c96ec7e12b1489a1eb49ca02ca50fab214ad2a0e0a1885cd6f32e9761ba",
+        "src/main.sh": "00625b2dcddfc30e748e5ed824bf8b4c2d929b428029562ca4a203da89ae050e",
+        "src/recovery/supervisor.sh": "35cc5709474d8e7800eecf2ad197dca7938a51ff5656c03b9f261f1238b948b6",
+        "src/transaction.sh": "110521def83ec1a95c63ec5119388a0369f5692a53b4d3f040122e71e4e82366",
+        "src/validation.sh": "d932d06c9666d3d585d7535d7a41ad759a8131251d8deea63ebd94ca99ca21a1"
+      }
+    },
+    "openrc": {
+      "initramfs_sha256": "fa2f934d6242fb41a66f180f04dd2b55c58c8cb304852fedf5104357b8a8a34d",
+      "copied_artifact_sha256": "7cb505a6b2921170cf135cb397078836585fb25d7bce5e8d353da4f6f25c5544",
+      "copied_source_sha256": {
+        "src/adapters/dns.sh": "dc7e94940ae4f3542b1bb4cae7658cc71841b0cb6f30af61757108f0cb8c9b1f",
+        "src/adapters/ipv6.sh": "e27ef47f8a728d904a382bb78d4361955bedd867174b04a9c4e478c3ecc44111",
+        "src/adapters/nat66.sh": "44c2a8cc3f23428c2dd08dc498f92823dfb26e7f3398ab948ca016c2396f8ee2",
+        "src/adapters/nft.sh": "857d80789da344d51a08dc652248827caf7b3613344185488221c7914fe1cfd4",
+        "src/adapters/pool.sh": "892d32fcd7996dd22e876cd5b80c7f1f16c577973bb0041362a4d794930cca45",
+        "src/adapters/routing.sh": "5490485f6b577f611899f9559c9baff2dcce434819f1a489e966172d6049ef6a",
+        "src/adapters/runtime.sh": "734acd046ba7263848fb36faea2aa55567bfa006cd00d17ee0012c8b79416f03",
+        "src/adapters/ssh.sh": "c3fbf041d379d9be33b64319565204062e0bed175d42f38224fdd53bff8c4168",
+        "src/confirmation.sh": "fdc7397bd3469d859a4775cc20070d6d9a4ebffcf3c3a19059187cda0aa429e3",
+        "src/core.sh": "126e0088905469648816b437de73a43da9abed815259dab6c6da95f0ceec7a67",
+        "src/filesystem.sh": "f52aea5dd781a1bdde5be1f7e1a7c78765afe8dcf1c79787bded2440efc7273f",
+        "src/gai.sh": "b1198c96ec7e12b1489a1eb49ca02ca50fab214ad2a0e0a1885cd6f32e9761ba",
+        "src/main.sh": "00625b2dcddfc30e748e5ed824bf8b4c2d929b428029562ca4a203da89ae050e",
+        "src/recovery/supervisor.sh": "35cc5709474d8e7800eecf2ad197dca7938a51ff5656c03b9f261f1238b948b6",
+        "src/transaction.sh": "110521def83ec1a95c63ec5119388a0369f5692a53b4d3f040122e71e4e82366",
+        "src/validation.sh": "d932d06c9666d3d585d7535d7a41ad759a8131251d8deea63ebd94ca99ca21a1"
+      }
+    }
+  },
+  "results": [
+    {
+      "backend": "systemd",
+      "status": "PASS",
+      "boot_ids": [
+        "085e0820-9315-495d-b2cb-960370083fa1",
+        "fe6d35fa-6740-46d8-9c1c-e002318177bc"
+      ],
+      "assertions": [
+        "real console initiating identity",
+        "public CLI prepares and applies owned file probe",
+        "independent readiness before apply",
+        "forced kernel reboot with pending transaction",
+        "boot-time rollback and content readback",
+        "actual deadline rollback after forward/backward guest wall-clock changes",
+        "ENOSPC/read-only write rejection preserves bytes"
+      ]
+    },
+    {
+      "backend": "openrc",
+      "status": "PASS",
+      "boot_ids": [
+        "3cb3a25a-6d0a-449f-9fb8-54f4f44bb09e",
+        "f1544618-c9d6-4c04-958d-e4367e32a314"
+      ],
+      "assertions": [
+        "real console initiating identity",
+        "public CLI prepares and applies owned file probe",
+        "independent readiness before apply",
+        "forced kernel reboot with pending transaction",
+        "boot-time rollback and content readback",
+        "actual deadline rollback after forward/backward guest wall-clock changes",
+        "ENOSPC/read-only write rejection preserves bytes"
+      ]
+    }
+  ],
+  "artifact_unchanged": true
+}

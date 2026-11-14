@@ -1,0 +1,31 @@
+c[?7l[2J[0mSeaBIOS (version 1.16.3-debian-1.16.3-2)
+Booting from ROM..c[?7l[2J
+   OpenRC 0.62.6 is starting up Linux 6.12.107+deb13-amd64 (x86_64)
+
+ * /proc is already mounted
+ * /run/openrc: creating directory
+ * /run/lock: correcting mode
+ * /run/lock: correcting owner
+Service 'hwdrivers' needs non existent service 'dev'
+Service 'machine-id' needs non existent service 'dev'
+ * Caching service dependencies ... [ ok ]
+ * Starting Recover incomplete DMITBox changes before networking ... * service dmitbox-tx-e5cec4116a7a26647f6cd6b215d60215 deleted from runlevel default
+ [ ok ]
+Service 'hwdrivers' needs non existent service 'dev'
+Service 'machine-id' needs non existent service 'dev'
+ * Caching service dependencies ... [ ok ]
+ * Starting Recover incomplete DMITBox changes before networking ... [ ok ]
+ * Starting Recover incomplete DMITBox changes before networking ... [ ok ]
+BOOT_FIXTURE_START pid1=init boot=f1544618-c9d6-4c04-958d-e4367e32a314
+AFTER_REBOOT state=ROLLED_BACK resource=before
+DMITBOX_OPENRC_REBOOT_PASS
+cat: write error: No space left on device
+DMITBOX_VM_ENOSPC_PASS
+mktemp: failed to create file via template ‘/mnt/readonly/.dmitbox-write.XXXXXXXXXXXX’: Read-only file system
+DMITBOX_VM_READONLY_PASS
+
+One-use confirmation challenge (keep private): [REDACTED]
+APPLY_RC=0 resource=after
+DMITBOX_VM_CLOCK_CHANGE_PASS
+DMITBOX_OPENRC_DEADLINE_PASS
+[  131.240607] reboot: Power down

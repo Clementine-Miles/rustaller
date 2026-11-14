@@ -1,0 +1,40 @@
+c[?7l[2J[0mSeaBIOS (version 1.16.3-debian-1.16.3-2)
+Booting from ROM..c[?7l[2Jbrw-------    1 root     root      254,   0 Nov 14 05:50 /dev/vda
+major minor  #blocks  name
+
+ 254        0     262144 vda
+[    2.295393] evm: HMAC attrs: 0x1
+[    2.342257] RAS: Correctable Errors collector initialized.
+[    2.360881] tsc: Refined TSC clocksource calibration: 2596.172 MHz
+[    2.361498] clocksource: tsc: mask: 0xffffffffffffffff max_cycles: 0x256c1c0cbbb, max_idle_ns: 440795326408 ns
+[    2.374489] clocksource: Switched to clocksource tsc
+[    2.479064] clk: Disabling unused clocks
+[    2.479267] PM: genpd: Disabling unused power domains
+[    2.555524] Freeing unused decrypted memory: 2028K
+[    2.628347] Freeing unused kernel image (initmem) memory: 4172K
+[    2.745053] Write protecting the kernel read-only data: 28672k
+[    2.746752] Freeing unused kernel image (rodata/data gap) memory: 460K
+[    2.878726] x86/mm: Checked W+X mappings: passed, no W+X pages found.
+[    2.972830] Run /init as init process
+[    2.972957]   with arguments:
+[    2.972988]     /init
+[    2.973008]   with environment:
+[    2.973023]     HOME=/
+[    2.973035]     TERM=linux
+[    3.125668] virtio_blk virtio0: 1/0/0 default/read/poll queues
+[    3.137739] virtio_blk virtio0: [vda] 524288 512-byte logical blocks (268 MB/256 MiB)
+[    5.835341] systemd[1]: Failed to initialize kmod context: Operation not supported
+[!p]104[?7hBOOT_FIXTURE_START pid1=systemd boot=37f1d923-61d9-4e37-82dc-01acc2b31204
+cat: write error: No space left on device
+DMITBOX_VM_ENOSPC_PASS
+mktemp: failed to create file via template '/mnt/readonly/.dmitbox-write.XXXXXXXXXXXX': Read-only file system
+DMITBOX_VM_READONLY_PASS
+
+One-use confirmation challenge (keep private): [REDACTED]
+[0;1;31mFailed to execute /usr/bin/systemd-tty-ask-password-agent: No such file or directory[0m
+
+APPLY_RC=0 resource=after
+DMITBOX_TIMER_WATCHER_PAUSED_PASS
+DMITBOX_VM_CLOCK_CHANGE_PASS
+DMITBOX_SYSTEMD_DEADLINE_PASS
+[   94.110234] reboot: Power down

@@ -1,0 +1,11 @@
+MOCKED: sysfs facility visibility; nft queries/batches below use the real isolated kernel
+native nft: exclusive apply and foreign NAT/container/set preservation PASS
+native nft: live counter changes excluded from semantic fingerprint PASS
+native nft: malformed check and atomic publication preserve complete state PASS
+native nft: concurrent firewall manager detection PASS
+native nft: exclusive boot-reset inverse and same-boot/tampered-authority/foreign-name refusals PASS (boot-id mocked)
+native nft: independent idempotent pre-SSH-reload inverse PASS
+native nft: same-table scoped child, stable jump position and exact foreign preservation PASS
+native nft: enrolled parent pipeline version conflict refusal PASS
+native nft: foreign INPUT hook conflict refusal PASS
+nft integration: PASS (native kernel nft, fresh user and network namespace)

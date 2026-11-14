@@ -1,0 +1,2 @@
+PASS: native report, source-routing inventory, MTU apply/readback/restore, IPv6 minimum, missing-interface rejection
+UNVERIFIED: external PMTU, SSH access and independent rollback/reboot behavior
