@@ -573,10 +573,7 @@ fn filesystem_uuid<R: CommandRunner>(
         "read-new-filesystem-uuid",
     )?;
     let text = text.trim();
-    if text.is_empty()
-        || text.len() > 64
-        || !text.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
-    {
+    if !crate::shared::storage::valid_uuid(text) {
         return Err(LiveInstallError::Invalid("new filesystem UUID is invalid"));
     }
     Ok(text.into())

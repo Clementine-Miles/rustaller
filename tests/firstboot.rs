@@ -1,31 +1,14 @@
+mod support;
 use rustaller::command::{CommandOutput, MockRunner};
 use rustaller::worker::firstboot::{
-    InitManager, apply_network_fixes_from_links, cleanup_firstboot, eth_names_by_mac,
-    install_firstboot_service, lookup_ethx_by_mac, non_loopback_links, render_firstboot_service,
-    rewrite_ifupdown, rewrite_networkd_file, wait_for_stable_links,
+    apply_network_fixes_from_links, cleanup_firstboot, eth_names_by_mac, install_firstboot_service,
+    lookup_ethx_by_mac, non_loopback_links, render_firstboot_service, rewrite_ifupdown,
+    wait_for_stable_links,
 };
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new(label: &str) -> Self {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock after epoch")
-            .as_nanos();
-        Self(std::env::temp_dir().join(format!("rustaller-{label}-{}-{nonce}", std::process::id())))
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
+use crate::support::Scratch;
 
 const IP_LINKS: &str = "2: ens3: <UP> link/ether 00:11:22:33:44:55\n3: enp5s0: <UP> link/ether 00:11:22:33:44:66\n4: ens7: <UP> master ens3 link/ether 00:11:22:33:44:55\n";
 
@@ -121,81 +104,44 @@ fn ifupdown_rewrite_matches_existing_firstboot_fixture_byte_for_byte() {
 }
 
 #[test]
-fn filesystem_rewrite_updates_only_target_configs_and_renames_networkd_files() {
+fn alpine_filesystem_rewrite_uses_mac_identity_and_is_idempotent() {
     let scratch = Scratch::new("firstboot");
-    let root = &scratch.0;
-    let interfaces = root.join("etc/network/interfaces");
-    fs::create_dir_all(interfaces.parent().unwrap()).expect("create ifupdown directory");
-    fs::write(&interfaces, "# mac 00:11:22:33:44:55\nauto eth0\n").expect("write config");
-
-    let networkd = root.join("etc/systemd/network");
-    fs::create_dir_all(&networkd).expect("create networkd directory");
-    fs::write(
-        networkd.join("10-cloud-init-eth0.network"),
-        "[Match]\nMACAddress=00:11:22:33:44:55\nName=eth0\n",
-    )
-    .expect("write networkd config");
-
-    apply_network_fixes_from_links(root, IP_LINKS).expect("apply fixes");
+    let interfaces = scratch.0.join("etc/network/interfaces");
+    fs::create_dir_all(interfaces.parent().unwrap()).unwrap();
+    fs::write(&interfaces, "# mac 00:11:22:33:44:55\nauto eth0\n").unwrap();
+    apply_network_fixes_from_links(&scratch.0, IP_LINKS).unwrap();
     assert_eq!(fs::read(&interfaces).unwrap(), b"auto ens3\n");
-    assert_eq!(
-        fs::read(networkd.join("10-ens3.network")).unwrap(),
-        b"[Match]\nMACAddress=00:11:22:33:44:55\nName=ens3\n"
-    );
-    assert!(!networkd.join("10-cloud-init-eth0.network").exists());
+    apply_network_fixes_from_links(&scratch.0, IP_LINKS).unwrap();
+    assert_eq!(fs::read(&interfaces).unwrap(), b"auto ens3\n");
 }
 
 #[test]
-fn systemd_service_installs_worker_and_matches_the_rust_worker_contract() {
-    let scratch = Scratch::new("service-systemd");
-    let root = &scratch.0;
-    fs::create_dir_all(root.join("lib/systemd/system-preset")).unwrap();
-    let mut runner = MockRunner::new([CommandOutput::new(Some(0), Vec::new(), Vec::new())]);
-    let worker_elf = format!("ELF {}", rustaller::RUNTIME_VERSION);
-
-    install_firstboot_service(
-        &mut runner,
-        root,
-        InitManager::Systemd,
-        worker_elf.as_bytes(),
-    )
-    .expect("install generated systemd service");
-
-    let service = fs::read_to_string(root.join("etc/systemd/system/fix-eth-name.service")).unwrap();
-    assert_eq!(service, render_firstboot_service(InitManager::Systemd));
-    assert!(service.contains("ExecStart=/usr/local/bin/rustaller-worker firstboot-fix"));
-    assert!(service.contains("ExecStartPost=/usr/local/bin/rustaller-worker cleanup-systemd"));
-    assert!(!service.contains("fix-eth-name.sh"));
+fn openrc_service_installs_matching_worker_and_only_native_integration_glue() {
+    let scratch = Scratch::new("service-openrc");
+    fs::create_dir_all(&scratch.0).unwrap();
+    let mut runner = MockRunner::new([CommandOutput::new(Some(0), vec![], vec![])]);
+    let worker = format!("ELF {}", rustaller::RUNTIME_VERSION);
+    install_firstboot_service(&mut runner, &scratch.0, worker.as_bytes()).unwrap();
+    let path = scratch.0.join("etc/init.d/fix-eth-name");
+    let service = fs::read_to_string(&path).unwrap();
+    assert_eq!(service, render_firstboot_service());
+    assert!(service.starts_with("#!/sbin/openrc-run\n"));
+    assert!(service.contains("before net networking dhcpcd"));
+    assert!(service.contains("/usr/local/bin/rustaller-worker firstboot-fix"));
+    assert!(service.contains("/usr/local/bin/rustaller-worker cleanup-openrc"));
     assert_eq!(
-        fs::read(root.join("usr/local/bin/rustaller-worker")).unwrap(),
-        worker_elf.as_bytes()
-    );
-    assert_eq!(
-        fs::metadata(root.join("usr/local/bin/rustaller-worker"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777,
+        fs::metadata(path).unwrap().permissions().mode() & 0o777,
         0o755
     );
     assert_eq!(
-        fs::read(root.join("lib/systemd/system-preset/01-fix-eth-name.preset")).unwrap(),
-        b"enable fix-eth-name.service\n"
+        fs::read(scratch.0.join("usr/local/bin/rustaller-worker")).unwrap(),
+        worker.as_bytes()
     );
     assert_eq!(runner.calls().len(), 1);
     assert_eq!(runner.calls()[0].program, "chroot");
     assert_eq!(
-        runner.calls()[0]
-            .args
-            .iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect::<Vec<_>>(),
-        [
-            root.display().to_string(),
-            "systemctl".into(),
-            "enable".into(),
-            "fix-eth-name.service".into()
-        ]
+        runner.calls()[0].args[1..],
+        ["rc-update", "add", "fix-eth-name", "boot"]
     );
 }
 
@@ -204,13 +150,8 @@ fn mismatched_worker_version_is_rejected_before_writing_service_files() {
     let scratch = Scratch::new("mismatched-worker");
     let mut runner = MockRunner::empty();
     assert!(
-        install_firstboot_service(
-            &mut runner,
-            &scratch.0,
-            InitManager::Systemd,
-            b"ELF without the current version",
-        )
-        .is_err()
+        install_firstboot_service(&mut runner, &scratch.0, b"ELF without the current version",)
+            .is_err()
     );
     assert!(!scratch.0.join("usr/local/bin/rustaller-worker").exists());
     assert!(runner.calls().is_empty());
@@ -229,7 +170,7 @@ fn openrc_cleanup_runs_service_commands_then_removes_the_one_shot_worker() {
         CommandOutput::new(Some(0), Vec::new(), Vec::new()),
     ]);
 
-    cleanup_firstboot(&mut runner, root, InitManager::OpenRc).expect("cleanup one-shot service");
+    cleanup_firstboot(&mut runner, root).expect("cleanup one-shot service");
 
     assert_eq!(runner.calls().len(), 2);
     assert_eq!(runner.calls()[0].program, "rc-service");
@@ -241,24 +182,9 @@ fn openrc_cleanup_runs_service_commands_then_removes_the_one_shot_worker() {
 }
 
 #[test]
-fn networkd_rewrite_changes_only_matching_generated_files() {
-    let input = "[Match]\nMACAddress=00:11:22:33:44:55\nName=eth0\n[Network]\nDHCP=yes\n";
-    let (name, output) = rewrite_networkd_file("10-cloud-init-eth0.network", input, |mac| {
-        (mac == "00:11:22:33:44:55").then(|| "ens3".into())
-    })
-    .expect("matching generated file");
-    assert_eq!(name, "10-ens3.network");
-    assert_eq!(
-        output,
-        "[Match]\nMACAddress=00:11:22:33:44:55\nName=ens3\n[Network]\nDHCP=yes\n"
-    );
-    assert!(rewrite_networkd_file("10-other.network", input, |_| Some("ens3".into())).is_none());
-}
-
-#[test]
-fn firstboot_rejects_symlinked_files_missing_macs_and_destination_collisions() {
+fn firstboot_rejects_symlinks_hardlinks_and_missing_macs_without_publication() {
     use std::os::unix::fs::symlink;
-    for scenario in ["symlink", "missing", "collision"] {
+    for scenario in ["symlink", "hardlink", "missing", "absent"] {
         let scratch = Scratch::new(scenario);
         fs::create_dir_all(scratch.0.join("etc/network")).unwrap();
         let outside = scratch.0.join("outside");
@@ -266,21 +192,13 @@ fn firstboot_rejects_symlinked_files_missing_macs_and_destination_collisions() {
         let interfaces = scratch.0.join("etc/network/interfaces");
         match scenario {
             "symlink" => symlink(&outside, &interfaces).unwrap(),
-            "missing" => fs::write(
+            "hardlink" => fs::hard_link(&outside, &interfaces).unwrap(),
+            "absent" => {}
+            _ => fs::write(
                 &interfaces,
                 "# mac 52:54:00:99:99:99\nauto eth0\niface eth0 inet dhcp\n",
             )
             .unwrap(),
-            _ => {
-                let network = scratch.0.join("etc/systemd/network");
-                fs::create_dir_all(&network).unwrap();
-                fs::write(
-                    network.join("10-cloud-init-eth0.network"),
-                    "[Match]\nMACAddress=00:11:22:33:44:55\nName=eth0\n",
-                )
-                .unwrap();
-                fs::write(network.join("10-ens3.network"), "foreign\n").unwrap();
-            }
         }
         assert!(
             apply_network_fixes_from_links(&scratch.0, IP_LINKS).is_err(),
@@ -290,33 +208,5 @@ fn firstboot_rejects_symlinked_files_missing_macs_and_destination_collisions() {
         if scenario == "missing" {
             assert!(fs::read_to_string(&interfaces).unwrap().contains("# mac "));
         }
-        if scenario == "collision" {
-            assert_eq!(
-                fs::read_to_string(scratch.0.join("etc/systemd/network/10-ens3.network")).unwrap(),
-                "foreign\n"
-            );
-        }
     }
-}
-
-#[test]
-fn systemd_cleanup_supports_merged_usr_without_following_legacy_lib_links() {
-    use std::os::unix::fs::symlink;
-    let scratch = Scratch::new("merged-usr");
-    fs::create_dir_all(scratch.0.join("usr/lib/systemd/system-preset")).unwrap();
-    fs::create_dir_all(scratch.0.join("usr/local/bin")).unwrap();
-    let preset = scratch
-        .0
-        .join("usr/lib/systemd/system-preset/01-fix-eth-name.preset");
-    fs::write(&preset, "enable fix-eth-name.service\n").unwrap();
-    fs::write(scratch.0.join("usr/local/bin/rustaller-worker"), "fixture").unwrap();
-    symlink("usr/lib", scratch.0.join("lib")).unwrap();
-    cleanup_firstboot(&mut MockRunner::empty(), &scratch.0, InitManager::Systemd).unwrap();
-    assert!(!preset.exists());
-    assert!(!scratch.0.join("usr/local/bin/rustaller-worker").exists());
-    assert!(
-        fs::symlink_metadata(scratch.0.join("lib"))
-            .unwrap()
-            .is_symlink()
-    );
 }

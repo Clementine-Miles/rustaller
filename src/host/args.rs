@@ -51,7 +51,6 @@ Options:
   --swappiness N              Target vm.swappiness, 0-200
   --hold 0|1|2                  Select the existing hold behavior
   --force-boot-mode bios|efi    Override detected boot mode
-  --confhome HTTPS_URL          Root URL for matching installer resources
   --iso PATH                    Local ISO image
   --iso-config PATH             GRUB loopback configuration in the ISO
   --iso-kernel PATH             Kernel path in the ISO
@@ -105,7 +104,7 @@ impl fmt::Display for CliError {
 
 impl std::error::Error for CliError {}
 
-pub fn parse_args<I, S>(args: I, env_confhome: Option<&str>) -> Result<CliOutcome, CliError>
+pub fn parse_args<I, S>(args: I) -> Result<CliOutcome, CliError>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
@@ -126,9 +125,6 @@ where
     let mut confirmation = None;
     let mut dns_mode = None;
     let mut options = InstallPlan::new(Target::Reset);
-    let mut confhome = env_confhome
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned);
     let mut iso_fields = IsoOptions {
         path: String::new(),
         config: None,
@@ -303,11 +299,6 @@ where
                 }
                 index += consumed;
             }
-            "--confhome" => {
-                let (value, consumed) = take_value(&args, index, &name, inline_value)?;
-                confhome = Some(value);
-                index += consumed;
-            }
             "--hold" | "--sleep" => {
                 let (value, consumed) = take_value(&args, index, &name, inline_value)?;
                 options.hold = Some(
@@ -410,7 +401,6 @@ where
     });
     plan.hold = options.hold;
     plan.force_boot_mode = options.force_boot_mode;
-    plan.confhome = confhome;
     plan.debug = options.debug;
     if has_iso_field {
         plan.iso = Some(iso_fields);

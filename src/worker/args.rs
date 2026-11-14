@@ -6,7 +6,6 @@ pub enum WorkerAction {
     FirstbootFix,
     CachyosFirstboot,
     CleanupOpenRc,
-    CleanupSystemd,
     InitrdNetwork(super::initrd_network::InitrdNetworkConfig),
     LogStream { path: String },
     LiveInstall { plan: String, manifest: String },
@@ -39,7 +38,6 @@ where
         [command] if command == "firstboot-fix" => Ok(Some(WorkerAction::FirstbootFix)),
         [command] if command == "cachyos-firstboot" => Ok(Some(WorkerAction::CachyosFirstboot)),
         [command] if command == "cleanup-openrc" => Ok(Some(WorkerAction::CleanupOpenRc)),
-        [command] if command == "cleanup-systemd" => Ok(Some(WorkerAction::CleanupSystemd)),
         [command, path] if command == "log-stream" && super::log_stream::valid_web_path(path) => {
             Ok(Some(WorkerAction::LogStream { path: path.clone() }))
         }

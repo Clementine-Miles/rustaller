@@ -1,6 +1,6 @@
 use rustaller::command::{SwapSafeRunner, SystemRunner};
 use rustaller::worker::args::{WorkerAction, parse_worker_args};
-use rustaller::worker::firstboot::{InitManager, cleanup_firstboot, run_firstboot};
+use rustaller::worker::firstboot::{cleanup_firstboot, run_firstboot};
 use rustaller::worker::initrd_network::run_initrd_network_with_proxy;
 use rustaller::worker::log_stream::run_log_stream;
 use std::path::Path;
@@ -16,7 +16,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let action = parse_worker_args(std::env::args().skip(1))?;
     let Some(action) = action else {
         println!(
-            "Usage: rustaller-worker <live-install PLAN MANIFEST|firstboot-fix|cachyos-firstboot|cleanup-openrc|cleanup-systemd|initrd-network|log-stream>\n\nRuntime version: {}\nInternal helper for the Rust rustaller installer.",
+            "Usage: rustaller-worker <live-install PLAN MANIFEST|firstboot-fix|cachyos-firstboot|cleanup-openrc|initrd-network|log-stream>\n\nRuntime version: {}\nInternal helper for the Rust rustaller installer.",
             rustaller::RUNTIME_VERSION
         );
         return Ok(());
@@ -36,12 +36,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         WorkerAction::CachyosFirstboot => {
             rustaller::targets::cachyos::run_firstboot_update(&mut runner, Path::new("/"))?
         }
-        WorkerAction::CleanupOpenRc => {
-            cleanup_firstboot(&mut runner, Path::new("/"), InitManager::OpenRc)?
-        }
-        WorkerAction::CleanupSystemd => {
-            cleanup_firstboot(&mut runner, Path::new("/"), InitManager::Systemd)?
-        }
+        WorkerAction::CleanupOpenRc => cleanup_firstboot(&mut runner, Path::new("/"))?,
         WorkerAction::InitrdNetwork(config) => {
             let proxy = ["https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"]
                 .into_iter()

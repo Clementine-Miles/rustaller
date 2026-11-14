@@ -88,7 +88,7 @@ pub(super) fn bootstrap_arch_rootfs<R: CommandRunner>(
     pacman_config: &Path,
 ) -> Result<(), RollingError> {
     validate_route(root, plan, Target::Arch)?;
-    if !valid_alpine_branch(alpine_branch) {
+    if !crate::deployment::valid_branch(alpine_branch) {
         return Err(RollingError::InvalidInput("Alpine stable branch"));
     }
     validate_work_file(pacman_config)?;
@@ -250,7 +250,14 @@ pub(super) fn configure_gentoo<R: CommandRunner>(
     root_uuid: &str,
 ) -> Result<(), RollingError> {
     validate_route(root, plan, Target::Gentoo)?;
-    if !valid_uuid(root_uuid) {
+    // Gentoo's XFS/ext4 root requires a canonical long UUID.
+    if !crate::shared::storage::valid_uuid(root_uuid)
+        || root_uuid.len() != 36
+        || root_uuid
+            .bytes()
+            .enumerate()
+            .any(|(i, b)| [8, 13, 18, 23].contains(&i) != (b == b'-'))
+    {
         return Err(RollingError::InvalidInput("root filesystem UUID"));
     }
     validate_packages(firmware)?;
@@ -458,24 +465,6 @@ fn validate_packages(packages: &[String]) -> Result<(), RollingError> {
     }
     Ok(())
 }
-fn valid_alpine_branch(branch: &str) -> bool {
-    branch
-        .strip_prefix('v')
-        .and_then(|s| s.split_once('.'))
-        .is_some_and(|(a, b)| {
-            !a.is_empty() && !b.is_empty() && a.bytes().chain(b.bytes()).all(|c| c.is_ascii_digit())
-        })
-}
-fn valid_uuid(uuid: &str) -> bool {
-    uuid.len() == 36
-        && uuid.bytes().enumerate().all(|(i, b)| {
-            if [8, 13, 18, 23].contains(&i) {
-                b == b'-'
-            } else {
-                b.is_ascii_hexdigit()
-            }
-        })
-}
 fn select_systemd_profile(output: &str) -> Option<String> {
     let candidates = output
         .lines()
@@ -606,8 +595,7 @@ mod tests {
         }
     }
     fn arch_plan() -> ValidatedLivePlan {
-        let mut plan = InstallPlan::new(Target::Arch);
-        plan.confhome = Some("https://assets.example/reinstall".into());
+        let plan = InstallPlan::new(Target::Arch);
         validate_live_plan_with_uid(plan, "x86_64", 1024, crate::RUNTIME_VERSION, 0).unwrap()
     }
     fn successful_calls(count: usize) -> MockRunner {

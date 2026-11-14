@@ -2,7 +2,7 @@ use crate::config::{SystemConfig, SystemConfigError};
 use crate::postinstall::{PostInstallConfig, PostInstallError};
 use std::fmt;
 
-pub const CURRENT_SCHEMA_VERSION: u16 = 6;
+pub const CURRENT_SCHEMA_VERSION: u16 = 7;
 
 pub fn valid_account_name(value: &str) -> bool {
     !value.is_empty()
@@ -180,7 +180,6 @@ pub struct InstallPlan {
     pub system: SystemConfig,
     pub hold: Option<u8>,
     pub force_boot_mode: Option<BootMode>,
-    pub confhome: Option<String>,
     pub iso: Option<IsoOptions>,
     pub debug: bool,
 }
@@ -209,7 +208,6 @@ impl fmt::Debug for InstallPlan {
             .field("system", &self.system)
             .field("hold", &self.hold)
             .field("force_boot_mode", &self.force_boot_mode)
-            .field("confhome", &self.confhome.as_ref().map(|_| "[CONFIGURED]"))
             .field("iso", &self.iso)
             .field("debug", &self.debug)
             .finish()
@@ -242,7 +240,6 @@ impl InstallPlan {
             system: SystemConfig::default(),
             hold: None,
             force_boot_mode: None,
-            confhome: None,
             iso: None,
             debug: false,
         }
@@ -296,16 +293,6 @@ impl InstallPlan {
         }
 
         if self.target.is_automatic() {
-            // Rust carries its matching worker/UI assets and authenticates
-            // distribution repositories directly. A legacy resource override
-            // is optional, but must remain safe whenever explicitly supplied.
-            if self
-                .confhome
-                .as_deref()
-                .is_some_and(|confhome| !valid_https_resource_root(confhome))
-            {
-                return Err(PlanError::MissingHttpsConfhome);
-            }
             if self.iso.is_some() {
                 return Err(PlanError::UnexpectedOption("ISO"));
             }
@@ -377,41 +364,9 @@ impl InstallPlan {
     }
 }
 
-fn valid_https_resource_root(value: &str) -> bool {
-    let base = value.trim_end_matches('/');
-    let Some(remainder) = base.strip_prefix("https://") else {
-        return false;
-    };
-    if base.len() <= "https://".len()
-        || !base
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"._~:/-".contains(&byte))
-    {
-        return false;
-    }
-    let host = remainder.split('/').next().unwrap_or_default();
-    if host.is_empty() || !host.bytes().any(|byte| byte.is_ascii_alphanumeric()) {
-        return false;
-    }
-    if remainder
-        .split('/')
-        .any(|segment| segment == "." || segment == "..")
-    {
-        return false;
-    }
-    let lower = base.to_ascii_lowercase();
-    [
-        "https://raw.githubusercontent.com/bin456789/reinstall",
-        "https://cnb.cool/bin456789/reinstall",
-    ]
-    .iter()
-    .all(|upstream| lower != *upstream && !lower.starts_with(&format!("{upstream}/")))
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PlanError {
     UnsupportedSchema(u16),
-    MissingHttpsConfhome,
     InvalidPort(&'static str),
     InvalidHold,
     PasswordAndSshKey,
@@ -431,9 +386,6 @@ impl fmt::Display for PlanError {
         match self {
             Self::UnsupportedSchema(version) => {
                 write!(f, "Unsupported install plan schema: {version}")
-            }
-            Self::MissingHttpsConfhome => {
-                f.write_str("An explicit resource base must be a supported HTTPS URL")
             }
             Self::InvalidPort(name) => write!(f, "Invalid {name} port"),
             Self::InvalidHold => f.write_str("Invalid hold value"),

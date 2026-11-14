@@ -91,7 +91,9 @@ pub fn write_fstab(
     esp_uuid: Option<&str>,
     boot_mode: BootMode,
 ) -> Result<(), DebianError> {
-    if !valid_uuid(root_uuid) || esp_uuid.is_some_and(|uuid| !valid_uuid(uuid)) {
+    if !crate::shared::storage::valid_uuid(root_uuid)
+        || esp_uuid.is_some_and(|uuid| !crate::shared::storage::valid_uuid(uuid))
+    {
         return Err(DebianError::InvalidUuid);
     }
     if (boot_mode == BootMode::Efi) != esp_uuid.is_some() {
@@ -342,13 +344,6 @@ fn append_grub_cmdline(root: &Path, tty_cmdline: &str) -> io::Result<()> {
         format!("GRUB_CMDLINE_LINUX=\"$GRUB_CMDLINE_LINUX {tty_cmdline}\"\n").as_bytes(),
     );
     atomic_replace(&path, &contents)
-}
-
-fn valid_uuid(uuid: &str) -> bool {
-    !uuid.is_empty()
-        && uuid
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
 }
 
 fn remove_if_exists(path: &Path) -> io::Result<()> {

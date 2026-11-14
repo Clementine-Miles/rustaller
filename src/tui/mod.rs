@@ -30,10 +30,7 @@ impl Drop for TerminalMode {
     }
 }
 
-pub fn run(
-    confhome: Option<String>,
-    mut execute: impl FnMut(&InstallPlan) -> Result<(), String>,
-) -> Result<(), String> {
+pub fn run(mut execute: impl FnMut(&InstallPlan) -> Result<(), String>) -> Result<(), String> {
     enable_raw_mode().map_err(|error| error.to_string())?;
     let _mode = TerminalMode;
     execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)
@@ -41,7 +38,7 @@ pub fn run(
     let mut terminal =
         Terminal::new(CrosstermBackend::new(io::stdout())).map_err(|error| error.to_string())?;
     terminal.clear().map_err(|error| error.to_string())?;
-    let mut wizard = Wizard::new(confhome);
+    let mut wizard = Wizard::new();
     wizard.prefill_hostnames(std::path::Path::new("/"));
     loop {
         terminal

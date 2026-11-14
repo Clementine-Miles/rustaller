@@ -73,7 +73,7 @@ pub(super) struct Draft {
     pub key_cipher: usize,
 }
 impl Draft {
-    fn new(confhome: Option<&str>, comment: &str, key_path: &str) -> Self {
+    fn new(comment: &str, key_path: &str) -> Self {
         let mut draft = Self {
             values: (0..=Field::KeyBits as usize)
                 .map(|_| TextValue::new(""))
@@ -105,7 +105,6 @@ impl Draft {
             (Field::Username, "root"),
             (Field::SshPort, "22"),
             (Field::WebPort, "80"),
-            (Field::Confhome, confhome.unwrap_or_default()),
             (Field::SwapSize, "2048"),
             (Field::KeyPath, key_path),
             (Field::KeyRounds, "512"),
@@ -134,9 +133,6 @@ impl Draft {
         };
         if value.is_empty() {
             return "Not set".into();
-        }
-        if field == Field::Confhome {
-            return resource_label(value);
         }
         if field.secret() {
             return "Configured (hidden)".into();
@@ -350,7 +346,7 @@ impl Wizard {
             }
         }
     }
-    pub fn new(confhome: Option<String>) -> Self {
+    pub fn new() -> Self {
         let comment = ssh_keygen::date_comment();
         let key_path = std::env::var_os("HOME")
             .map(std::path::PathBuf::from)
@@ -360,7 +356,7 @@ impl Wizard {
             .to_string_lossy()
             .into_owned();
         let drafts: Vec<_> = (0..CHOICES.len())
-            .map(|_| Draft::new(confhome.as_deref(), &comment, &key_path))
+            .map(|_| Draft::new(&comment, &key_path))
             .collect();
         Self {
             choice: 0,
@@ -762,7 +758,6 @@ impl Wizard {
                 Field::Confirm,
                 Field::RootPassword,
                 Field::RootConfirm,
-                Field::Confhome,
                 Field::Frpc,
                 Field::IsoCmdline,
             ] {
@@ -839,21 +834,7 @@ pub(super) fn optional_label(value: &str, default: &str) -> String {
         clean(value)
     }
 }
-fn resource_label(value: &str) -> String {
-    let Some(remainder) = value.strip_prefix("https://") else {
-        return "Configured (pending validation)".into();
-    };
-    let authority = remainder.split('/').next().unwrap_or_default();
-    let host = authority.rsplit('@').next().unwrap_or_default();
-    if host.is_empty()
-        || !host
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b".-:".contains(&byte))
-    {
-        return "Configured (pending validation)".into();
-    }
-    format!("https://{host}/…")
-}
+
 pub(super) fn boot_label(mode: Option<BootMode>) -> &'static str {
     match mode {
         None => "Auto-detect",

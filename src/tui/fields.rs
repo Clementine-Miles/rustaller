@@ -9,7 +9,6 @@ pub(super) enum Field {
     Hostname,
     Timezone,
     Disk,
-    Confhome,
     WebPort,
     Frpc,
     IsoPath,
@@ -46,7 +45,6 @@ impl Field {
             Self::Hostname => "Hostname",
             Self::Timezone => "Timezone",
             Self::Disk => "Target disk",
-            Self::Confhome => "Matching HTTPS resource root",
             Self::WebPort => "Web log port",
             Self::Frpc => "frpc configuration file / URL",
             Self::IsoPath => "Absolute ISO path",
@@ -79,7 +77,6 @@ impl Field {
                 | Self::Confirm
                 | Self::RootPassword
                 | Self::RootConfirm
-                | Self::Confhome
                 | Self::Frpc
                 | Self::IsoCmdline
         )
@@ -95,7 +92,6 @@ impl Field {
             Self::Hostname => "--hostname",
             Self::Timezone => "--timezone",
             Self::Disk => "--target-disk",
-            Self::Confhome => "--confhome",
             Self::WebPort => "--web-port",
             Self::Frpc => "--frpc-config",
             Self::IsoPath => "--iso",
@@ -135,9 +131,6 @@ impl Field {
             }
             Self::Disk => {
                 "Whole-disk path such as /dev/vda, never a partition. Blank requests later detection; no disk scan has run here."
-            }
-            Self::Confhome => {
-                "Optional matching HTTPS resources for compatible legacy assets. The Rust installer uses its embedded worker and official repositories. Hidden input; menus show only the hostname."
             }
             Self::Frpc => {
                 "Optional file path or URL. This editor does not read or download the configuration."

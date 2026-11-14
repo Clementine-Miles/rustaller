@@ -12,7 +12,7 @@ use rustaller::model::{BootMode, SecretString};
 use rustaller::postinstall::KernelChoice;
 
 fn wizard() -> Wizard {
-    Wizard::new(Some("https://assets.example/reinstall".into()))
+    Wizard::new()
 }
 fn press(wizard: &mut Wizard, code: KeyCode) {
     assert!(matches!(
@@ -91,8 +91,8 @@ fn render(wizard: &mut Wizard, width: u16, height: u16) -> String {
     }
     text
 }
-fn assert_same_plan(wizard: &Wizard, args: &[&str], confhome: Option<&str>) {
-    let CliOutcome::Plan(cli) = parse_args(args, confhome).unwrap() else {
+fn assert_same_plan(wizard: &Wizard, args: &[&str]) {
+    let CliOutcome::Plan(cli) = parse_args(args).unwrap() else {
         panic!("CLI plan")
     };
     assert_eq!(
@@ -401,7 +401,6 @@ fn tcp_and_swap_submenus_reuse_cli_validation_and_inactive_swap_values_are_ignor
                 "--swapfile-mib=2048",
                 "--swappiness=10",
             ],
-            Some("https://assets.example/reinstall"),
         );
         assert!(wizard.summary().join("\n").contains("2048 MiB"));
         set(&mut wizard, Field::SwapSize, "0");
@@ -665,7 +664,6 @@ fn all_automatic_targets_match_cli_plan_encoding_including_multiple_keys_and_hos
                 "--ssh-key",
                 "github:alice",
             ],
-            Some("https://assets.example/reinstall"),
         );
     }
 }
@@ -692,7 +690,6 @@ fn rescue_and_manual_targets_match_cli_and_hide_installation_categories() {
             "1",
             "--no-cloud-kernel",
         ],
-        Some("https://assets.example/reinstall"),
     );
     assert!(
         !wizard
@@ -707,11 +704,11 @@ fn rescue_and_manual_targets_match_cli_and_hide_installation_categories() {
     )));
     choose(&mut wizard, 6);
     wizard.draft_mut().boot = Some(BootMode::Bios);
-    assert_same_plan(&wizard, &["netboot.xyz", "--force-boot-mode", "bios"], None);
+    assert_same_plan(&wizard, &["netboot.xyz", "--force-boot-mode", "bios"]);
     choose(&mut wizard, 7);
-    assert_same_plan(&wizard, &["reset"], None);
+    assert_same_plan(&wizard, &["reset"]);
     press(&mut wizard, KeyCode::Enter);
-    assert_same_plan(&wizard, &["reset", "--debug"], None);
+    assert_same_plan(&wizard, &["reset", "--debug"]);
     assert!(wizard.summary().join("\n").contains("Debug output: On"));
     for index in [4, 6, 7] {
         choose(&mut wizard, index);
@@ -729,7 +726,7 @@ fn iso_modes_use_only_active_fields_and_validate_pure_grub_safety() {
     set(&mut wizard, Field::IsoPath, "/images/live.iso");
     set(&mut wizard, Field::IsoKernel, "/live/vmlinuz");
     set(&mut wizard, Field::IsoInitrd, "/live/initrd.img");
-    assert_same_plan(&wizard, &["iso", "--iso", "/images/live.iso"], None);
+    assert_same_plan(&wizard, &["iso", "--iso", "/images/live.iso"]);
     wizard.draft_mut().iso_mode = IsoMode::Kernel;
     set(&mut wizard, Field::IsoConfig, "/boot/grub/loopback.cfg");
     set(
@@ -750,7 +747,6 @@ fn iso_modes_use_only_active_fields_and_validate_pure_grub_safety() {
             "--iso-cmdline",
             "boot=live findiso=%ISO_PATH%",
         ],
-        None,
     );
     set(&mut wizard, Field::IsoPath, "relative.iso");
     assert!(wizard.build_plan().is_err());
@@ -799,24 +795,14 @@ fn validation_failures_and_all_sensitive_views_hide_raw_values() {
         Field::Frpc,
         "https://example.org/UNIQUE-FRPC-TOKEN",
     );
-    set(
-        &mut wizard,
-        Field::Confhome,
-        "https://user:UNIQUE-URL-TOKEN@example.org/path?token=secret",
-    );
     open(&mut wizard, Page::Resources);
     press(&mut wizard, KeyCode::Enter);
-    assert!(!render(&mut wizard, 100, 28).contains("UNIQUE-URL-TOKEN"));
+    assert!(!render(&mut wizard, 100, 28).contains("UNIQUE-FRPC-TOKEN"));
     press(&mut wizard, KeyCode::Esc);
     press(&mut wizard, KeyCode::F(2));
     let screen = render(&mut wizard, 100, 28);
     assert!(!screen.contains("UNIQUE-"));
     assert!(!wizard.error.contains("UNIQUE-"));
-    set(
-        &mut wizard,
-        Field::Confhome,
-        "https://assets.example/reinstall",
-    );
     press(&mut wizard, KeyCode::F(2));
     let screen = render(&mut wizard, 100, 38);
     assert!(!screen.contains("UNIQUE-"));
@@ -840,8 +826,6 @@ fn username_and_option_like_values_cannot_hijack_shared_parser() {
     set(&mut wizard, Field::Frpc, "--help");
     let plan = wizard.build_plan().unwrap();
     assert_eq!(plan.frpc_config.as_deref(), Some("--help"));
-    set(&mut wizard, Field::Confhome, "--help");
-    assert!(wizard.build_plan().is_err());
 }
 
 #[test]
@@ -850,11 +834,6 @@ fn summary_displays_effective_trimmed_options_but_keeps_exact_password_whitespac
     choose(&mut wizard, 1);
     set(&mut wizard, Field::Username, "  alice  ");
     set(&mut wizard, Field::Hostname, "  my-vps  ");
-    set(
-        &mut wizard,
-        Field::Confhome,
-        "  https://assets.example/reinstall  ",
-    );
     set(&mut wizard, Field::Frpc, "   ");
     set(&mut wizard, Field::Password, "  exact  ");
     set(&mut wizard, Field::Confirm, "  exact  ");
@@ -870,7 +849,6 @@ fn summary_displays_effective_trimmed_options_but_keeps_exact_password_whitespac
     let summary = wizard.summary().join("\n");
     assert!(summary.contains("Username: alice"));
     assert!(summary.contains("Hostname: my-vps"));
-    assert!(summary.contains("https://assets.example/…"));
     assert!(summary.contains("frpc: Not set"));
     choose(&mut wizard, 4);
     wizard.draft_mut().iso_mode = IsoMode::Kernel;
@@ -1022,7 +1000,6 @@ fn minimal_and_dns_submenus_match_cli_for_all_four_targets() {
                 "--dns-search",
                 "example.internal",
             ],
-            Some("https://assets.example/reinstall"),
         );
         press(&mut wizard, KeyCode::Esc);
         press(&mut wizard, KeyCode::F(2));

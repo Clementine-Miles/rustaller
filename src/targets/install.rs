@@ -516,17 +516,10 @@ pub fn configure<R: CommandRunner>(
             )?,
             _ => unreachable!(),
         }
-        let worker = fs::read("/rustaller-worker")?;
-        crate::worker::firstboot::install_firstboot_service(
-            runner,
-            root,
-            if plan.plan().target == Target::Alpine {
-                crate::worker::firstboot::InitManager::OpenRc
-            } else {
-                crate::worker::firstboot::InitManager::Systemd
-            },
-            &worker,
-        )?;
+        if plan.plan().target == Target::Alpine {
+            let worker = fs::read("/rustaller-worker")?;
+            crate::worker::firstboot::install_firstboot_service(runner, root, &worker)?;
+        }
         cleanup_cache(runner, root, plan)?;
         crate::shared::network::apply_network_configuration(root, plan, manifest, &kernel_config)?;
         verify_installed_target(runner, root, plan, layout)?;
@@ -762,7 +755,9 @@ fn write_fstab(
     root_uuid: &str,
     efi_uuid: Option<&str>,
 ) -> Result<(), InstallError> {
-    if !valid_uuid(root_uuid) || efi_uuid.is_some_and(|value| !valid_uuid(value)) {
+    if !crate::shared::storage::valid_uuid(root_uuid)
+        || efi_uuid.is_some_and(|value| !crate::shared::storage::valid_uuid(value))
+    {
         return Err(InstallError::Invalid("invalid target filesystem UUID"));
     }
     if (layout.boot_mode() == BootMode::Efi) != efi_uuid.is_some() {
@@ -1446,7 +1441,7 @@ pub fn start_live_services<R: CommandRunner>(
         fs::create_dir(&web)?;
         atomic_replace(
             &web.join(&token),
-            include_bytes!("../../logviewer.html"),
+            include_bytes!("../worker/log.html"),
             0o644,
         )?;
         let log = Path::new("/rustaller.log");
@@ -1971,11 +1966,6 @@ fn literal_public_key(key: &str) -> bool {
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b))
     }) && !key.chars().any(char::is_control)
-}
-fn valid_uuid(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 64
-        && value.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
 }
 fn target_hostname(plan: &crate::model::InstallPlan) -> String {
     plan.post_install

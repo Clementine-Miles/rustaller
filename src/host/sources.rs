@@ -162,7 +162,7 @@ pub fn parse_debian_archive(
     architecture: &str,
 ) -> Result<DebianArchive, SourceError> {
     require_x86_64(architecture)?;
-    // RFC822 permits tabs after a colon; the legacy parser only reads the
+    // RFC822 permits tabs after a colon; release metadata reads the
     // canonical spelling. Reject duplicates under either spacing first.
     single_field(metadata, "Version")?;
     single_field(metadata, "Codename")?;

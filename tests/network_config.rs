@@ -1,4 +1,5 @@
 //! Complete target output tests. Only disposable directories are mutated.
+mod support;
 use rustaller::config::{
     AddressPreference, CongestionControl, DnsMode, Ipv6Policy, QueueDiscipline,
 };
@@ -11,31 +12,12 @@ use rustaller::worker::firstboot::rewrite_ifupdown;
 use rustaller::worker::live::validate_live_plan_with_uid;
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::Path;
 
-static NEXT: AtomicU64 = AtomicU64::new(0);
 const KERNEL: &str =
     "CONFIG_TCP_CONG_BBR=m\nCONFIG_NET_SCH_FQ=y\nCONFIG_IPV6=y\nCONFIG_SYN_COOKIES=y\n";
-struct Scratch(PathBuf);
+use crate::support::Scratch;
 impl Scratch {
-    fn new() -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "rustaller-network-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&path).unwrap();
-        Self(path)
-    }
-    fn write(&self, name: &str, text: &str) {
-        let path = self.0.join(name);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, text).unwrap();
-    }
-    fn read(&self, name: &str) -> String {
-        fs::read_to_string(self.0.join(name)).unwrap()
-    }
     fn apply(&self, plan: InstallPlan, manifest: &DeploymentManifest) -> Result<(), String> {
         let plan = validate_live_plan_with_uid(plan, "x86_64", 4096, rustaller::RUNTIME_VERSION, 0)
             .map_err(|e| e.to_string())?;
@@ -43,20 +25,8 @@ impl Scratch {
             .map(|_| ())
             .map_err(|e| e.to_string())
     }
-    fn service(&self, name: &str) {
-        self.write(&format!("etc/init.d/{name}"), "fixture, never executed\n");
-        fs::set_permissions(
-            self.0.join("etc/init.d").join(name),
-            fs::Permissions::from_mode(0o755),
-        )
-        .unwrap();
-    }
 }
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
+
 fn manifest() -> DeploymentManifest {
     DeploymentManifest {
         disk: DiskIdentity {
@@ -186,7 +156,7 @@ fn ra_only_and_dhcpv6_without_ra_are_distinct_and_disabled_ipv6_never_leaks_rout
 
 #[test]
 fn alpine_renders_both_stacks_extra_addresses_mtu_and_one_dns_owner() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("network_config");
     let mut m = manifest();
     m.network[0].ipv4_addresses.push("192.0.2.3/32".into());
     m.network[0].ipv6_addresses.push("2001:db8::3/128".into());
@@ -229,7 +199,7 @@ fn alpine_renders_both_stacks_extra_addresses_mtu_and_one_dns_owner() {
 
 #[test]
 fn automatic_and_static_resolvers_are_published_after_packages_without_following_links() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("network_config");
     let m = manifest();
     scratch.write("etc/resolv.conf", "nameserver 192.0.2.53\n");
     for _ in 0..2 {
@@ -256,7 +226,7 @@ fn automatic_and_static_resolvers_are_published_after_packages_without_following
     assert_eq!(network.matches("MTUBytes=").count(), 0);
     assert_eq!(network.matches("DNS=1.1.1.1").count(), 1);
     // A fresh Alpine target retains the bootstrap resolver for native DHCP.
-    let alpine = Scratch::new();
+    let alpine = Scratch::new("network_config");
     alpine.write("etc/resolv.conf", "nameserver 192.0.2.53\n");
     alpine.apply(InstallPlan::new(Target::Alpine), &m).unwrap();
     assert_eq!(alpine.read("etc/resolv.conf"), "nameserver 192.0.2.53\n");
@@ -264,7 +234,7 @@ fn automatic_and_static_resolvers_are_published_after_packages_without_following
 
 #[test]
 fn multiple_interfaces_have_independent_mac_matching_and_byte_identical_reapplication() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("network_config");
     let mut m = manifest();
     let mut second = m.network[0].clone();
     second.name = "enp5s0".into();
@@ -364,7 +334,7 @@ fn complete_output_validation_rejects_unsafe_files_parents_aliases_and_resolver_
         "etc/gai.conf",
         "etc/modules-load.d/90-rustaller-network.conf",
     ] {
-        let scratch = Scratch::new();
+        let scratch = Scratch::new("network_config");
         scratch.write("outside", "unchanged\n");
         let path = scratch.0.join(bad);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -385,7 +355,7 @@ fn complete_output_validation_rejects_unsafe_files_parents_aliases_and_resolver_
         );
     }
     for kind in ["hardlink", "directory", "writable"] {
-        let scratch = Scratch::new();
+        let scratch = Scratch::new("network_config");
         let path = scratch.0.join("etc/systemd/network/10-ens3.network");
         scratch.write("outside", "unchanged\n");
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -405,7 +375,7 @@ fn complete_output_validation_rejects_unsafe_files_parents_aliases_and_resolver_
         assert!(!scratch.0.join("etc/resolv.conf").exists());
         assert_eq!(scratch.read("outside"), "unchanged\n");
     }
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("network_config");
     let plan = validate_live_plan_with_uid(
         InstallPlan::new(Target::Debian),
         "x86_64",
@@ -423,7 +393,7 @@ fn complete_output_validation_rejects_unsafe_files_parents_aliases_and_resolver_
 
 #[test]
 fn target_kernel_gai_and_openrc_dependencies_are_checked_before_publication() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("network_config");
     let mut plan = InstallPlan::new(Target::Debian);
     plan.system.network.congestion = CongestionControl::Bbr;
     plan.system.network.qdisc = QueueDiscipline::Fq;
@@ -471,7 +441,7 @@ fn target_kernel_gai_and_openrc_dependencies_are_checked_before_publication() {
         "# END rustaller target network\n",
         "# BEGIN rustaller target network x\n# END rustaller target network\n",
     ] {
-        let scratch = Scratch::new();
+        let scratch = Scratch::new("network_config");
         scratch.write("etc/gai.conf", bad);
         let mut plan = InstallPlan::new(Target::Debian);
         plan.system.network.address_preference = AddressPreference::Ipv4;
@@ -482,7 +452,7 @@ fn target_kernel_gai_and_openrc_dependencies_are_checked_before_publication() {
 
 #[test]
 fn manual_tcp_modules_and_complete_glibc_precedence_are_idempotent_and_offline() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("network_config");
     scratch.write("etc/gai.conf", "# keep\nlabel ::1/128 0\n");
     scratch.write(
         "etc/modules-load.d/90-rustaller-network.conf",
@@ -540,7 +510,7 @@ fn failed_file_publication_reports_partial_progress_without_reboot_or_rollback_c
     if unsafe { libc::geteuid() } == 0 {
         return;
     }
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("network_config");
     scratch.write("etc/resolv.conf", "original resolver\n");
     fs::create_dir_all(scratch.0.join("etc/systemd/network")).unwrap();
     fs::set_permissions(
@@ -600,6 +570,7 @@ fn alpine_native_client_flags_honor_ipv4_ipv6_and_ra_policies() {
     second.name = "eth1".into();
     second.mac = "52:54:00:11:22:44".into();
     second.dhcp4 = true;
+    second.ipv6_gateway = None;
     m.network.push(second);
     let mut plan = InstallPlan::new(Target::Alpine);
     plan.system.network.ipv6 = Ipv6Policy::Disable;
@@ -607,4 +578,23 @@ fn alpine_native_client_flags_honor_ipv4_ipv6_and_ra_policies() {
     assert!(output.contains("iface ens3 inet manual\n    use ipv6\n    ipv6-accept-ra 0\n"));
     assert!(output.contains("dhcp-opts -4\n"));
     assert!(!output.contains("inet6"));
+}
+
+#[test]
+fn competing_default_gateways_are_rejected_before_any_target_file_is_written() {
+    for v6 in [false, true] {
+        let scratch = Scratch::new("multiple-defaults");
+        let mut m = manifest();
+        let mut second = m.network[0].clone();
+        second.name = "eth1".into();
+        second.mac = "52:54:00:11:22:44".into();
+        if v6 {
+            second.ipv4_gateway = None;
+        } else {
+            second.ipv6_gateway = None;
+        }
+        m.network.push(second);
+        assert!(scratch.apply(InstallPlan::new(Target::Debian), &m).is_err());
+        assert!(!scratch.0.join("etc").exists());
+    }
 }

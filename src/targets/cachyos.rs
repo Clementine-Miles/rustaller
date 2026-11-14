@@ -18,7 +18,7 @@ pub const RELEASE_FINGERPRINT: &str = "882DCFE48E2051D48E2562ABF3B607488DB35A47"
 const KEY_URL: &str = "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x882DCFE48E2051D48E2562ABF3B607488DB35A47";
 const WORKER: &str = "usr/local/libexec/rustaller-cachyos-worker";
 const PENDING: &str = "var/lib/rustaller/cachyos-firstboot.pending";
-const UNIT: &str = "[Unit]\nDescription=Complete CachyOS package upgrade after installation\nWants=network-online.target systemd-networkd-wait-online.service\nAfter=network-online.target systemd-networkd-wait-online.service fix-eth-name.service\nConditionPathExists=/var/lib/rustaller/cachyos-firstboot.pending\nStartLimitIntervalSec=0\n[Service]\nType=oneshot\nExecStart=/usr/local/libexec/rustaller-cachyos-worker cachyos-firstboot\nRestart=on-failure\nRestartSec=60\nTimeoutStartSec=0\n[Install]\nWantedBy=multi-user.target\n";
+const UNIT: &str = "[Unit]\nDescription=Complete CachyOS package upgrade after installation\nWants=network-online.target systemd-networkd-wait-online.service\nAfter=network-online.target systemd-networkd-wait-online.service\nConditionPathExists=/var/lib/rustaller/cachyos-firstboot.pending\nStartLimitIntervalSec=0\n[Service]\nType=oneshot\nExecStart=/usr/local/libexec/rustaller-cachyos-worker cachyos-firstboot\nRestart=on-failure\nRestartSec=60\nTimeoutStartSec=0\n[Install]\nWantedBy=multi-user.target\n";
 
 #[derive(Debug)]
 pub struct CachyosError(String);
@@ -395,7 +395,7 @@ pub fn validate_repository_config(config: &str, isa: IsaLevel) -> Result<(), Cac
     }
     Ok(())
 }
-/// Independent worker survives the NIC firstboot worker's normal cleanup.
+/// The dedicated worker remains until the first-boot upgrade succeeds.
 pub fn install_firstboot_update(root: &Path) -> Result<(), CachyosError> {
     validate_root(root).map_err(error)?;
     let bytes = fs::read("/rustaller-worker")?;

@@ -1,3 +1,4 @@
+mod support;
 use rustaller::codec::decode_plan;
 use rustaller::host::initrd::{
     InitrdError, inject_network_bootstrap, install_worker_and_plan, repack_initrd,
@@ -7,35 +8,11 @@ use rustaller::model::{InstallPlan, SecretString, Target};
 use rustaller::worker::initrd_network::InitrdNetworkConfig;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new() -> Self {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "rustaller-initrd-stage-{}-{nonce}",
-            std::process::id()
-        ));
-        fs::create_dir(&path).unwrap();
-        Self(path)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
+use crate::support::Scratch;
 
 fn automatic_plan() -> InstallPlan {
     let mut plan = InstallPlan::new(Target::Alpine);
-    plan.confhome = Some("https://assets.example/reinstall".into());
     plan.password = Some(SecretString::new("initrd-secret-sentinel"));
     plan
 }
@@ -58,7 +35,7 @@ fn worker_bytes() -> Vec<u8> {
 
 #[test]
 fn unpacks_initrd_with_zcat_and_cpio_in_the_isolated_staging_directory() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("initrd");
     let archive = scratch.0.join("source-initrd");
     let staging = scratch.0.join("stage");
     fs::write(&archive, b"compressed fixture").unwrap();
@@ -81,8 +58,8 @@ fn unpacks_initrd_with_zcat_and_cpio_in_the_isolated_staging_directory() {
 }
 
 #[test]
-fn initrd_unpack_uses_the_last_pipeline_command_status_like_the_shell_baseline() {
-    let scratch = Scratch::new();
+fn initrd_unpack_reports_the_extractor_status() {
+    let scratch = Scratch::new("initrd");
     let archive = scratch.0.join("source-initrd");
     let staging = scratch.0.join("stage");
     fs::write(&archive, b"compressed fixture").unwrap();
@@ -96,7 +73,7 @@ fn initrd_unpack_uses_the_last_pipeline_command_status_like_the_shell_baseline()
 
 #[test]
 fn failed_unpack_removes_only_its_new_staging_directory() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("initrd");
     let archive = scratch.0.join("source-initrd");
     let staging = scratch.0.join("stage");
     fs::write(&archive, b"compressed fixture").unwrap();
@@ -109,8 +86,8 @@ fn failed_unpack_removes_only_its_new_staging_directory() {
 }
 
 #[test]
-fn repacks_initrd_with_the_legacy_find_cpio_gzip_pipeline_and_atomic_output() {
-    let scratch = Scratch::new();
+fn repacks_initrd_with_native_archive_tools_and_atomic_output() {
+    let scratch = Scratch::new("initrd");
     let staging = scratch.0.join("stage");
     fs::create_dir(&staging).unwrap();
     let archive = scratch.0.join("repacked-initrd");
@@ -140,7 +117,7 @@ fn repacks_initrd_with_the_legacy_find_cpio_gzip_pipeline_and_atomic_output() {
 
 #[test]
 fn failed_repack_preserves_the_previous_initrd_archive() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("initrd");
     let staging = scratch.0.join("stage");
     fs::create_dir(&staging).unwrap();
     let archive = scratch.0.join("rustaller-initrd");
@@ -156,7 +133,7 @@ fn failed_repack_preserves_the_previous_initrd_archive() {
 
 #[test]
 fn stages_network_hook_worker_and_private_plan_as_one_alpine_initrd_payload() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("initrd");
     fs::write(
         scratch.0.join("init"),
         "#!/bin/sh\nconfigure_ip() {\n    setup_dhcp\n}\nexec switch_root\n",
@@ -185,7 +162,7 @@ fn stages_network_hook_worker_and_private_plan_as_one_alpine_initrd_payload() {
 
 #[test]
 fn invalid_init_script_prevents_any_payload_from_being_staged() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("initrd");
     fs::write(scratch.0.join("init"), "no configure function\n").unwrap();
     assert!(matches!(
         stage_alpine_initrd(&scratch.0, &automatic_plan(), &worker_bytes(), &[]),
@@ -197,7 +174,7 @@ fn invalid_init_script_prevents_any_payload_from_being_staged() {
 
 #[test]
 fn initrd_payload_installs_matching_worker_and_private_versioned_plan() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("initrd");
     let paths = install_worker_and_plan(&scratch.0, &automatic_plan(), &worker_bytes()).unwrap();
     assert_eq!(paths.worker, scratch.0.join("rustaller-worker"));
     assert_eq!(paths.plan, scratch.0.join("configs/install.plan"));
@@ -220,7 +197,7 @@ fn initrd_payload_installs_matching_worker_and_private_versioned_plan() {
 
 #[test]
 fn initrd_payload_rejects_worker_version_mismatch_before_creating_any_files() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("initrd");
     let error =
         install_worker_and_plan(&scratch.0, &automatic_plan(), &worker_elf_header()).unwrap_err();
     assert_eq!(error, InitrdError::WorkerVersionMismatch);
@@ -230,7 +207,7 @@ fn initrd_payload_rejects_worker_version_mismatch_before_creating_any_files() {
 
 #[test]
 fn initrd_payload_rejects_a_symlinked_configs_directory() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("initrd");
     let outside = scratch.0.join("outside");
     let staging = scratch.0.join("staging");
     fs::create_dir(&outside).unwrap();
@@ -243,7 +220,7 @@ fn initrd_payload_rejects_a_symlinked_configs_directory() {
 
 #[test]
 fn initrd_payload_refuses_to_replace_an_existing_worker_file() {
-    let scratch = Scratch::new();
+    let scratch = Scratch::new("initrd");
     let worker = scratch.0.join("rustaller-worker");
     fs::write(&worker, b"preserve existing worker").unwrap();
     assert!(install_worker_and_plan(&scratch.0, &automatic_plan(), &worker_bytes()).is_err());
@@ -268,13 +245,13 @@ fn alpine_init_network_hook_runs_worker_with_validated_single_nic_arguments() {
         concat!(
             "#!/bin/sh\n",
             "configure_ip() {\n",
-            "        # BEGIN PERSONAL-LINUX initrd network worker\n",
+            "        # BEGIN RUSTALLER initrd network worker\n",
             "        depmod\n",
             "        [ -d /sys/module/ipv6 ] || modprobe ipv6\n",
             "        /rustaller-worker initrd-network '00:11:22:33:44:55' '192.0.2.20/24' '192.0.2.1' '2001:db8::20/64' '2001:db8::1' '2001:db8::21/64'\n",
             "        MAC_ADDRESS=1\n",
             "        return\n",
-            "        # END PERSONAL-LINUX initrd network worker\n",
+            "        # END RUSTALLER initrd network worker\n",
             "    setup_dhcp\n",
             "}\n",
             "exec switch_root\n"

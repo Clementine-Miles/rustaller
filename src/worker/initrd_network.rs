@@ -155,7 +155,7 @@ pub fn gateway_from_route_output(output: &str) -> Option<String> {
 }
 
 /// Run the Alpine initrd network setup. A missing NIC is non-fatal in the
-/// legacy initrd helper; later Live-stage checks decide whether installation can continue.
+/// bounded initrd probes; later Live-stage checks decide whether installation can continue.
 pub fn run_initrd_network<R: CommandRunner>(
     runner: &mut R,
     root: &Path,

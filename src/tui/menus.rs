@@ -351,7 +351,7 @@ impl Wizard {
                 }
             }
             Page::Resources => {
-                for field in [Field::Confhome, Field::WebPort, Field::Frpc] {
+                for field in [Field::WebPort, Field::Frpc] {
                     add(
                         format!("{}: {}", field.label(), draft.display(field)),
                         Action::Edit(EditSlot::Field(field)),

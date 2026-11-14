@@ -893,6 +893,10 @@ fn create_seed(
     }
     cloud.push_str("  - path: /etc/apt/apt.conf.d/89-rustaller-ca\n    permissions: '0600'\n    content: |\n      Acquire::https::CaInfo \"/etc/rustaller-session-ca.pem\";\n");
     cloud.push_str("  - path: /etc/default/kexec\n    permissions: '0644'\n    content: |\n      LOAD_KEXEC=false\n      USE_GRUB_CONFIG=false\n");
+    // The prepared image boots with one explicit networkd owner on the next
+    // run. No live interface migration is required during source provisioning.
+    cloud.push_str("  - path: /etc/systemd/network/05-rustaller-source.network\n    permissions: '0644'\n    content: |\n      [Match]\n      MACAddress=52:54:00:12:34:56\n      [Network]\n      DHCP=ipv4\n      IPv6AcceptRA=no\n");
+    cloud.push_str("runcmd:\n  - [systemctl, mask, networking.service, NetworkManager.service]\n  - [systemctl, enable, systemd-networkd.service]\n");
     if let Some(proxy) = relay.guest_url() {
         cloud.push_str(&format!(
             "apt:\n  http_proxy: {}\n  https_proxy: {}\n",
@@ -982,7 +986,10 @@ fn start_disk_guest(
     command
         .arg("-netdev")
         .arg(format!("user,id=net0,hostfwd=tcp:127.0.0.1:{port}-:22"))
-        .args(["-device", "virtio-net-pci,netdev=net0,romfile="]);
+        .args([
+            "-device",
+            "virtio-net-pci,netdev=net0,mac=52:54:00:12:34:56,romfile=",
+        ]);
     Guest::start(command, case)
 }
 fn check_base(tools: &Tools, base: &Path, output: &Path) -> Result<(), String> {

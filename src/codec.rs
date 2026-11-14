@@ -80,7 +80,6 @@ pub fn encode_plan(plan: &InstallPlan) -> Result<Vec<u8>, PlanCodecError> {
         Some(BootMode::Bios) => 1,
         Some(BootMode::Efi) => 2,
     });
-    put_optional_string(&mut output, plan.confhome.as_deref())?;
     match &plan.iso {
         None => output.push(0),
         Some(iso) => {
@@ -218,7 +217,6 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
         2 => Some(BootMode::Efi),
         _ => return Err(PlanCodecError::InvalidTag),
     };
-    let confhome = reader.read_optional_string()?;
     let iso = match reader.read_u8()? {
         0 => None,
         1 => Some(IsoOptions {
@@ -353,7 +351,6 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
         system,
         hold,
         force_boot_mode,
-        confhome,
         iso,
         debug,
     };

@@ -28,4 +28,3 @@ rustc-ice-*.txt
 **/*.trim-tmp
 /dist/
 /artifacts/
-/docs/upstream-audit/snapshot/

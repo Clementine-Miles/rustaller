@@ -168,8 +168,6 @@ pub fn canonicalize_iso_source(path: &Path, managed_tmp: &Path) -> Result<PathBu
     }
     let managed = fs::canonicalize(managed_tmp).unwrap_or_else(|_| lexical_absolute(managed_tmp));
     if canonical.starts_with(&managed)
-        || canonical == Path::new("/reinstall-vmlinuz")
-        || canonical == Path::new("/reinstall-initrd")
         || canonical == Path::new("/rustaller-vmlinuz")
         || canonical == Path::new("/rustaller-initrd")
     {
@@ -201,11 +199,7 @@ pub fn prepare_local_iso<R: CommandRunner>(
         ],
     )?;
     let uuid = trim_command_output(&uuid_bytes)?;
-    if uuid.is_empty()
-        || !uuid
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
-    {
+    if !crate::shared::storage::valid_uuid(&uuid) {
         return Err(IsoError::InvalidUuid);
     }
 
@@ -267,7 +261,7 @@ pub fn prepare_local_iso<R: CommandRunner>(
 
 pub fn render_grub_entry(iso: &PreparedIso) -> String {
     let mut output =
-        String::from("### BEGIN reinstall.sh ###\nset timeout_style=menu\nset timeout=5\n");
+        String::from("### BEGIN rustaller ###\nset timeout_style=menu\nset timeout=5\n");
     output.push_str(GRUBENV_HELPER);
     output.push_str(
         "menuentry \"rustaller (iso)\" --unrestricted {\n    insmod lvm\n    insmod mdraid1x\n    insmod all_video\n    insmod loopback\n    set btrfs_relative_path=n\n",
@@ -288,7 +282,7 @@ pub fn render_grub_entry(iso: &PreparedIso) -> String {
         }
         _ => unreachable!("validated ISO options have exactly one loopback boot mode"),
     }
-    output.push_str("}\n### END reinstall.sh ###\n");
+    output.push_str("}\n### END rustaller ###\n");
     output
 }
 

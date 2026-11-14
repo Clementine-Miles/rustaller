@@ -18,7 +18,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
     }
     if args.is_empty() || args.iter().any(|a| a == "--help" || a == "-h") {
         println!(
-            "Usage: cargo xtask <COMMAND>\n\n  bundle [--no-tui] [--target x86_64-unknown-linux-musl]\n  dist --tag vVERSION[-preview] [--output dist] [--no-tui] [--allow-dirty]\n  check [--skip-shellcheck]\n  audit-sources\n\nBundle defaults to a TUI host and a worker with no TUI dependencies.\nDist makes a development-preview package; it never publishes to GitHub.\nAudit-sources checks official metadata and endpoint reachability without downloading images."
+            "Usage: cargo xtask <COMMAND>\n\n  bundle [--no-tui] [--target x86_64-unknown-linux-musl]\n  dist --tag vVERSION[-preview] [--output dist] [--no-tui] [--allow-dirty]\n  check\n  audit-sources\n\nBundle defaults to a TUI host and a worker with no TUI dependencies.\nDist makes a development-preview package; it never publishes to GitHub.\nAudit-sources checks official metadata and endpoint reachability without downloading images."
         );
         return Ok(());
     }
@@ -31,14 +31,12 @@ fn run(args: Vec<String>) -> Result<(), String> {
     let mut output = root.join("dist");
     let mut tag = None;
     let mut allow_dirty = false;
-    let mut skip_shellcheck = false;
     let action = args[0].as_str();
     let mut index = 1;
     while index < args.len() {
         match args[index].as_str() {
             "--no-tui" if action == "bundle" || action == "dist" => tui = false,
             "--allow-dirty" if action == "dist" => allow_dirty = true,
-            "--skip-shellcheck" if action == "check" => skip_shellcheck = true,
             flag @ ("--target" | "--output" | "--tag") if index + 1 < args.len() => {
                 index += 1;
                 match flag {
@@ -56,7 +54,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
         "bundle" => {
             bundle::build(&root, &target, tui)?;
         }
-        "check" => check::run(&root, skip_shellcheck)?,
+        "check" => check::run(&root)?,
         "audit-sources" => sources::audit()?,
         "dist" => {
             let tag = tag.ok_or("dist requires --tag")?;

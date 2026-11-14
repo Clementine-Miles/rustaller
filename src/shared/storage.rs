@@ -88,7 +88,7 @@ pub(crate) fn checked<R: CommandRunner>(
     }
 }
 
-// trans.sh's retry accepts SIGPIPE (141) and sleeps only between attempts.
+// Partition-table refresh tolerates SIGPIPE (141) and sleeps only between attempts.
 pub(crate) fn retry<R: CommandRunner>(
     runner: &mut R,
     spec: &CommandSpec,
@@ -533,4 +533,12 @@ pub fn mount_target<R: CommandRunner>(
         )?;
     }
     Ok(())
+}
+
+/// Safe bounded filesystem identifier for blkid, fstab and GRUB arguments.
+/// Root-format constraints belong to the caller; FAT uses shorter identifiers.
+pub(crate) fn valid_uuid(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
 }

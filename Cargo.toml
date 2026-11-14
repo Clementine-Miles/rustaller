@@ -1,6 +1,5 @@
 [workspace]
 members = [".", "xtask"]
-exclude = ["tests/verify"]
 resolver = "3"
 
 [package]

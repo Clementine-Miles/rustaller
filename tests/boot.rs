@@ -1,162 +1,384 @@
-use rustaller::host::boot::{
-    BootError, BootExtra, GrubBootEntry, build_cmdline, build_extra_cmdline, build_finalos_cmdline,
-    build_nextos_cmdline, entry_name, render_grub_config,
-};
-use rustaller::model::{BootMode, InstallPlan, Target};
-use std::collections::BTreeMap;
+mod support;
+mod boot {
+    use rustaller::host::boot::{
+        BootError, GrubBootEntry, build_nextos_cmdline, entry_name, render_grub_config,
+    };
 
-#[test]
-fn grub_entry_names_and_alpine_live_cmdline_preserve_legacy_fields() {
-    assert_eq!(
-        entry_name("alpine", "3.22.1", Some(1)),
-        "rustaller (alpine 3.22.1 Live OS)"
-    );
-    assert_eq!(
-        entry_name("debian", "stable", None),
-        "rustaller (debian stable)"
-    );
-    assert_eq!(
-        build_nextos_cmdline(
-            "https://dl-cdn.alpinelinux.org/alpine/v3.22/main",
-            "/boot/modloop-lts"
+    #[test]
+    fn grub_entry_names_and_alpine_live_cmdline_preserve_live_options() {
+        assert_eq!(
+            entry_name("alpine", "3.22.1", Some(1)),
+            "rustaller (alpine 3.22.1 Live OS)"
+        );
+        assert_eq!(
+            entry_name("debian", "stable", None),
+            "rustaller (debian stable)"
+        );
+        assert_eq!(
+            build_nextos_cmdline(
+                "https://dl-cdn.alpinelinux.org/alpine/v3.22/main",
+                "/boot/modloop-lts"
+            )
+            .unwrap(),
+            "alpine_repo=https://dl-cdn.alpinelinux.org/alpine/v3.22/main modloop=/boot/modloop-lts console=ttyS0,115200n8 console=tty0"
+        );
+    }
+
+    #[test]
+    fn alpine_boot_values_reject_missing_hosts_queries_and_path_traversal() {
+        assert!(build_nextos_cmdline("https://", "/boot/modloop-lts").is_err());
+        assert!(build_nextos_cmdline("https:///v3.22/main", "/boot/modloop-lts").is_err());
+        assert!(
+            build_nextos_cmdline("https://mirror.example/repo?token=x", "/boot/modloop-lts")
+                .is_err()
+        );
+        assert!(build_nextos_cmdline("https://mirror.example/repo", "/boot/../modloop").is_err());
+    }
+
+    #[test]
+    fn grub_config_renders_a_validated_bios_entry_and_shared_grubenv_helper() {
+        let entry = GrubBootEntry {
+            name: "rustaller (debian stable)".into(),
+            kernel_path: "/rustaller-vmlinuz".into(),
+            initrd_path: Some("/rustaller-initrd".into()),
+            linux_command: "linux".into(),
+            initrd_command: "initrd".into(),
+            cmdline:
+                "alpine_repo=https://mirror.example/alpine modloop=/boot/modloop-lts console=tty0"
+                    .into(),
+            btrfs_root: true,
+            include_grubenv_helper: true,
+        };
+        assert_eq!(
+            render_grub_config(&entry).unwrap(),
+            concat!(
+                "### BEGIN rustaller ###\n",
+                "if ! [ -s $prefix/grubenv ]; then\n",
+                "    for dir in /boot/grub /boot/grub2 /grub /grub2; do\n",
+                "        set grubenv=\"($root)$dir/grubenv\"\n",
+                "        if [ -s $grubenv ]; then\n",
+                "            load_env --file $grubenv\n",
+                "            if [ \"${next_entry}\" ]; then\n",
+                "                set default=\"${next_entry}\"\n",
+                "                set next_entry=\n",
+                "                save_env --file $grubenv next_entry\n",
+                "            else\n",
+                "                set default=\"0\"\n",
+                "            fi\n",
+                "            return\n",
+                "        fi\n",
+                "    done\n",
+                "fi\n",
+                "set timeout_style=menu\n",
+                "set timeout=5\n",
+                "menuentry \"rustaller (debian stable)\" --unrestricted {\n",
+                "    insmod lvm\n",
+                "    set btrfs_relative_path=n\n",
+                "    insmod all_video\n",
+                "    search --no-floppy --file --set=root /rustaller-vmlinuz\n",
+                "    linux /rustaller-vmlinuz alpine_repo=https://mirror.example/alpine modloop=/boot/modloop-lts console=tty0\n",
+                "    initrd /rustaller-initrd\n",
+                "}\n",
+                "### END rustaller ###\n"
+            )
+        );
+    }
+
+    #[test]
+    fn grub_config_rejects_untrusted_paths_commands_and_config_injection() {
+        let entry = GrubBootEntry {
+            name: "bad\" entry".into(),
+            kernel_path: "/rustaller-vmlinuz".into(),
+            initrd_path: None,
+            linux_command: "linux".into(),
+            initrd_command: "initrd".into(),
+            cmdline: String::new(),
+            btrfs_root: false,
+            include_grubenv_helper: false,
+        };
+        assert!(matches!(
+            render_grub_config(&entry),
+            Err(BootError::UnsafeValue(_))
+        ));
+        let mut entry = entry;
+        entry.name = "valid".into();
+        entry.kernel_path = "/tmp/../etc/passwd".into();
+        assert!(matches!(
+            render_grub_config(&entry),
+            Err(BootError::InvalidBootPath)
+        ));
+        entry.kernel_path = "/rustaller-vmlinuz".into();
+        entry.linux_command = "sh".into();
+        assert!(matches!(
+            render_grub_config(&entry),
+            Err(BootError::InvalidBootCommand)
+        ));
+    }
+}
+
+mod iso {
+    use rustaller::command::{CommandOutput, MockRunner};
+    use rustaller::host::iso::{
+        IsoError, canonicalize_iso_source, prepare_local_iso, render_grub_entry,
+        validate_iso_options,
+    };
+    use rustaller::model::IsoOptions;
+    use std::fs;
+    use std::path::PathBuf;
+
+    use crate::support::Scratch;
+
+    fn test_mount_dir(scratch: &Scratch) -> (PathBuf, PathBuf) {
+        let managed = scratch.0.join("rustaller-tmp");
+        let check = managed.join("iso-check");
+        fs::create_dir_all(&check).unwrap();
+        (managed, check)
+    }
+
+    fn options(path: &str) -> IsoOptions {
+        IsoOptions {
+            path: path.to_owned(),
+            config: None,
+            kernel: None,
+            initrd: None,
+            cmdline: None,
+        }
+    }
+
+    #[test]
+    fn iso_options_default_to_loopback_cfg_and_validate_custom_kernel_pair() {
+        let default = validate_iso_options(&options("/images/live.iso")).unwrap();
+        assert_eq!(default.config.as_deref(), Some("/boot/grub/loopback.cfg"));
+        assert!(default.kernel.is_none());
+
+        let custom = IsoOptions {
+            path: "/images/live.iso".into(),
+            config: None,
+            kernel: Some("/live/vmlinuz".into()),
+            initrd: Some("/live/initrd.img".into()),
+            cmdline: Some("boot=live findiso=%ISO_PATH%".into()),
+        };
+        let custom = validate_iso_options(&custom).unwrap();
+        assert_eq!(custom.kernel.as_deref(), Some("/live/vmlinuz"));
+        assert_eq!(custom.initrd.as_deref(), Some("/live/initrd.img"));
+    }
+
+    #[test]
+    fn iso_options_reject_path_injection_incomplete_pairs_and_conflicts() {
+        for path in [
+            "relative.iso",
+            "/images/../live.iso",
+            "/images/a b.iso",
+            "/images/a;reboot.iso",
+        ] {
+            assert!(validate_iso_options(&options(path)).is_err(), "{path}");
+        }
+        assert!(
+            validate_iso_options(&IsoOptions {
+                path: "/images/live.iso".into(),
+                config: None,
+                kernel: Some("/live/vmlinuz".into()),
+                initrd: None,
+                cmdline: None,
+            })
+            .is_err()
+        );
+        assert!(
+            validate_iso_options(&IsoOptions {
+                path: "/images/live.iso".into(),
+                config: Some("/boot/grub/loopback.cfg".into()),
+                kernel: Some("/live/vmlinuz".into()),
+                initrd: Some("/live/initrd.img".into()),
+                cmdline: None,
+            })
+            .is_err()
+        );
+        assert!(
+            validate_iso_options(&IsoOptions {
+                path: "/images/live.iso".into(),
+                config: None,
+                kernel: Some("/live/vmlinuz".into()),
+                initrd: Some("/live/initrd.img".into()),
+                cmdline: Some("boot=live; reboot".into()),
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn canonical_iso_source_must_be_readable_nonempty_and_outside_managed_paths() {
+        let scratch = Scratch::new("source");
+        let image = scratch.0.join("live.iso");
+        fs::write(&image, b"not really an ISO, but a nonempty local source").unwrap();
+        let resolved = canonicalize_iso_source(&image, &scratch.0.join("rustaller-tmp")).unwrap();
+        assert_eq!(resolved, fs::canonicalize(image).unwrap());
+
+        let empty = scratch.0.join("empty.iso");
+        fs::write(&empty, []).unwrap();
+        assert!(canonicalize_iso_source(&empty, &scratch.0.join("rustaller-tmp")).is_err());
+
+        let managed = scratch.0.join("rustaller-tmp");
+        fs::create_dir(&managed).unwrap();
+        let protected = managed.join("live.iso");
+        fs::write(&protected, b"iso").unwrap();
+        assert!(canonicalize_iso_source(&protected, &managed).is_err());
+    }
+
+    #[test]
+    fn read_only_iso_preflight_preserves_probe_and_mount_call_order() {
+        let scratch = Scratch::new("preflight");
+        let image = scratch.0.join("live.iso");
+        fs::write(&image, b"iso bytes").unwrap();
+        let (managed_tmp, check_dir) = test_mount_dir(&scratch);
+        fs::create_dir_all(check_dir.join("boot/grub")).unwrap();
+        fs::write(
+            check_dir.join("boot/grub/loopback.cfg"),
+            b"menuentry test\n",
         )
-        .unwrap(),
-        "alpine_repo=https://dl-cdn.alpinelinux.org/alpine/v3.22/main modloop=/boot/modloop-lts console=ttyS0,115200n8 console=tty0"
-    );
-}
+        .unwrap();
 
-#[test]
-fn alpine_boot_values_reject_missing_hosts_queries_and_path_traversal() {
-    assert!(build_nextos_cmdline("https://", "/boot/modloop-lts").is_err());
-    assert!(build_nextos_cmdline("https:///v3.22/main", "/boot/modloop-lts").is_err());
-    assert!(
-        build_nextos_cmdline("https://mirror.example/repo?token=x", "/boot/modloop-lts").is_err()
-    );
-    assert!(build_nextos_cmdline("https://mirror.example/repo", "/boot/../modloop").is_err());
-}
-
-#[test]
-fn finalos_and_extra_cmdline_keep_order_quoting_and_mirrorlist_handling() {
-    let finalos = BTreeMap::from([
-        ("distro".into(), "debian".into()),
-        ("mirrorlist".into(), "not-emitted-here".into()),
-        ("releasever".into(), "stable".into()),
-    ]);
-    let mut plan = InstallPlan::new(Target::Debian);
-    plan.confhome = Some("https://assets.example/reinstall".into());
-    plan.username = Some("admin".into());
-    plan.ssh_port = Some(2222);
-    plan.web_port = Some(8080);
-    plan.no_cloud_kernel = true;
-    plan.force_boot_mode = Some(BootMode::Efi);
-    let extra = BootExtra {
-        main_disk: Some("deadbeef".into()),
-        web_path: Some("/private path".into()),
-        finalos_mirrorlist: Some("https://mirror.example/list?a=1&b=2".into()),
-        nextos_mirrorlist: Some("ignored".into()),
-        link_grub_dir: true,
-    };
-
-    let finalos_cmdline = build_finalos_cmdline(&finalos).unwrap();
-    let extra_cmdline = build_extra_cmdline(&plan, &extra).unwrap();
-    assert_eq!(
-        finalos_cmdline,
-        " finalos_distro=debian finalos_releasever=stable"
-    );
-    assert_eq!(
-        extra_cmdline,
-        " extra_confhome='https://assets.example/reinstall' extra_force_boot_mode=efi extra_no_cloud_kernel=1 extra_main_disk=deadbeef extra_username=admin extra_ssh_port=2222 extra_web_port=8080 extra_web_path='/private path' extra_mirrorlist='https://mirror.example/list?a=1&b=2' extra_link_grub_dir=1"
-    );
-    assert_eq!(
-        build_cmdline("next", &finalos_cmdline, &extra_cmdline),
-        format!("next {finalos_cmdline} {extra_cmdline}")
-    );
-}
-
-#[test]
-fn grub_config_renders_a_validated_bios_entry_and_shared_grubenv_helper() {
-    let entry = GrubBootEntry {
-        name: "rustaller (debian stable)".into(),
-        kernel_path: "/rustaller-vmlinuz".into(),
-        initrd_path: Some("/rustaller-initrd".into()),
-        linux_command: "linux".into(),
-        initrd_command: "initrd".into(),
-        cmdline: "alpine_repo=https://mirror.example/alpine modloop=/boot/modloop-lts console=tty0"
-            .into(),
-        btrfs_root: true,
-        include_grubenv_helper: true,
-    };
-    assert_eq!(
-        render_grub_config(&entry).unwrap(),
-        concat!(
-            "### BEGIN reinstall.sh ###\n",
-            "if ! [ -s $prefix/grubenv ]; then\n",
-            "    for dir in /boot/grub /boot/grub2 /grub /grub2; do\n",
-            "        set grubenv=\"($root)$dir/grubenv\"\n",
-            "        if [ -s $grubenv ]; then\n",
-            "            load_env --file $grubenv\n",
-            "            if [ \"${next_entry}\" ]; then\n",
-            "                set default=\"${next_entry}\"\n",
-            "                set next_entry=\n",
-            "                save_env --file $grubenv next_entry\n",
-            "            else\n",
-            "                set default=\"0\"\n",
-            "            fi\n",
-            "            return\n",
-            "        fi\n",
-            "    done\n",
-            "fi\n",
-            "set timeout_style=menu\n",
-            "set timeout=5\n",
-            "menuentry \"rustaller (debian stable)\" --unrestricted {\n",
-            "    insmod lvm\n",
-            "    set btrfs_relative_path=n\n",
-            "    insmod all_video\n",
-            "    search --no-floppy --file --set=root /rustaller-vmlinuz\n",
-            "    linux /rustaller-vmlinuz alpine_repo=https://mirror.example/alpine modloop=/boot/modloop-lts console=tty0\n",
-            "    initrd /rustaller-initrd\n",
-            "}\n",
-            "### END reinstall.sh ###\n"
+        let mut runner = MockRunner::new([
+            CommandOutput::new(Some(0), b"ext2\n".to_vec(), Vec::new()),
+            CommandOutput::new(Some(0), b"1111-2222\n".to_vec(), Vec::new()),
+            CommandOutput::new(Some(0), b"/images/live.iso\n".to_vec(), Vec::new()),
+            CommandOutput::new(Some(0), Vec::new(), Vec::new()),
+            CommandOutput::new(Some(0), Vec::new(), Vec::new()),
+        ]);
+        let prepared = prepare_local_iso(
+            &mut runner,
+            &options(&image.to_string_lossy()),
+            &managed_tmp,
+            &check_dir,
         )
-    );
-}
+        .unwrap();
 
-#[test]
-fn grub_config_rejects_untrusted_paths_commands_and_config_injection() {
-    let entry = GrubBootEntry {
-        name: "bad\" entry".into(),
-        kernel_path: "/rustaller-vmlinuz".into(),
-        initrd_path: None,
-        linux_command: "linux".into(),
-        initrd_command: "initrd".into(),
-        cmdline: String::new(),
-        btrfs_root: false,
-        include_grubenv_helper: false,
-    };
-    assert!(matches!(
-        render_grub_config(&entry),
-        Err(BootError::UnsafeValue(_))
-    ));
-    let mut entry = entry;
-    entry.name = "valid".into();
-    entry.kernel_path = "/tmp/../etc/passwd".into();
-    assert!(matches!(
-        render_grub_config(&entry),
-        Err(BootError::InvalidBootPath)
-    ));
-    entry.kernel_path = "/rustaller-vmlinuz".into();
-    entry.linux_command = "sh".into();
-    assert!(matches!(
-        render_grub_config(&entry),
-        Err(BootError::InvalidBootCommand)
-    ));
-}
+        assert_eq!(prepared.uuid(), "1111-2222");
+        assert_eq!(prepared.grub_path(), "/images/live.iso");
+        assert_eq!(runner.calls().len(), 5);
+        assert_eq!(runner.calls()[0].program, "grub-probe");
+        assert_eq!(runner.calls()[0].args[0], "--target=abstraction");
+        assert_eq!(runner.calls()[1].args[0], "--target=fs_uuid");
+        assert_eq!(runner.calls()[2].program, "grub-mkrelpath");
+        assert_eq!(runner.calls()[3].program, "mount");
+        assert_eq!(
+            runner.calls()[3].args,
+            [
+                "-o",
+                "loop,ro",
+                image.to_str().unwrap(),
+                check_dir.to_str().unwrap()
+            ]
+        );
+        assert_eq!(runner.calls()[4].program, "umount");
+    }
 
-#[test]
-fn command_line_rejects_unrepresentable_values_instead_of_emitting_grub_syntax() {
-    let mut plan = InstallPlan::new(Target::Debian);
-    plan.confhome = Some("https://assets.example/reinstall".into());
-    plan.username = Some("bad'user".into());
-    let error = build_extra_cmdline(&plan, &BootExtra::default()).unwrap_err();
-    assert!(matches!(error, BootError::UnsafeValue(_)));
+    #[test]
+    fn generated_loopback_config_contains_only_validated_iso_parameters() {
+        let scratch = Scratch::new("render");
+        let image = scratch.0.join("live.iso");
+        fs::write(&image, b"iso").unwrap();
+        let (managed_tmp, check_dir) = test_mount_dir(&scratch);
+        fs::create_dir_all(check_dir.join("boot/grub")).unwrap();
+        fs::write(check_dir.join("boot/grub/loopback.cfg"), b"cfg").unwrap();
+        let mut runner = MockRunner::new([
+            CommandOutput::new(Some(0), b"ext2\n".to_vec(), Vec::new()),
+            CommandOutput::new(Some(0), b"1111-2222\n".to_vec(), Vec::new()),
+            CommandOutput::new(Some(0), b"/images/live.iso\n".to_vec(), Vec::new()),
+            CommandOutput::new(Some(0), Vec::new(), Vec::new()),
+            CommandOutput::new(Some(0), Vec::new(), Vec::new()),
+        ]);
+        let prepared = prepare_local_iso(
+            &mut runner,
+            &options(&image.to_string_lossy()),
+            &managed_tmp,
+            &check_dir,
+        )
+        .unwrap();
+        let output = render_grub_entry(&prepared);
+        assert!(
+            output.starts_with("### BEGIN rustaller ###\nset timeout_style=menu\nset timeout=5\n")
+        );
+        assert!(output.contains("search --no-floppy --fs-uuid --set=iso_device '1111-2222'\n"));
+        assert!(output.contains("loopback loop ($iso_device)$iso_path\n"));
+        assert!(output.contains("configfile (loop)/boot/grub/loopback.cfg\n"));
+        assert!(output.ends_with("### END rustaller ###\n"));
+    }
+
+    #[test]
+    fn read_only_preflight_rejects_encryption_and_windows_media_without_skipping_unmount() {
+        let encrypted = Scratch::new("encrypted");
+        let encrypted_image = encrypted.0.join("live.iso");
+        fs::write(&encrypted_image, b"iso").unwrap();
+        let mut encrypted_runner = MockRunner::new([CommandOutput::new(
+            Some(0),
+            b"partmap cryptodisk\n".to_vec(),
+            Vec::new(),
+        )]);
+        assert!(matches!(
+            prepare_local_iso(
+                &mut encrypted_runner,
+                &options(&encrypted_image.to_string_lossy()),
+                &encrypted.0.join("rustaller-tmp"),
+                &encrypted.0.join("rustaller-tmp/iso-check"),
+            ),
+            Err(IsoError::EncryptedStorage)
+        ));
+        assert_eq!(encrypted_runner.calls().len(), 1);
+
+        let windows = Scratch::new("windows-media");
+        let windows_image = windows.0.join("live.iso");
+        fs::write(&windows_image, b"iso").unwrap();
+        let (managed_tmp, check_dir) = test_mount_dir(&windows);
+        fs::create_dir_all(check_dir.join("SOURCES")).unwrap();
+        fs::write(check_dir.join("SOURCES/BOOT.WIM"), b"windows installer").unwrap();
+        let mut windows_runner = MockRunner::new([
+            CommandOutput::new(Some(0), b"ext2\n".to_vec(), Vec::new()),
+            CommandOutput::new(Some(0), b"1111-2222\n".to_vec(), Vec::new()),
+            CommandOutput::new(Some(0), b"/images/live.iso\n".to_vec(), Vec::new()),
+            CommandOutput::new(Some(0), Vec::new(), Vec::new()),
+            CommandOutput::new(Some(0), Vec::new(), Vec::new()),
+        ]);
+        assert!(matches!(
+            prepare_local_iso(
+                &mut windows_runner,
+                &options(&windows_image.to_string_lossy()),
+                &managed_tmp,
+                &check_dir,
+            ),
+            Err(IsoError::InvalidFilesystemLayout)
+        ));
+        assert_eq!(windows_runner.calls().last().unwrap().program, "umount");
+    }
+
+    #[test]
+    fn custom_kernel_parameters_substitute_only_the_supported_iso_tokens() {
+        let scratch = Scratch::new("custom");
+        let image = scratch.0.join("live.iso");
+        fs::write(&image, b"iso").unwrap();
+        let (managed_tmp, check_dir) = test_mount_dir(&scratch);
+        fs::create_dir_all(check_dir.join("live")).unwrap();
+        fs::write(check_dir.join("live/vmlinuz"), b"kernel").unwrap();
+        fs::write(check_dir.join("live/initrd.img"), b"initrd").unwrap();
+        let config = IsoOptions {
+            path: image.to_string_lossy().into_owned(),
+            config: None,
+            kernel: Some("/live/vmlinuz".into()),
+            initrd: Some("/live/initrd.img".into()),
+            cmdline: Some("findiso=%ISO_PATH% uuid=%ISO_UUID%".into()),
+        };
+        let mut runner = MockRunner::new([
+            CommandOutput::new(Some(0), b"ext2\n".to_vec(), Vec::new()),
+            CommandOutput::new(Some(0), b"1111-2222\n".to_vec(), Vec::new()),
+            CommandOutput::new(Some(0), b"/images/live.iso\n".to_vec(), Vec::new()),
+            CommandOutput::new(Some(0), Vec::new(), Vec::new()),
+            CommandOutput::new(Some(0), Vec::new(), Vec::new()),
+        ]);
+        let prepared = prepare_local_iso(&mut runner, &config, &managed_tmp, &check_dir).unwrap();
+        let output = render_grub_entry(&prepared);
+        assert!(
+            output.contains("linux (loop)/live/vmlinuz findiso=/images/live.iso uuid=1111-2222\n")
+        );
+        assert!(output.contains("initrd (loop)/live/initrd.img\n"));
+        assert!(!output.contains("%ISO_"));
+    }
 }

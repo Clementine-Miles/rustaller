@@ -10,6 +10,3 @@ insert_final_newline = true
 
 [*.{yml,yaml}]
 indent_size = 2
-
-[reinstall.sh]
-shell_variant = bash

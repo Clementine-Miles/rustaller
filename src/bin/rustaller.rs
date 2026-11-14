@@ -27,11 +27,10 @@ fn run() -> Result<(), String> {
         return Err("matching rustaller-worker is not embedded".into());
     }
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let confhome = std::env::var("REINSTALL_CONFHOME").ok();
     if args.is_empty() {
         if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
             #[cfg(feature = "tui")]
-            return tui::run(confhome, run_plan);
+            return tui::run(run_plan);
             #[cfg(not(feature = "tui"))]
             return Err("interactive TUI is not available in this development build".into());
         }
@@ -39,7 +38,7 @@ fn run() -> Result<(), String> {
         return Err("a target is required".into());
     }
 
-    let outcome = parse_args(&args, confhome.as_deref()).map_err(|error| error.to_string())?;
+    let outcome = parse_args(&args).map_err(|error| error.to_string())?;
     match outcome {
         CliOutcome::Help => {
             println!("{}", rustaller::host::args::HELP);

@@ -1,19 +1,11 @@
 use crate::command::{CommandInput, CommandRunner, CommandSpec, OutputMode};
 use crate::fsutil::replace_config as atomic_replace;
-use crate::shared::configure::{
-    validate_directory_tree, validate_planned_file, validate_planned_parent, write_config,
-};
+use crate::shared::configure::{validate_planned_file, validate_planned_parent, write_config};
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::Path;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum InitManager {
-    OpenRc,
-    Systemd,
-}
 
 #[derive(Debug)]
 pub enum FirstbootError {
@@ -126,17 +118,13 @@ pub fn run_firstboot<R: CommandRunner>(runner: &mut R, root: &Path) -> Result<()
     apply_network_fixes(runner, root).map_err(FirstbootError::Filesystem)
 }
 
-pub fn render_firstboot_service(manager: InitManager) -> &'static str {
-    match manager {
-        InitManager::Systemd => SYSTEMD_FIRSTBOOT_SERVICE,
-        InitManager::OpenRc => OPENRC_FIRSTBOOT_SERVICE,
-    }
+pub fn render_firstboot_service() -> &'static str {
+    OPENRC_FIRSTBOOT_SERVICE
 }
 
 pub fn install_firstboot_service<R: CommandRunner>(
     runner: &mut R,
     root: &Path,
-    manager: InitManager,
     worker_elf: &[u8],
 ) -> Result<(), FirstbootError> {
     if worker_elf.is_empty() {
@@ -152,42 +140,22 @@ pub fn install_firstboot_service<R: CommandRunner>(
         return Err(FirstbootError::WorkerVersionMismatch);
     }
     let worker = root.join("usr/local/bin/rustaller-worker");
+    validate_planned_file(&worker)?;
+    validate_planned_file(&root.join("etc/init.d/fix-eth-name"))?;
     write_config::<FirstbootError>(&worker, worker_elf, 0o755)?;
 
-    let (service_path, command_args, service_mode) = match manager {
-        InitManager::OpenRc => (
-            root.join("etc/init.d/fix-eth-name"),
-            vec![
-                root.as_os_str().to_owned(),
-                OsString::from("rc-update"),
-                OsString::from("add"),
-                OsString::from("fix-eth-name"),
-                OsString::from("boot"),
-            ],
-            0o755,
-        ),
-        InitManager::Systemd => (
-            root.join("etc/systemd/system/fix-eth-name.service"),
-            vec![
-                root.as_os_str().to_owned(),
-                OsString::from("systemctl"),
-                OsString::from("enable"),
-                OsString::from("fix-eth-name.service"),
-            ],
-            0o644,
-        ),
-    };
     write_config::<FirstbootError>(
-        &service_path,
-        render_firstboot_service(manager).as_bytes(),
-        service_mode,
+        &root.join("etc/init.d/fix-eth-name"),
+        render_firstboot_service().as_bytes(),
+        0o755,
     )?;
-
-    let command_name = if manager == InitManager::OpenRc {
-        "rc-update"
-    } else {
-        "systemctl"
-    };
+    let command_args = [
+        root.as_os_str().to_owned(),
+        OsString::from("rc-update"),
+        OsString::from("add"),
+        OsString::from("fix-eth-name"),
+        OsString::from("boot"),
+    ];
     let command = CommandSpec::new("chroot", command_args)
         .phase("install-firstboot-service")
         .stdin(CommandInput::Null)
@@ -196,74 +164,41 @@ pub fn install_firstboot_service<R: CommandRunner>(
     let output = runner.run(&command).map_err(FirstbootError::Command)?;
     if output.status != Some(0) {
         return Err(FirstbootError::CommandFailed {
-            name: command_name,
+            name: "rc-update",
             status: output.status,
         });
     }
 
-    if manager == InitManager::Systemd {
-        let usr_preset = root.join("usr/lib/systemd/system-preset");
-        let preset_dir = if usr_preset.is_dir() {
-            usr_preset
-        } else {
-            root.join("lib/systemd/system-preset")
-        };
-        if !preset_dir.is_dir() {
-            return Err(FirstbootError::Filesystem(io::Error::new(
-                io::ErrorKind::NotFound,
-                "systemd system-preset directory is missing",
-            )));
-        }
-        let preset = preset_dir.join("01-fix-eth-name.preset");
-        write_config::<FirstbootError>(&preset, b"enable fix-eth-name.service\n", 0o644)?;
-    }
     Ok(())
 }
 
 pub fn cleanup_firstboot<R: CommandRunner>(
     runner: &mut R,
     root: &Path,
-    manager: InitManager,
 ) -> Result<(), FirstbootError> {
-    if manager == InitManager::OpenRc {
-        let commands: [(&str, &[&str]); 2] = [
-            ("rc-service", &["fix-eth-name", "zap"]),
-            ("rc-update", &["del", "fix-eth-name", "boot"]),
-        ];
-        for (program, args) in commands {
-            let command = CommandSpec::new(program, args.iter().copied())
-                .phase("firstboot-cleanup-openrc")
-                .stdin(CommandInput::Null)
-                .stdout_mode(OutputMode::Stream)
-                .stderr_mode(OutputMode::Stream);
-            let output = runner.run(&command).map_err(FirstbootError::Command)?;
-            if output.status != Some(0) {
-                return Err(FirstbootError::CommandFailed {
-                    name: if program == "rc-service" {
-                        "rc-service"
-                    } else {
-                        "rc-update"
-                    },
-                    status: output.status,
-                });
-            }
-        }
-        remove_if_exists(&root.join("etc/init.d/fix-eth-name"))?;
-    } else {
-        for path in [
-            "etc/systemd/system/fix-eth-name.service",
-            "etc/systemd/system/multi-user.target.wants/fix-eth-name.service",
-            "usr/lib/systemd/system-preset/01-fix-eth-name.preset",
-        ] {
-            remove_if_exists(&root.join(path))?;
-        }
-        // The installer selects usr/lib on merged-/usr targets. Only inspect
-        // the legacy lib path when it is a real directory, never through a
-        // link that could lead outside an isolated target root.
-        if fs::symlink_metadata(root.join("lib")).is_ok_and(|metadata| metadata.is_dir()) {
-            remove_if_exists(&root.join("lib/systemd/system-preset/01-fix-eth-name.preset"))?;
+    let commands: [(&str, &[&str]); 2] = [
+        ("rc-service", &["fix-eth-name", "zap"]),
+        ("rc-update", &["del", "fix-eth-name", "boot"]),
+    ];
+    for (program, args) in commands {
+        let command = CommandSpec::new(program, args.iter().copied())
+            .phase("firstboot-cleanup-openrc")
+            .stdin(CommandInput::Null)
+            .stdout_mode(OutputMode::Stream)
+            .stderr_mode(OutputMode::Stream);
+        let output = runner.run(&command).map_err(FirstbootError::Command)?;
+        if output.status != Some(0) {
+            return Err(FirstbootError::CommandFailed {
+                name: if program == "rc-service" {
+                    "rc-service"
+                } else {
+                    "rc-update"
+                },
+                status: output.status,
+            });
         }
     }
+    remove_if_exists(&root.join("etc/init.d/fix-eth-name"))?;
     remove_if_exists(&root.join("usr/local/bin/rustaller-worker"))
         .map_err(FirstbootError::Filesystem)
 }
@@ -386,125 +321,27 @@ where
     Ok(output.into_bytes())
 }
 
-pub fn rewrite_networkd_file<F>(
-    filename: &str,
-    input: &str,
-    mut get_ethx_by_mac: F,
-) -> Option<(String, String)>
-where
-    F: FnMut(&str) -> Option<String>,
-{
-    if !filename.starts_with("10-cloud-init-eth") || !filename.ends_with(".network") {
-        return None;
-    }
-    rewrite_networkd_file_fallible(filename, input, |mac| Ok(get_ethx_by_mac(mac)))
-        .ok()
-        .flatten()
-}
-
-fn rewrite_networkd_file_fallible<F>(
-    filename: &str,
-    input: &str,
-    mut get_ethx_by_mac: F,
-) -> io::Result<Option<(String, String)>>
-where
-    F: FnMut(&str) -> io::Result<Option<String>>,
-{
-    if !filename.starts_with("10-cloud-init-eth") || !filename.ends_with(".network") {
-        return Ok(None);
-    }
-    let Some(mac) = input
-        .lines()
-        .find_map(|line| line.strip_prefix("MACAddress="))
-        .filter(|mac| !mac.is_empty())
-    else {
-        return Ok(None);
-    };
-    let Some(eth) = get_ethx_by_mac(mac)? else {
-        return Ok(None);
-    };
-
-    let mut output = String::new();
-    for line in input.lines() {
-        output.push_str(&replace_eth_name(line, &eth));
-        output.push('\n');
-    }
-    Ok(Some((format!("10-{eth}.network"), output)))
-}
-
 fn apply_network_fixes_with_lookup<F>(root: &Path, mut lookup: F) -> io::Result<()>
 where
     F: FnMut(&str) -> io::Result<Option<String>>,
 {
     let interfaces = root.join("etc/network/interfaces");
     validate_planned_file(&interfaces).map_err(io::Error::other)?;
-    if interfaces.is_file() {
-        let input = fs::read_to_string(&interfaces)?;
-        if input.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "refusing to rewrite empty interfaces file",
-            ));
-        }
-        let output = rewrite_ifupdown_fallible(&input, |mac| {
-            let name = lookup(mac)?
-                .ok_or_else(|| io::Error::other("inherited interface MAC is missing"))?;
-            Ok(Some(name))
-        })?;
-        atomic_replace(&interfaces, &output)?;
-    }
 
-    let networkd = root.join("etc/systemd/network");
-    let entries = match fs::read_dir(&networkd) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
-    };
-    validate_directory_tree(&networkd).map_err(io::Error::other)?;
-    let mut files = entries
-        .collect::<io::Result<Vec<_>>>()?
-        .into_iter()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| {
-                    name.starts_with("10-cloud-init-eth") && name.ends_with(".network")
-                })
-        })
-        .collect::<Vec<_>>();
-    files.sort();
-
-    for path in files {
-        let Some(filename) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        validate_planned_file(&path).map_err(io::Error::other)?;
-        let input = fs::read_to_string(&path)?;
-        let Some((new_name, output)) =
-            rewrite_networkd_file_fallible(filename, &input, |mac| lookup(mac))?
-        else {
-            continue;
-        };
-        let destination = path.with_file_name(new_name);
-        if destination != path && fs::symlink_metadata(&destination).is_ok() {
-            return Err(io::Error::other("firstboot destination already exists"));
-        }
-        atomic_replace(&path, output.as_bytes())?;
-        fs::rename(path, destination)?;
+    let input = fs::read_to_string(&interfaces)?;
+    if input.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "refusing to rewrite empty interfaces file",
+        ));
     }
+    let output = rewrite_ifupdown_fallible(&input, |mac| {
+        let name =
+            lookup(mac)?.ok_or_else(|| io::Error::other("inherited interface MAC is missing"))?;
+        Ok(Some(name))
+    })?;
+    atomic_replace(&interfaces, &output)?;
     Ok(())
-}
-
-fn replace_eth_name(line: &str, eth: &str) -> String {
-    let Some(rest) = line.strip_prefix("Name=eth") else {
-        return line.to_owned();
-    };
-    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-    if digits == 0 {
-        return line.to_owned();
-    }
-    format!("Name={eth}{}", &rest[digits..])
 }
 
 fn remove_if_exists(path: &Path) -> io::Result<()> {
@@ -516,6 +353,4 @@ fn remove_if_exists(path: &Path) -> io::Result<()> {
     }
 }
 
-const SYSTEMD_FIRSTBOOT_SERVICE: &str = "[Unit]\nDescription=Fix Eth Name\nConditionPathExists=/usr/local/bin/rustaller-worker\n\nAfter=dbus.service\n\nBefore=networking.service\nBefore=systemd-networkd.service\n\nBefore=network.target\n\n[Service]\nType=oneshot\n\nStandardOutput=journal+console\nStandardError=journal+console\n\nExecStart=/usr/local/bin/rustaller-worker firstboot-fix\nExecStartPost=/usr/local/bin/rustaller-worker cleanup-systemd\n\n[Install]\nWantedBy=multi-user.target\n";
-
-const OPENRC_FIRSTBOOT_SERVICE: &str = "#!/sbin/openrc-run\n# shellcheck shell=sh\n\n# shellcheck disable=SC2034 # OpenRC reads this variable.\nDescription=\"Fix Eth Name\"\n\n# https://gitlab.alpinelinux.org/alpine/aports/-/blob/master/main/openrc/networking.initd\n# https://gitlab.alpinelinux.org/alpine/aports/-/blob/master/main/dhcpcd/dhcpcd.initd\ndepend() {\n    need localmount\n    want dev-settle\n\n    after bootmisc hwdrivers modules\n    before net networking dhcpcd\n}\n\nstart() {\n    ebegin \"Fix Eth Name\"\n    /usr/local/bin/rustaller-worker firstboot-fix\n    eend $?\n}\n\nstart_post() {\n    /usr/local/bin/rustaller-worker cleanup-openrc\n}\n";
+const OPENRC_FIRSTBOOT_SERVICE: &str = "#!/sbin/openrc-run\nDescription=\"Fix Eth Name\"\n\n# https://gitlab.alpinelinux.org/alpine/aports/-/blob/master/main/openrc/networking.initd\n# https://gitlab.alpinelinux.org/alpine/aports/-/blob/master/main/dhcpcd/dhcpcd.initd\ndepend() {\n    need localmount\n    want dev-settle\n\n    after bootmisc hwdrivers modules\n    before net networking dhcpcd\n}\n\nstart() {\n    ebegin \"Fix Eth Name\"\n    /usr/local/bin/rustaller-worker firstboot-fix\n    eend $?\n}\n\nstart_post() {\n    /usr/local/bin/rustaller-worker cleanup-openrc\n}\n";

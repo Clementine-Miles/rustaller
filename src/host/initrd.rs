@@ -8,8 +8,8 @@ use std::io::{self, Write};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-const START_MARKER: &str = "# BEGIN PERSONAL-LINUX initrd network worker";
-const END_MARKER: &str = "# END PERSONAL-LINUX initrd network worker";
+const START_MARKER: &str = "# BEGIN RUSTALLER initrd network worker";
+const END_MARKER: &str = "# END RUSTALLER initrd network worker";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InitrdError {

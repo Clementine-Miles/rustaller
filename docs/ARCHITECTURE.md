@@ -1,109 +1,89 @@
-# Rustaller architecture
+# Architecture
 
-Rustaller is a GPL-3.0-only Linux x86_64 reinstallation tool derived from
-bin456789/reinstall at `98f1e21013233d42750cc2e7a298a0818461d686`.
-It is a development preview with real disk-erasing actions. Full four-target
-BIOS/UEFI acceptance is still pending; see [actual evidence](ACCEPTANCE.md) and
-the [continuation guide](AGENT-HANDOFF.md).
+Rustaller is a Linux x86_64 reinstallation tool. One Rust workspace contains the
+primary crate and `xtask`. The `rustaller` host executable embeds the exact
+matching `rustaller-worker`; the optional `tui` feature belongs to the host.
+There is no current-system administration mode or separate recovery executable.
 
-## Responsibilities
+```text
+src/
+├── bin/                 host CLI/TUI and internal worker entry points
+├── model.rs, config.rs  typed InstallPlan and target configuration policy
+├── postinstall.rs       kernel, hostname and timezone validation
+├── codec.rs, plan_file.rs, deployment.rs
+│                        bounded private plan, disk identity and network facts
+├── command.rs, fsutil.rs typed native commands and safe per-file replacement
+├── host/                preflight, sources, disk/network discovery and kexec
+├── worker/              Alpine Live execution, temporary networking and first boot
+├── targets/             Alpine/Debian/Arch/Gentoo packages, kernels and GRUB
+├── shared/              target storage, configuration, networking and swapfile
+└── tui/                 installation drafts, editing and review
+xtask/src/               checks, bundle, preview release, source audit and VM harness
+tests/                   isolated Rust integration tests and fixtures
+upstream/install.sh      passive reference; never executed or shipped
+```
 
-| Module | Responsibility |
-| --- | --- |
-| `config`, `model`, `postinstall` | Existing typed installation options and combination validation; no filesystem mutation |
-| `codec`, `plan_file`, `deployment` | Bounded private handoff; credentials, disk identity and inherited network facts |
-| `host` | Read-only host discovery, official resource authentication, disk confirmation and kexec handoff; native SSH public-key preparation |
-| `worker` | Alpine Live orchestration, disk/RAM revalidation, first-boot NIC repair and logs |
-| `targets` | Distribution bootstrap, native package policy, accounts/SSH, installed kernel/module checks, GRUB and final target verification |
-| `shared::network` | Complete pure interface/DNS/MTU rendering and target-only network publication; TCP/sysctl, modules and GAI policy |
-| `shared::configure` | Hostname/timezone, target isolation, safe bounded reads, path checks, publication and offline OpenRC links |
-| `shared::storage`, `swapfile` | Identity-bound layouts and optional new inactive target swapfile |
-| `command`, `fsutil` | Typed argv/env/I/O, checked execution, swap protections and atomic per-file replacement |
-| `tui` | Host-only installation drafts, editors and review; common CLI/model validation |
-| `xtask` | Checks, matching static bundle, preview release packaging, source audit and isolated VM harness |
-
-There is one primary crate plus `xtask`; `tests/verify` is the separate retained
-Shell verifier. No current-system configuration callback or administration mode
-exists. DMITBox Local informed the [configuration review](DMITBOX-REVIEW.md);
-its standalone implementation is historical, not a runtime dependency.
-
-## Installation flow
+## Lifecycle
 
 ```mermaid
 flowchart TD
-    A[Host CLI/TUI and validated plan] --> B[Read-only host/disk/network preflight]
+    A[CLI/TUI validated plan] --> B[Read-only host, disk, network and kexec preflight]
     B --> C[Exact disk-identity confirmation]
-    C --> D[Authenticate Alpine resources and prepare private handoff]
+    C --> D[Authenticate resources and create private initrd handoff]
     D --> E[Native PID 1 shutdown and kexec]
-    E --> F[Alpine Live: modules, inherited network and SSH]
-    F --> G[Revalidate identity, RAM, mounts, swap and sectors]
-    G --> H[Partition and bootstrap selected target]
-    H --> I[Native packages, accounts, kernel, GRUB and optional swapfile]
-    I --> J[Complete target network publication and verification]
-    J --> K[Unmount, sync and one final reboot]
+    E --> F[Alpine Live: modules, temporary network and rescue SSH]
+    F --> G[Revalidate disk identity, RAM, sectors, mounts and swap]
+    G --> H[Prepare filesystems and install selected distribution]
+    H --> I[Configure accounts, kernel, GRUB, network and optional swap]
+    I --> J[Verify target, unmount, sync and one final reboot]
 ```
 
-Failures retain the Live rescue environment and never request the final reboot.
-The automatic path requires kexec; it does not silently fall back to a two-reboot
-GRUB workflow. Source PID 1 must be systemd or openrc-init. Rust manual
-ISO/netboot.xyz/reset execution remains unconnected.
+`host` observes the original machine and prepares the handoff; it does not
+partition its disks directly. Source PID 1 must be systemd or openrc-init.
+Automatic network policy capture currently requires an active, explicit flat
+systemd-networkd profile; other source network managers are refused. The OpenRC
+shutdown adapter remains tested in isolation, but does not by itself make OpenRC
+source networking supported. Kexec is required; failure does not select a
+different reboot workflow.
+`worker` admits only the private Alpine Live environment and binds the selected
+disk to its stable recorded identity before destructive actions. The target is
+mounted separately, normally at `/os`.
 
-## Network configuration ownership
+`targets` owns native distribution bootstrap, package trust, accounts, kernel
+payloads, initramfs and GRUB. Debian uses debootstrap minbase and systemd;
+Alpine uses OpenRC; Arch and Gentoo use systemd. GRUB supports the implemented
+BIOS and 64-bit EFI layouts; EFI uses removable/no-nvram fallback.
 
-Previously `targets::install::write_network` generated interface files,
-`shared::dns` reparsed them to add DNS policy, and `shared::network` parsed them
-again for MTU. Final resolver setup was another target-installation writer.
+## Configuration boundaries
 
-Now `InstallPlan.system` and `DeploymentManifest.network` feed one pure renderer
-in `shared::network`. It generates final native ifupdown/dhcpcd/udhcpc files for
-Alpine or MAC-matched systemd-networkd files for Debian/Arch/Gentoo. DNS overrides,
-RA/DHCPv6, static addresses, on-link gateways and MTU are rendered together.
-Dynamic address/gateway snapshots are left to native DHCP/RA renewal. Systemd
-DHCPv6 without RA uses `WithoutRA=solicit`; disabling IPv6 also suppresses its
-addresses/routes and link-local configuration.
+`InstallPlan` holds credentials and typed `SystemConfig`/`PostInstallConfig`.
+`DeploymentManifest` separately records disk identity and validated source
+network facts. Handoff encoding is bounded and rejects incompatible versions.
 
-Installed-kernel capability and module payload checks precede publication.
-`shared::configure` checks every output before writes. Module and glibc GAI
-managed blocks preserve unrelated contents and reject ambiguous/foreign policy.
-Package operations retain bootstrap DNS until the final network publication:
-static DNS replaces it with a regular resolver; automatic systemd DNS uses the
-native resolved link. Unknown resolver owners/symlinks fail explicitly.
+- `host/handoff.rs`: observe source addresses, authoritative network policy and
+  supported routing; refuse ambiguity before handoff.
+- `worker/initrd_network.rs`: restore connectivity in temporary Alpine Live.
+- `shared/network.rs`: pure final target rendering, kernel prerequisites, and
+  publication of native interface/DNS/MTU/TCP/module/GAI configuration.
+- `shared/configure.rs`: target isolation, safe bounded reads, complete output
+  validation, publication, hostname/timezone and offline service links.
+- `fsutil.rs`: exclusive temporary files, sync, rename and failure cleanup.
 
-Each file is replaced through `fsutil` and read back. Directory sync follows
-rename; a multi-file change is not a transaction. The caller exclusively owns
-the isolated target. A failure can leave earlier files published; it prevents
-the final reboot. Offline file/kernel checks do not establish runtime sysctl
-activation, DNS reachability or successful first boot.
+Package operations use bootstrap DNS. Final network publication happens after
+those operations. Replacements are atomic per file, not across the batch;
+installation failure retains Live and prevents the final reboot.
 
-## Preserved boundaries
+## First boot and limitations
 
-- Linux x86_64 source and targets only. Alpine latest stable, Debian stable
-  minbase with debootstrap/networkd, Arch rolling and Gentoo systemd stage3 all
-  install from Alpine Live using native trusted package tools.
-- RAM floors 512/512/1024/2048 MB are checked on host and before Live cleanup.
-  Stable disk identity, mounts, swap, writable state and sector geometry are
-  revalidated before destructive actions.
-- Schema 6 and manifest schema 1 remain unchanged. Compatibility marker remains
-  `RUSTALLER-CONFIG-20261112-06`; old plans and mismatched embedded workers fail.
-- XFS (default) or ext4 root, GRUB for BIOS/64-bit EFI, Secure Boot disabled,
-  512 MiB FAT32 ESP, removable/no-nvram EFI fallback. No EFI Stub.
-- Optional `/swapfile` is new, fully allocated and 0600. Only target boot activates
-  it; no original-host/Live swapon/swapoff or swap partition is permitted.
-- Non-root installations require a separate private root password and keep root
-  SSH disabled. Hostname is captured on the host, falling back to the target name.
-- CachyOS remains opt-in Arch policy with pinned official setup, authenticated
-  packages and a dedicated first-target-boot upgrade; no general hook mechanism.
-- TUI dependencies are host-only. Worker builds use `--no-default-features`.
-  `xtask bundle` verifies static ELF, version and exact worker embedding;
-  `xtask dist` rejects dirty source by default and stays draft/prerelease with
-  `installer_complete=false`. `sha2` remains required for release integrity.
+Alpine's generated ifupdown configuration uses interface names, so a one-shot
+Rust worker repairs them from captured MAC addresses before networking starts.
+Systemd target files match MAC addresses directly and need no filename repair.
+Opt-in Arch CachyOS has a separate native first-boot full upgrade and
+initramfs/GRUB refresh; failure retains its pending marker for retry.
 
-## Retained Shell baseline
-
-Rust automatic installation does not call the retained Shell installer.
-`reinstall.sh`, `trans.sh`, `initrd-network.sh`, `fix-eth-name.sh` and their fixed
-upstream comparison object remain unchanged. Shell deployment still uses exactly
-four runtime assets: `trans.sh`, `initrd-network.sh`, `fix-eth-name.sh`,
-`logviewer.html`, with marker `PERSONAL-LINUX-ONLY-20261119-04`. Those resources
-must come from the user's matching HTTPS deployment; do not mix Rust/Shell
-resource or confirmation models.
+ISO/netboot.xyz/reset models and validation components remain internal work in
+progress; their Rust execution paths are not connected. Unsupported source
+network managers, complex routing, containers, ARM/Windows, Secure Boot and
+provider-controlled boot contracts are not assumed compatible. See
+[installation](INSTALLATION.md), [configuration](CONFIGURATION.md),
+[security](SECURITY.md), [testing](TESTING.md) and [development](DEVELOPMENT.md).

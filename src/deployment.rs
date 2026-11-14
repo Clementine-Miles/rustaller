@@ -159,6 +159,23 @@ impl DeploymentManifest {
         if self.network.is_empty() || self.network.len() > 16 {
             return Err(fail("network interface count"));
         }
+        for v6 in [false, true] {
+            if self
+                .network
+                .iter()
+                .filter(|nic| {
+                    if v6 {
+                        nic.ipv6_gateway.is_some()
+                    } else {
+                        nic.ipv4_gateway.is_some()
+                    }
+                })
+                .count()
+                > 1
+            {
+                return Err(fail("multiple default gateways in one address family"));
+            }
+        }
         for (index, nic) in self.network.iter().enumerate() {
             if !valid_interface_name(&nic.name)
                 || self.network[..index]

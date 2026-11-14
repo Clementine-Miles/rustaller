@@ -101,7 +101,7 @@ pub fn package(
         sha256(&worker),
     );
     let notes = format!(
-        "# {tag} — development preview\n\nThis build contains real kexec handoff and disk-erasing installation actions. Full four-target BIOS/UEFI acceptance is pending; installer_complete remains false. Use disposable test machines with console access.\n\n- Linux x86_64 static musl entry binary; matching worker embedded.\n- TUI: {}.\n- Automatic targets: Alpine, Debian, Arch and Gentoo through Alpine Live. Source PID 1 must be systemd or openrc-init.\n- --inspect is read-only; an installation requires the complete identity-bound confirmation token.\n- The native ssh-keygen TUI tool writes local key files; back up the private key before erasing its disk.\n- Current-system configuration can persist hostname, timezone, DNS, network and SSH changes.\n- Rust ISO, netboot.xyz and reset execution are not connected.\n- Source commit: `{}`; uncommitted changes: {}.\n- Runtime compatibility: `{}`.\n- Keep this release as a draft/prerelease until acceptance is complete.\n\nDownload `{ENTRY_NAME}` and verify it against `SHA256SUMS`. Source and the GPL-3.0 license are provided by this repository.\n",
+        "# {tag} — development preview\n\nThis build contains real kexec handoff and disk-erasing installation actions. Full four-target BIOS/UEFI acceptance is pending; installer_complete remains false. Use disposable test machines with console access.\n\n- Linux x86_64 static musl entry binary; matching worker embedded.\n- TUI: {}.\n- Automatic targets: Alpine, Debian, Arch and Gentoo through Alpine Live. Source PID 1 must be systemd or openrc-init; automatic network capture currently requires an applied explicit flat systemd-networkd profile.\n- --inspect is read-only; an installation requires the complete identity-bound confirmation token.\n- The native ssh-keygen TUI tool writes local key files; back up the private key before erasing its disk.\n- Rust ISO, netboot.xyz and reset execution are not connected.\n- Source commit: `{}`; uncommitted changes: {}.\n- Runtime compatibility: `{}`.\n- Keep this release as a draft/prerelease until acceptance is complete.\n\nDownload `{ENTRY_NAME}` and verify it against `SHA256SUMS`. Source and the GPL-3.0 license are provided by this repository.\n",
         artifacts.tui,
         source.commit,
         source.dirty,
@@ -250,7 +250,7 @@ mod tests {
             fs::read(artifacts.host).unwrap()
         );
         assert!(!output.join("worker").exists());
-        assert!(!output.join("trans.sh").exists());
+        assert!(!output.join("upstream").exists());
         let metadata = fs::read_to_string(output.join("build-info.json")).unwrap();
         assert!(metadata.contains("\"installer_complete\": false"));
         assert!(metadata.contains("\"tui\": true"));

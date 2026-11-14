@@ -32,13 +32,7 @@ impl Wizard {
             if !valid_username(draft.get(Field::Username).trim()) {
                 return Err("Set a valid username".into());
             }
-            for field in [
-                Field::Username,
-                Field::SshPort,
-                Field::Confhome,
-                Field::WebPort,
-                Field::Frpc,
-            ] {
+            for field in [Field::Username, Field::SshPort, Field::WebPort, Field::Frpc] {
                 add(field);
             }
         }
@@ -133,7 +127,7 @@ impl Wizard {
                     .map(|key| format!("--ssh-key={}", key.0.trim())),
             );
         }
-        let CliOutcome::Plan(mut plan) = parse_args(&args, None).map_err(safe_cli_error)? else {
+        let CliOutcome::Plan(mut plan) = parse_args(&args).map_err(safe_cli_error)? else {
             return Err("Cannot create the install plan; check the fields".into());
         };
         if self.has_account() && draft.authentication == Authentication::Password {
@@ -321,10 +315,6 @@ impl Wizard {
         if self.has_account() {
             lines.extend([
                 "IP addressing/routes: inherit existing network configuration".into(),
-                format!(
-                    "Optional matching resources: {}",
-                    draft.display(Field::Confhome)
-                ),
                 format!("Web log port: {}", draft.display(Field::WebPort)),
                 format!("frpc: {}", draft.display(Field::Frpc)),
             ]);
