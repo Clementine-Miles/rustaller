@@ -1,7 +1,5 @@
 use rustaller::command::SystemRunner;
 use rustaller::host::args::{CliOutcome, parse_args};
-#[cfg(feature = "tui")]
-use rustaller::host::current::{CurrentConfig, CurrentReport, apply_current};
 use rustaller::host::handoff;
 use rustaller::model::InstallPlan;
 use std::io::{self, BufRead, IsTerminal, Read, Write};
@@ -33,7 +31,7 @@ fn run() -> Result<(), String> {
     if args.is_empty() {
         if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
             #[cfg(feature = "tui")]
-            return tui::run(confhome, run_plan, configure_current);
+            return tui::run(confhome, run_plan);
             #[cfg(not(feature = "tui"))]
             return Err("interactive TUI is not available in this development build".into());
         }
@@ -57,11 +55,6 @@ fn run() -> Result<(), String> {
 
 fn run_plan(plan: &InstallPlan) -> Result<(), String> {
     run_install(plan, None, false)
-}
-
-#[cfg(feature = "tui")]
-fn configure_current(config: &CurrentConfig) -> Result<CurrentReport, String> {
-    apply_current(&mut SystemRunner, config).map_err(|error| error.to_string())
 }
 
 fn run_install(

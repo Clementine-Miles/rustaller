@@ -108,7 +108,7 @@ fn home_is_centered_english_and_selects_a_system_before_installation_settings() 
     let screen = render(&mut wizard, 100, 30);
     assert!(screen.contains("RUSTALLER"));
     assert!(screen.contains("Install a system"));
-    assert!(screen.contains("Configure current system"));
+    assert!(!screen.contains("Configure current system"));
     assert!(
         !screen
             .chars()
@@ -187,155 +187,6 @@ fn explicit_back_offers_keep_discard_or_cancel_and_nested_snapshots_preserve_oth
     assert_eq!(wizard.draft().dns_mode, DnsMode::Auto);
     assert!(wizard.draft().get(Field::DnsServers).is_empty());
     assert_eq!(wizard.draft().get(Field::Hostname), "saved-host");
-}
-
-#[test]
-fn current_system_route_has_no_installation_fields_and_builds_a_separate_noop_or_apply_request() {
-    let mut wizard = wizard();
-    wizard.current_target = Ok(rustaller::model::Target::Debian);
-    press(&mut wizard, KeyCode::Down);
-    press(&mut wizard, KeyCode::Enter);
-    assert!(wizard.is_current());
-    assert_eq!(wizard.build_current().unwrap(), CurrentConfig::default());
-    assert!(wizard.build_plan().is_err());
-    assert!(!wizard.entries().iter().any(|e| matches!(
-        e.action,
-        Action::Open(Page::Boot | Page::Installation | Page::Resources | Page::Swap)
-    )));
-    open(&mut wizard, Page::Account);
-    assert!(
-        !wizard
-            .entries()
-            .iter()
-            .any(|e| matches!(e.action, Action::Open(Page::Auth | Page::Passwords)))
-    );
-    press(&mut wizard, KeyCode::Esc);
-    open(&mut wizard, Page::Host);
-    assert!(
-        !wizard
-            .entries()
-            .iter()
-            .any(|e| matches!(e.action, Action::Select(super::state::Setting::Kernel)))
-    );
-    set(&mut wizard, Field::Hostname, "current-host");
-    press(&mut wizard, KeyCode::Esc);
-    press(&mut wizard, KeyCode::F(2));
-    let Progress::ConfigureCurrent(config) =
-        wizard.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
-    else {
-        panic!("separate current-system request")
-    };
-    assert_eq!(config.hostname.as_deref(), Some("current-host"));
-    assert!(config.ssh_port.is_none());
-    assert!(config.ssh_keys.is_empty());
-    assert!(!wizard.summary().join("\n").contains("Target disk"));
-    wizard.view = View::Menu;
-    wizard
-        .draft_mut()
-        .keys
-        .push(TextValue::new("https://remote.example/keys"));
-    assert!(wizard.build_current().is_err());
-    choose(&mut wizard, 1);
-    assert!(!wizard.is_current());
-    assert!(wizard.draft().get(Field::Hostname).is_empty());
-}
-
-#[test]
-fn returning_from_current_mode_to_system_selection_preserves_its_draft_without_reusing_its_route() {
-    let mut wizard = wizard();
-    wizard.current_target = Ok(rustaller::model::Target::Debian);
-    press(&mut wizard, KeyCode::Down);
-    press(&mut wizard, KeyCode::Enter);
-    set(&mut wizard, Field::Hostname, "current-session-host");
-    raw_key(&mut wizard, KeyCode::Esc);
-    assert!(matches!(wizard.view, View::Leaving { .. }));
-    raw_key(&mut wizard, KeyCode::Enter);
-    assert_eq!(wizard.page(), Page::Home);
-    press(&mut wizard, KeyCode::Home);
-    press(&mut wizard, KeyCode::Enter);
-    assert_eq!(wizard.page(), Page::Targets);
-    assert!(!wizard.is_current());
-    assert!(wizard.draft().get(Field::Hostname).is_empty());
-    press(&mut wizard, KeyCode::Esc);
-    press(&mut wizard, KeyCode::Down);
-    press(&mut wizard, KeyCode::Enter);
-    assert!(wizard.is_current());
-    assert_eq!(wizard.draft().get(Field::Hostname), "current-session-host");
-}
-
-#[test]
-fn successful_current_apply_shows_backups_and_updates_the_saved_directory_baselines() {
-    use rustaller::host::current::CurrentReport;
-    let mut wizard = wizard();
-    wizard.current_target = Ok(rustaller::model::Target::Debian);
-    press(&mut wizard, KeyCode::Down);
-    press(&mut wizard, KeyCode::Enter);
-    open(&mut wizard, Page::Host);
-    set(&mut wizard, Field::Hostname, "applied-host");
-    wizard.complete_current(Ok(CurrentReport {
-        changed_files: vec!["etc/hostname".into()],
-        backup_dir: Some("/var/backups/rustaller-current/example".into()),
-        notes: vec!["Network and SSH were not restarted.".into()],
-    }));
-    let View::Outcome {
-        message, success, ..
-    } = &wizard.view
-    else {
-        panic!("result")
-    };
-    assert!(*success);
-    assert!(message.contains("etc/hostname"));
-    assert!(message.contains("/var/backups/rustaller-current/example"));
-    press(&mut wizard, KeyCode::Enter);
-    press(&mut wizard, KeyCode::Esc);
-    raw_key(&mut wizard, KeyCode::Esc);
-    assert!(matches!(wizard.view, View::Menu));
-    assert_eq!(wizard.page(), Page::Overview);
-    open(&mut wizard, Page::Host);
-    set(&mut wizard, Field::Hostname, "unsaved-replacement");
-    raw_key(&mut wizard, KeyCode::Esc);
-    raw_key(&mut wizard, KeyCode::Down);
-    raw_key(&mut wizard, KeyCode::Enter);
-    assert_eq!(wizard.draft().get(Field::Hostname), "applied-host");
-}
-
-#[test]
-fn current_apply_result_redacts_key_sources_and_cancel_never_submits_a_configuration() {
-    use rustaller::host::current::CurrentReport;
-    let mut wizard = wizard();
-    wizard.current_target = Ok(rustaller::model::Target::Debian);
-    press(&mut wizard, KeyCode::Down);
-    press(&mut wizard, KeyCode::Enter);
-    open(&mut wizard, Page::Account);
-    open(&mut wizard, Page::Keys);
-    wizard
-        .draft_mut()
-        .keys
-        .push(TextValue::new("/root/PUBLIC-KEY-SOURCE-SENTINEL"));
-    wizard.complete_current(Ok(CurrentReport {
-        changed_files: vec!["root/.ssh/authorized_keys".into()],
-        backup_dir: None,
-        notes: vec!["/root/PUBLIC-KEY-SOURCE-SENTINEL\u{1b}[31m".into()],
-    }));
-    let View::Outcome { message, .. } = &wizard.view else {
-        panic!("result")
-    };
-    assert!(!message.contains("PUBLIC-KEY-SOURCE-SENTINEL"));
-    assert!(!message.contains('\u{1b}'));
-    press(&mut wizard, KeyCode::Enter);
-    press(&mut wizard, KeyCode::Esc);
-    set(&mut wizard, Field::Hostname, "unapplied-draft");
-    raw_key(&mut wizard, KeyCode::Esc);
-    assert!(matches!(wizard.view, View::Leaving { .. }));
-    raw_key(&mut wizard, KeyCode::Down);
-    raw_key(&mut wizard, KeyCode::Down);
-    raw_key(&mut wizard, KeyCode::Enter);
-    assert!(matches!(wizard.view, View::Menu));
-    assert_eq!(wizard.page(), Page::Keys);
-    assert!(matches!(
-        wizard.key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
-        Progress::Cancel
-    ));
 }
 
 #[test]
@@ -517,12 +368,13 @@ fn tcp_and_swap_submenus_reuse_cli_validation_and_inactive_swap_values_are_ignor
         assert!(wizard.build_plan().unwrap().system.swap.size_mib.is_none());
         open(&mut wizard, Page::Network);
         open(&mut wizard, Page::Tcp);
-        wizard.frames.last_mut().unwrap().selected = wizard
-            .entries()
+        wizard.select(Setting::Congestion, 1);
+        for (field, value) in super::fields::TCP_FIELDS
             .iter()
-            .position(|e| matches!(e.action, Action::TcpPreset))
-            .unwrap();
-        press(&mut wizard, KeyCode::Enter);
+            .zip(["64", "8192", "8192", "16384", "1", "3", "1"])
+        {
+            set(&mut wizard, *field, value);
+        }
         press(&mut wizard, KeyCode::Esc);
         press(&mut wizard, KeyCode::Esc);
         open(&mut wizard, Page::Swap);
@@ -1251,14 +1103,6 @@ fn nonroot_installation_prompts_for_separate_confirmed_root_password_and_redacts
     assert!(!render(&mut wizard, 100, 30).contains("ROOT-PRIVATE-SENTINEL"));
     set(&mut wizard, Field::Username, "root");
     assert!(wizard.build_plan().unwrap().root_password.is_none());
-    wizard.choice = 8;
-    wizard.frames.last_mut().unwrap().page = Page::Account;
-    assert!(
-        !wizard
-            .entries()
-            .iter()
-            .any(|entry| matches!(entry.action, Action::Open(Page::RootPasswords)))
-    );
 }
 
 #[test]
@@ -1369,13 +1213,6 @@ fn custom_dns_editor_rejects_empty_invalid_duplicate_and_unsafe_addresses() {
     press(&mut wizard, KeyCode::Enter);
     assert!(matches!(wizard.view, View::Menu));
     assert_eq!(wizard.build_plan().unwrap().system.dns.servers.len(), 2);
-    wizard.choice = 8;
-    wizard.current_target = Ok(rustaller::model::Target::Debian);
-    wizard.select(Setting::DnsMode, 3);
-    assert_eq!(
-        wizard.build_current().unwrap().dns.servers[0].to_string(),
-        "8.8.8.8"
-    );
 }
 
 #[test]
@@ -1400,16 +1237,10 @@ fn filesystem_and_new_kernel_choices_reach_the_plan_and_stay_target_scoped() {
             }
         }
     }
-    wizard.choice = 8;
-    wizard.frames.last_mut().unwrap().page = Page::Host;
-    assert!(!wizard.entries().iter().any(|entry| matches!(
-        entry.action,
-        Action::Select(Setting::RootFilesystem | Setting::Kernel)
-    )));
 }
 
 #[test]
-fn hostname_prefill_keeps_explicit_values_and_current_system_draft_unchanged() {
+fn hostname_prefill_keeps_explicit_values_and_target_drafts() {
     let mut wizard = wizard();
     choose(&mut wizard, 1);
     set(&mut wizard, Field::Hostname, "explicit-host");
@@ -1420,5 +1251,47 @@ fn hostname_prefill_keeps_explicit_values_and_current_system_draft_unchanged() {
     assert_eq!(wizard.drafts[1].get(Field::Hostname), "explicit-host");
     assert_eq!(wizard.drafts[2].get(Field::Hostname), "arch");
     assert_eq!(wizard.drafts[3].get(Field::Hostname), "gentoo");
-    assert!(wizard.drafts[8].get(Field::Hostname).is_empty());
+    assert_eq!(wizard.drafts.len(), super::state::CHOICES.len());
+}
+
+#[test]
+fn all_eight_installation_routes_keep_their_indices_and_independent_drafts() {
+    let mut wizard = wizard();
+    assert_eq!(wizard.entries().len(), 2);
+    assert_eq!(wizard.drafts.len(), super::state::CHOICES.len());
+    for index in 0..super::state::CHOICES.len() {
+        choose(&mut wizard, index);
+        assert_eq!(wizard.choice, index);
+        assert_eq!(wizard.frames[1].selected, index);
+        let label = super::state::CHOICES[index].0;
+        assert_eq!(wizard.context_label(), label);
+        let _ = render(&mut wizard, 100, 30);
+        if index < 4 {
+            credentials(&mut wizard);
+            set(&mut wizard, Field::Hostname, &format!("target-{index}"));
+            assert_eq!(
+                wizard
+                    .build_plan()
+                    .unwrap()
+                    .post_install
+                    .hostname
+                    .as_deref(),
+                Some(format!("target-{index}").as_str())
+            );
+        }
+    }
+    for index in 0..4 {
+        choose(&mut wizard, index);
+        assert_eq!(
+            wizard.draft().get(Field::Hostname),
+            format!("target-{index}")
+        );
+    }
+    wizard.frames.truncate(1);
+    wizard.view = View::Menu;
+    press(&mut wizard, KeyCode::End);
+    assert!(matches!(
+        wizard.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Progress::Cancel
+    ));
 }

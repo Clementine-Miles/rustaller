@@ -3,10 +3,10 @@ use crate::command::{CommandInput, CommandSpec, OutputMode};
 use crate::config::InstallProfile;
 use crate::model::{BootMode, InstallPlan, PlanError, Target};
 use crate::postinstall::ConfigurationPlan;
-use crate::shared::configure::{ConfigurationError, validate_root};
-use crate::shared::dns::{
+use crate::shared::configure::{
     ConfigFile, publish_files, read_config, replace_managed_block, validate_planned_file,
 };
+use crate::shared::configure::{ConfigurationError, validate_root};
 use crate::worker::live::ValidatedLivePlan;
 use std::path::Path;
 
@@ -74,6 +74,7 @@ pub fn package_plan(
                 "openssh",
                 "ca-certificates",
                 "dhcpcd",
+                "ifupdown-ng",
                 match plan.system.root_filesystem {
                     crate::config::RootFilesystem::Xfs => "xfsprogs",
                     crate::config::RootFilesystem::Ext4 => "e2fsprogs",

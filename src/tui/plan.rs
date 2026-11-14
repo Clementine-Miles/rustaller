@@ -3,18 +3,13 @@ use super::state::{
     Authentication, CHOICES, Draft, IsoMode, Page, Wizard, boot_label, hold_label, iso_label,
     optional_label, valid_public_key_source, valid_username, yes_no,
 };
-use rustaller::config::NetworkConfig;
 use rustaller::config::{DnsConfig, DnsMode, InstallProfile};
 use rustaller::host::args::{CliError, CliOutcome, parse_args};
-use rustaller::host::current::CurrentConfig;
 use rustaller::host::ssh_keygen::{self, KeyType, KeygenOptions};
 use rustaller::model::{InstallPlan, SecretString};
 
 impl Wizard {
     pub fn build_plan(&self) -> Result<Box<InstallPlan>, String> {
-        if self.is_current() {
-            return Err("Current-system settings are not an install plan".into());
-        }
         let draft = self.draft();
         if self.is_automatic() && draft.hold == Some(1) {
             return Err("For rescue mode, choose Alpine Live from the system list".into());
@@ -172,53 +167,6 @@ impl Wizard {
         Ok(plan)
     }
 
-    pub fn build_current(&self) -> Result<CurrentConfig, String> {
-        if !self.is_current() {
-            return Err("Choose Configure current system first".into());
-        }
-        let target = *self.current_target.as_ref().map_err(Clone::clone)?;
-        let draft = self.draft();
-        let dns = effective_dns(draft)?;
-        let network = NetworkConfig {
-            congestion: draft.congestion,
-            qdisc: draft.qdisc,
-            ipv6: draft.ipv6,
-            address_preference: draft.address_preference,
-            mtu: parse_optional(draft, Field::Mtu)?,
-            buffer_mib: parse_optional(draft, Field::TcpBuffer)?,
-            somaxconn: parse_optional(draft, Field::Somaxconn)?,
-            syn_backlog: parse_optional(draft, Field::SynBacklog)?,
-            netdev_backlog: parse_optional(draft, Field::NetdevBacklog)?,
-            mtu_probing: parse_optional(draft, Field::MtuProbing)?,
-            fastopen: parse_optional(draft, Field::Fastopen)?,
-            syncookies: match draft.get(Field::Syncookies).trim() {
-                "" => None,
-                "0" => Some(false),
-                "1" => Some(true),
-                _ => return Err("SYN cookies must be blank, 0 or 1".into()),
-            },
-        };
-        let config = CurrentConfig {
-            hostname: optional_value(draft.get(Field::Hostname)),
-            timezone: optional_value(draft.get(Field::Timezone)),
-            dns,
-            network,
-            username: if draft.keys.is_empty() {
-                None
-            } else {
-                Some(draft.get(Field::Username).trim().to_owned())
-            },
-            ssh_port: parse_optional(draft, Field::SshPort)?,
-            ssh_keys: draft
-                .keys
-                .iter()
-                .map(|key| key.0.trim().to_owned())
-                .collect(),
-        };
-        config.validate(target).map_err(|error| error.to_string())?;
-        Ok(config)
-    }
-
     pub fn keygen_options(&self) -> Result<KeygenOptions, String> {
         if self.page() != Page::Keygen
             || !self.has_account()
@@ -256,9 +204,6 @@ impl Wizard {
     }
 
     pub fn summary(&self) -> Vec<String> {
-        if self.is_current() {
-            return self.current_summary();
-        }
         let draft = self.draft();
         let mut lines = vec![format!("System: {}", CHOICES[self.choice].0), "".into()];
         if self.has_account() {
@@ -415,67 +360,6 @@ impl Wizard {
         ]);
         lines
     }
-
-    fn current_summary(&self) -> Vec<String> {
-        let draft = self.draft();
-        let mut lines = vec![
-            self.context_label(),
-            String::new(),
-            format!(
-                "Hostname: {}",
-                optional_label(draft.get(Field::Hostname), "Unchanged")
-            ),
-            format!(
-                "Timezone: {}",
-                optional_label(draft.get(Field::Timezone), "Unchanged")
-            ),
-            format!(
-                "SSH port: {}",
-                optional_label(draft.get(Field::SshPort), "Unchanged")
-            ),
-            format!(
-                "SSH public keys: {} (hidden), existing user: {}",
-                draft.keys.len(),
-                draft.display(Field::Username)
-            ),
-            format!("DNS policy: {}", draft.dns_mode.as_str()),
-            format!(
-                "Congestion / queue: {} / {}",
-                draft.congestion.as_str(),
-                draft.qdisc.as_str()
-            ),
-            format!(
-                "IPv6: {}; address preference: {}",
-                draft.ipv6.as_str(),
-                draft.address_preference.as_str()
-            ),
-            format!(
-                "MTU: {}",
-                optional_label(draft.get(Field::Mtu), "Unchanged")
-            ),
-        ];
-        if draft.dns_mode == DnsMode::Static {
-            lines.extend([
-                format!("DNS provider: {}", draft.dns_provider.label()),
-                format!("DNS servers: {}", draft.dns_servers()),
-                format!(
-                    "Search domains: {}",
-                    optional_label(draft.get(Field::DnsSearch), "None")
-                ),
-            ]);
-        }
-        for field in TCP_FIELDS {
-            if !draft.get(*field).trim().is_empty() {
-                lines.push(format!("{}: {}", field.label(), draft.display(*field)));
-            }
-        }
-        lines.extend([String::new(),"Apply only the settings shown above to this running system.".into(),
-            "Configuration is persisted with backups. Network and SSH services are not restarted.".into(),
-            "Static DNS changes can affect new lookups immediately. Draft discard does not undo applied changes.".into(),
-            "This route does not install a system, format disks, replace kernels or create swapfiles.".into(),
-            "Enter explicitly applies these changes; Esc returns to editing.".into()]);
-        lines
-    }
 }
 
 fn effective_dns(draft: &Draft) -> Result<DnsConfig, String> {
@@ -506,24 +390,6 @@ fn effective_dns(draft: &Draft) -> Result<DnsConfig, String> {
     Ok(dns)
 }
 
-fn optional_value(value: &str) -> Option<String> {
-    let value = value.trim();
-    (!value.is_empty()).then(|| value.to_owned())
-}
-fn parse_optional<T: std::str::FromStr>(
-    draft: &super::state::Draft,
-    field: Field,
-) -> Result<Option<T>, String> {
-    let value = draft.get(field).trim();
-    if value.is_empty() {
-        Ok(None)
-    } else {
-        value
-            .parse()
-            .map(Some)
-            .map_err(|_| format!("Invalid {}", field.label()))
-    }
-}
 fn safe_cli_error(error: CliError) -> String {
     match error {
         CliError::InvalidPlan(error) => error.to_string(),

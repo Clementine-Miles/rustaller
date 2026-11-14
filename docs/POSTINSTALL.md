@@ -24,7 +24,7 @@ Only the above options are accepted, arbitrary package names are not supported�
 
 host name 1–63 Bit ASCII Letters, numbers, hyphens, the beginning and end must be letters or numbers. Time zone must be relative IANA name, such as `Etc/UTC`；Reject absolute paths, points/Empty path segments and control characters exist to target zoneinfo Subject to。ISO/netboot.xyz/reset/`hold=1` Target configuration not accepted。
 
-not specified hostname When, first read the original system `/etc/hostname`，Read again `/proc/sys/kernel/hostname`；efficient FQDN Take the first tag and ignore it localhost/Invalid value, last used `alpine`、`debian`、`arch` or `gentoo`。If the current system configuration is left blank, it still means that it will not be modified.。
+not specified hostname When, first read the original system `/etc/hostname`，Read again `/proc/sys/kernel/hostname`；efficient FQDN Take the first tag and ignore it localhost/Invalid value, last used `alpine`、`debian`、`arch` or `gentoo`。
 
 ## Arch CachyOS
 

@@ -6,9 +6,9 @@ use crate::command::{
 use crate::deployment::DeploymentManifest;
 use crate::fsutil::atomic_replace;
 use crate::host::sources::{self, GentooStage3};
-use crate::model::{BootMode, Target};
+use crate::model::{BootMode, Target, valid_account_name as valid_username};
 use crate::shared::configure::{ConfigurationError, validate_root};
-use crate::shared::dns::{ensure_parent, validate_planned_file};
+use crate::shared::configure::{ensure_parent, validate_planned_file};
 use crate::shared::storage::DiskLayout;
 use crate::worker::live::ValidatedLivePlan;
 use std::ffi::{OsStr, OsString};
@@ -270,16 +270,7 @@ pub fn validate_install_options(
     if plan.target == Target::Debian {
         super::debian::validate_codename(&manifest.debian_codename)?;
     }
-    if plan.system.network.ipv6 == crate::config::Ipv6Policy::Disable
-        && !manifest
-            .network
-            .iter()
-            .any(|nic| (!nic.ipv4_addresses.is_empty() || nic.dhcp4) && nic.ipv4_gateway.is_some())
-    {
-        return Err(InstallError::Invalid(
-            "disabling IPv6 would leave no inherited IPv4 default route",
-        ));
-    }
+    crate::shared::network::validate_network_policy(plan, manifest)?;
     if let Some(path) = &plan.frpc_config {
         if path != "/configs/frpc.toml" {
             return Err(InstallError::Invalid(
@@ -333,19 +324,9 @@ pub fn bootstrap<R: CommandRunner>(
                 args.push("--no-cache".into());
             }
             args.push("add".into());
-            args.extend(
-                [
-                    "alpine-base",
-                    "openssh",
-                    "ca-certificates",
-                    "dhcpcd",
-                    match plan.plan().system.root_filesystem {
-                        crate::config::RootFilesystem::Xfs => "xfsprogs",
-                        crate::config::RootFilesystem::Ext4 => "e2fsprogs",
-                    },
-                ]
-                .map(Into::into),
-            );
+            let profile =
+                super::packages::package_plan(plan.plan(), layout.boot_mode(), true, &[])?;
+            args.extend(profile.bootstrap_packages.into_iter().map(Into::into));
             checked(runner, "apk", args, "alpine-bootstrap-rootfs")?;
         }
         Target::Debian => {
@@ -486,7 +467,6 @@ pub fn configure<R: CommandRunner>(
             }
             _ => return Err(InstallError::Invalid("automatic target required")),
         }
-        write_network(root, manifest, plan.plan().target)?;
         configure_accounts(runner, root, plan)?;
         let hostname = target_hostname(plan.plan());
         if plan.plan().post_install.hostname.is_none() {
@@ -499,15 +479,13 @@ pub fn configure<R: CommandRunner>(
         }
         crate::shared::configure::apply_basic_configuration(root, plan, true)?;
         write_target_hosts(root, &hostname)?;
-        let needs_kernel_config = plan.plan().system.network.congestion
-            != crate::config::CongestionControl::Default
-            || plan.plan().system.network.qdisc != crate::config::QueueDiscipline::Default;
+        let needs_kernel_config =
+            crate::shared::network::needs_kernel_config(&plan.plan().system.network);
         let kernel_config = if needs_kernel_config {
             installed_kernel_config(runner, root, plan)?
         } else {
             String::new()
         };
-        crate::shared::network::apply_network_configuration(root, plan, &kernel_config)?;
         if needs_kernel_config {
             verify_requested_modules(root, &kernel_config, plan)?;
         }
@@ -550,39 +528,13 @@ pub fn configure<R: CommandRunner>(
             &worker,
         )?;
         cleanup_cache(runner, root, plan)?;
-        finalize_resolver(root, plan)?;
+        crate::shared::network::apply_network_configuration(root, plan, manifest, &kernel_config)?;
         verify_installed_target(runner, root, plan, layout)?;
         remove_live_transport(root)?;
         Ok(())
     })();
     restore_package_service_start(root, plan.plan().target)?;
     result
-}
-
-fn finalize_resolver(root: &Path, plan: &ValidatedLivePlan) -> Result<(), InstallError> {
-    validate_root(root)?;
-    if plan.plan().hold == Some(1) {
-        return Err(InstallError::Invalid(
-            "rescue must not configure a target resolver",
-        ));
-    }
-    if plan.plan().target == Target::Alpine
-        || plan.plan().system.dns.mode != crate::config::DnsMode::Auto
-    {
-        return Ok(());
-    }
-    let path = root.join("etc/resolv.conf");
-    crate::shared::dns::validate_planned_parent(&path)?;
-    crate::shared::configure::validate_destination(&path, true)?;
-    // Bootstrap/package operations used a regular copy of Live DNS. Only after
-    // those finish, let resolved track DHCP renewals on the installed system.
-    match fs::remove_file(&path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
-    }
-    symlink("/run/systemd/resolve/stub-resolv.conf", path)?;
-    Ok(())
 }
 
 fn prevent_package_service_start(root: &Path, target: Target) -> Result<(), InstallError> {
@@ -607,111 +559,6 @@ fn prevent_package_service_start(root: &Path, target: Target) -> Result<(), Inst
 fn restore_package_service_start(root: &Path, target: Target) -> Result<(), InstallError> {
     if target == Target::Debian {
         fs::remove_file(root.join("usr/sbin/policy-rc.d"))?;
-    }
-    Ok(())
-}
-
-pub fn write_network(
-    root: &Path,
-    manifest: &DeploymentManifest,
-    target: Target,
-) -> Result<(), InstallError> {
-    validate_root(root)?;
-    manifest
-        .validate()
-        .map_err(|_| InstallError::Invalid("invalid network manifest"))?;
-    if target == Target::Alpine {
-        let mut interfaces = "auto lo\niface lo inet loopback\n\n".to_owned();
-        for nic in &manifest.network {
-            interfaces.push_str(&format!("# mac {}\nauto {}\n", nic.mac, nic.name));
-            if nic.dhcp4 {
-                interfaces.push_str(&format!("iface {} inet dhcp\n", nic.name));
-            } else if let Some(first) = nic.ipv4_addresses.first() {
-                interfaces.push_str(&format!(
-                    "iface {} inet static\n    address {first}\n",
-                    nic.name
-                ));
-                for address in nic.ipv4_addresses.iter().skip(1) {
-                    interfaces.push_str(&format!(
-                        "    post-up ip -4 addr replace {address} dev {}\n",
-                        nic.name
-                    ));
-                }
-                if let Some(gateway) = &nic.ipv4_gateway {
-                    interfaces.push_str(&format!(
-                        "    post-up ip -4 route replace default via {gateway} onlink dev {}\n",
-                        nic.name
-                    ));
-                }
-            }
-            if nic.dhcp6 {
-                interfaces.push_str(&format!("iface {} inet6 dhcp\n", nic.name));
-            } else if nic.accept_ra {
-                interfaces.push_str(&format!("iface {} inet6 auto\n", nic.name));
-            } else if let Some(first) = nic.ipv6_addresses.first() {
-                interfaces.push_str(&format!(
-                    "iface {} inet6 static\n    address {first}\n",
-                    nic.name
-                ));
-                for address in nic.ipv6_addresses.iter().skip(1) {
-                    interfaces.push_str(&format!(
-                        "    post-up ip -6 addr replace {address} dev {}\n",
-                        nic.name
-                    ));
-                }
-                if let Some(gateway) = &nic.ipv6_gateway {
-                    interfaces.push_str(&format!(
-                        "    post-up ip -6 route replace default via {gateway} onlink dev {}\n",
-                        nic.name
-                    ));
-                }
-            }
-            interfaces.push('\n');
-        }
-        write_target(root, "etc/network/interfaces", interfaces.as_bytes(), 0o644)?;
-        // No interface-name binding: the firstboot MAC repair renames ifupdown
-        // stanzas; dhcpcd remains valid if ens3 becomes eth0 after rustaller.
-        write_target(
-            root,
-            "etc/dhcpcd.conf",
-            b"# rustaller: deterministic SLAAC, native ifupdown selects interfaces\nslaac hwaddr\n",
-            0o644,
-        )?;
-    } else {
-        for (index, nic) in manifest.network.iter().enumerate() {
-            let dhcp = match (nic.dhcp4, nic.dhcp6) {
-                (true, true) => "yes",
-                (true, false) => "ipv4",
-                (false, true) => "ipv6",
-                (false, false) => "no",
-            };
-            let mut text = format!(
-                "[Match]\nMACAddress={}\n\n[Network]\nDHCP={dhcp}\nIPv6AcceptRA={}\n",
-                nic.mac,
-                if nic.accept_ra { "yes" } else { "no" }
-            );
-            if !nic.dhcp4 {
-                for address in &nic.ipv4_addresses {
-                    text.push_str(&format!("Address={address}\n"));
-                }
-            }
-            if !nic.dhcp6 && !nic.accept_ra {
-                for address in &nic.ipv6_addresses {
-                    text.push_str(&format!("Address={address}\n"));
-                }
-            }
-            for gateway in nic.ipv4_gateway.iter().chain(&nic.ipv6_gateway) {
-                text.push_str(&format!(
-                    "\n[Route]\nGateway={gateway}\nGatewayOnLink=yes\n"
-                ));
-            }
-            write_target(
-                root,
-                &format!("etc/systemd/network/{:02}-{}.network", 10 + index, nic.name),
-                text.as_bytes(),
-                0o644,
-            )?;
-        }
     }
     Ok(())
 }
@@ -826,9 +673,9 @@ fn configure_accounts<R: CommandRunner>(
     );
     let sshd = root.join("etc/ssh/sshd_config");
     validate_planned_file(&sshd)?;
-    let original = crate::shared::dns::read_config(&sshd)?;
+    let original = crate::shared::configure::read_config(&sshd)?;
     // OpenSSH uses first-obtained values; prepend managed settings before Include/Match.
-    let text = crate::shared::dns::replace_managed_block(
+    let text = crate::shared::configure::replace_managed_block(
         &original,
         &config,
         "# BEGIN rustaller SSH",
@@ -1017,14 +864,31 @@ fn installed_kernel_config<R: CommandRunner>(
             }
         }
     }
+    let target_root = fs::canonicalize(root)?;
+    for path in &mut candidates {
+        *path = fs::canonicalize(&path)?;
+        if !path.starts_with(&target_root) {
+            return Err(InstallError::Invalid(
+                "installed kernel configuration escapes target",
+            ));
+        }
+        validate_planned_file(path)?;
+    }
     candidates.sort();
+    candidates.dedup();
     if candidates.is_empty() && plan.plan().target == Target::Arch {
         return arch_module_capability_config(root, &plan.plan().system.network);
     }
-    let path = candidates.last().ok_or(InstallError::Invalid(
-        "installed kernel configuration is missing",
-    ))?;
-    let data = fs::read(path)?;
+    if candidates.len() != 1 {
+        return Err(InstallError::Invalid(
+            "installed kernel configuration is missing or ambiguous",
+        ));
+    }
+    let path = &candidates[0];
+    let mut data = Vec::new();
+    File::open(path)?
+        .take(4 * 1024 * 1024 + 1)
+        .read_to_end(&mut data)?;
     if data.len() > 4 * 1024 * 1024 {
         return Err(InstallError::Invalid(
             "installed kernel configuration is oversized",
@@ -1052,7 +916,6 @@ fn arch_module_capability_config(
     root: &Path,
     network: &crate::config::NetworkConfig,
 ) -> Result<String, InstallError> {
-    use crate::config::{CongestionControl, QueueDiscipline};
     validate_root(root)?;
     let canonical = fs::canonicalize(root)?;
     let device = fs::metadata(&canonical)?.dev();
@@ -1154,21 +1017,14 @@ fn arch_module_capability_config(
             }
         }
     }
-    let mut needed = Vec::new();
-    match network.congestion {
-        CongestionControl::Default => {}
-        CongestionControl::Bbr => needed.push(("CONFIG_TCP_CONG_BBR", "tcp_bbr")),
-        CongestionControl::Cubic => needed.push(("CONFIG_TCP_CONG_CUBIC", "tcp_cubic")),
-    }
-    match network.qdisc {
-        QueueDiscipline::Default => {}
-        QueueDiscipline::Fq => needed.push(("CONFIG_NET_SCH_FQ", "sch_fq")),
-        QueueDiscipline::FqCodel => needed.push(("CONFIG_NET_SCH_FQ_CODEL", "sch_fq_codel")),
-    }
+    let needed = crate::shared::network::kernel_requirements(network);
     let mut text = String::from(
         "# rustaller: capabilities from the authenticated installed kernel module inventory\n",
     );
     for (symbol, module) in needed {
+        if module.is_empty() {
+            return Err(ConfigurationError::UnsupportedNetworkKernel.into());
+        }
         let builtin = builtins.contains(module);
         let count = modules.get(module).copied().unwrap_or(0);
         let state = match (builtin, count) {
@@ -2096,9 +1952,6 @@ fn copy_live_resolver(root: &Path) -> Result<(), InstallError> {
     atomic_replace(&path, &bytes, 0o644)?;
     Ok(())
 }
-fn valid_username(value: &str) -> bool {
-    crate::model::valid_account_name(value)
-}
 fn literal_public_key(key: &str) -> bool {
     let mut fields = key.split_whitespace();
     matches!(
@@ -2132,7 +1985,7 @@ fn target_hostname(plan: &crate::model::InstallPlan) -> String {
 }
 
 fn write_target_hosts(root: &Path, hostname: &str) -> Result<(), InstallError> {
-    // This is a freshly installed target, not the current-system editor.
+    // These entries belong to a freshly installed target.
     write_target(
         root,
         "etc/hosts",
@@ -2144,7 +1997,7 @@ fn write_target_hosts(root: &Path, hostname: &str) -> Result<(), InstallError> {
     )
 }
 fn write_target(root: &Path, name: &str, bytes: &[u8], mode: u32) -> Result<(), InstallError> {
-    crate::shared::dns::write_config(&root.join(name), bytes, mode)
+    crate::shared::configure::write_config(&root.join(name), bytes, mode)
 }
 pub(crate) fn command<I, S>(program: &str, args: I, phase: &str) -> CommandSpec
 where
@@ -2594,72 +2447,5 @@ mod runtime_tests {
         let outside = Scratch::new();
         symlink("/usr/lib", outside.0.join("lib")).unwrap();
         assert!(arch_module_capability_config(&outside.0, &network()).is_err());
-    }
-}
-
-#[cfg(test)]
-mod resolver_tests {
-    use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    struct Directory(PathBuf);
-    impl Directory {
-        fn new() -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "rustaller-resolver-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            fs::create_dir(&path).unwrap();
-            fs::create_dir(path.join("etc")).unwrap();
-            Self(path)
-        }
-    }
-    impl Drop for Directory {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-    fn plan(target: Target) -> crate::model::InstallPlan {
-        crate::model::InstallPlan::new(target)
-    }
-    fn validated(plan: crate::model::InstallPlan) -> ValidatedLivePlan {
-        crate::worker::live::validate_live_plan_with_uid(
-            plan,
-            "x86_64",
-            2048,
-            crate::RUNTIME_VERSION,
-            0,
-        )
-        .unwrap()
-    }
-    #[test]
-    fn automatic_systemd_dns_returns_to_native_resolved_after_package_operations() {
-        for target in [Target::Debian, Target::Arch, Target::Gentoo] {
-            let root = Directory::new();
-            let path = root.0.join("etc/resolv.conf");
-            fs::write(&path, b"nameserver 192.0.2.53\n").unwrap();
-            finalize_resolver(&root.0, &validated(plan(target))).unwrap();
-            assert_eq!(
-                fs::read_link(path).unwrap(),
-                Path::new("/run/systemd/resolve/stub-resolv.conf")
-            );
-        }
-    }
-    #[test]
-    fn explicit_dns_and_alpine_resolvers_are_preserved() {
-        for target in [Target::Alpine, Target::Debian] {
-            let root = Directory::new();
-            let path = root.0.join("etc/resolv.conf");
-            let bytes = b"nameserver 192.0.2.53\n";
-            fs::write(&path, bytes).unwrap();
-            let mut plan = plan(target);
-            if target == Target::Debian {
-                plan.system.dns.mode = crate::config::DnsMode::Static;
-                plan.system.dns.servers.push("192.0.2.53".parse().unwrap());
-            }
-            finalize_resolver(&root.0, &validated(plan)).unwrap();
-            assert_eq!(fs::read(path).unwrap(), bytes);
-        }
     }
 }

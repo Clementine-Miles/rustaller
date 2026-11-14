@@ -45,7 +45,7 @@ like systemd-boot，exist ESP management kernel/initramfs with text options，It
 
 ## Original designed interface and acceptance scope
 
-Keep existing independent goal drafts and Save/Discard/Cancel。swapfile according to MiB Enter, go to the size field when enabled, empty values ​​are required; turn off to retain but not submit. New installation hostname Leave blank for rustaller，Leave the current system blank。
+Keep existing independent goal drafts and Save/Discard/Cancel。swapfile according to MiB Enter, go to the size field when enabled, empty values ​​are required; turn off to retain but not submit. New installation hostname Leave blank for rustaller。
 
 If you re-authorize in the future, you must separate the firmware mode/Guidance methods, restrictions root/initrd/init Wait for administrative parameters, deny credentials、Shell hooks, excessive lengths and conflicting duplicate keys; synchronize schema/Tags, package strategies、ESP、Boot verification, kernel update hooks and VM probe，Can’t just replace grub-install。
 

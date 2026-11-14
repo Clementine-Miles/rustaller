@@ -27,7 +27,6 @@ Main menu
 │       ├── Tool: netboot.xyz
 │       ├── Tool: remove installation boot entry
 │       └── Back to previous menu
-├── Configure current system
 └── Quit
 ```
 
@@ -91,36 +90,6 @@ DNS presets never overwrite the custom draft. Only the selected provider's addre
 
 Each target has a session draft. Hidden values are not submitted: stale static DNS in automatic mode, disabled swap size, or minimal-only flags in standard mode. Review uses the CLI's validated plan, then restores the native terminal for disk confirmation and progress. Errors return to a result page; navigating back never retries installation.
 
-## Configure the current system
-
-Supports Alpine, Debian-compatible, Arch and Gentoo configuration semantics. Apply requires root on Linux x86_64; opening, editing or saving drafts changes no system files.
-
-Directories:
-
-```text
-Current system
-├── Account and SSH
-│   ├── Existing user
-│   ├── SSH public keys: append, edit the draft or generate
-│   └── SSH port: blank means unchanged
-├── Host settings
-│   ├── Hostname
-│   └── Timezone
-├── Network and DNS
-│   ├── DNS settings
-│   ├── TCP and congestion control
-│   ├── IPv6 and address preference
-│   └── Interface MTU
-├── Review and apply configuration
-└── Back to previous menu
-```
-
-Only explicit fields are applied. Existing-account public keys accept inline OpenSSH values or absolute local files, not remote sources. This route does not create accounts, set passwords, select disks, install kernels or create swap.
-
-Apply validates paths and native SSH settings, prepares private backups and publishes files. The result lists changes, backups and notes; unsupported/conflicting layouts are rejected, existing access restrictions retained.
-
-No services restart, sysctl load or swap activation occurs. Static DNS may affect lookups immediately. Reload SSH deliberately from a retained session; socket activation may need separate configuration. Keep backups for restoration. Apply establishes the saved draft baseline; discarding later edits does not undo applied changes. Inspect reported partial failures using backups and changed paths.
-
 ## Back, save, discard and cancel
 
 Every configuration directory has an explicit **Back to previous menu** item. `Esc` or `Left` performs the same navigation. Leaving a directory with changes opens:
@@ -135,7 +104,7 @@ Drafts last only for the session; Save never installs or applies settings. `Ctrl
 
 ## Native SSH key generation
 
-Open **Account and SSH → Authentication → SSH public keys → Generate key** for installation, or **Account and SSH → SSH public keys → Generate key** in current-system mode.
+Open **Account and SSH → Authentication → SSH public keys → Generate key**.
 
 Configure the type, KDF rounds, cipher, comment, output path and optional RSA bit count consecutively. Defaults produce the equivalent of:
 
@@ -163,4 +132,4 @@ Below 48×16, hidden actions are blocked while drafts survive resizing. Navigati
 
 ## 2026-11-02 Interface adjustment
 
-New installation hostname Currently, priority is given to inheriting the original system. If missing, the release name is used to replace the old system. `rustaller` default; leave blank to preserve the current system setting. Enable swapfile After the focus goes to MiB Size, empty value is required; close to keep draft but not submit. Return to use Save/Discard/Cancel。EFI Stub Canceled, no access to execution menu, please see the plan [EFI Stub Evaluate](EFI-STUB-OPTIONS.md)。
+New installation hostname Currently, priority is given to inheriting the original system. If missing, the release name is used to replace the old system. `rustaller` default; the source host is inspected read-only. Enable swapfile After the focus goes to MiB Size, empty value is required; close to keep draft but not submit. Return to use Save/Discard/Cancel。EFI Stub Canceled, no access to execution menu, please see the plan [EFI Stub Evaluate](EFI-STUB-OPTIONS.md)。

@@ -1,4 +1,5 @@
 //! Private, bounded host-to-Live deployment facts. No login secrets belong here.
+use crate::fsutil::effective_uid;
 use crate::host::sources::{GENTOO_ARCHIVE, GentooStage3};
 use crate::model::BootMode;
 use std::fs::{self, File};
@@ -31,6 +32,44 @@ pub struct NetworkInterface {
     pub dhcp4: bool,
     pub dhcp6: bool,
     pub accept_ra: bool,
+}
+
+pub fn valid_interface_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 15
+        && value != "lo"
+        && (value.as_bytes()[0].is_ascii_alphanumeric() || value.starts_with('_'))
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_.:-".contains(&b))
+}
+
+/// Native parsing rejects shorthand IPv4, octal, scopes, ports and injection.
+pub fn parse_interface_address(value: &str, v6: bool) -> Result<(IpAddr, u8), DeploymentError> {
+    let fail = DeploymentError::Invalid;
+    let (address, prefix) = value
+        .split_once('/')
+        .ok_or_else(|| fail("interface address requires CIDR"))?;
+    let address = address
+        .parse::<IpAddr>()
+        .map_err(|_| fail("interface IP address"))?;
+    let bits = prefix.parse::<u8>().map_err(|_| fail("interface prefix"))?;
+    if !valid_unicast(address, v6) || bits > if v6 { 128 } else { 32 } || bits.to_string() != prefix
+    {
+        return Err(fail("interface address/prefix"));
+    }
+    Ok((address, bits))
+}
+
+fn valid_unicast(address: IpAddr, v6: bool) -> bool {
+    address.is_ipv6() == v6
+        && !address.is_unspecified()
+        && !address.is_loopback()
+        && !address.is_multicast()
+        && match address {
+            IpAddr::V4(ip) => !ip.is_broadcast(),
+            IpAddr::V6(ip) => ip.to_ipv4_mapped().is_none(),
+        }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -121,21 +160,16 @@ impl DeploymentManifest {
             return Err(fail("network interface count"));
         }
         for (index, nic) in self.network.iter().enumerate() {
-            if nic.name.is_empty()
-                || nic.name.len() > 15
-                || nic.name == "lo"
-                || !nic
-                    .name
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"_.:-".contains(&b))
+            if !valid_interface_name(&nic.name)
                 || self.network[..index]
                     .iter()
                     .any(|old| old.name == nic.name || old.mac.eq_ignore_ascii_case(&nic.mac))
             {
                 return Err(fail("network interface identity"));
             }
-            crate::worker::initrd_network::InitrdNetworkConfig::new(&nic.mac, "", "", "", "", "")
-                .map_err(|_| fail("network MAC address"))?;
+            if !crate::worker::initrd_network::valid_mac(&nic.mac) {
+                return Err(fail("network MAC address"));
+            }
             for (v6, addresses, gateway) in [
                 (false, &nic.ipv4_addresses, &nic.ipv4_gateway),
                 (true, &nic.ipv6_addresses, &nic.ipv6_gateway),
@@ -143,32 +177,29 @@ impl DeploymentManifest {
                 if addresses.len() > 16 {
                     return Err(fail("too many interface addresses"));
                 }
-                for (i, value) in addresses.iter().enumerate() {
-                    let (address, prefix) = value
-                        .split_once('/')
-                        .ok_or_else(|| fail("interface address requires CIDR"))?;
-                    let address = address
-                        .parse::<IpAddr>()
-                        .map_err(|_| fail("interface IP address"))?;
-                    let prefix = prefix.parse::<u8>().map_err(|_| fail("interface prefix"))?;
-                    if address.is_ipv6() != v6
-                        || address.is_unspecified()
-                        || address.is_loopback()
-                        || address.is_multicast()
-                        || prefix > if v6 { 128 } else { 32 }
-                        || addresses[..i].contains(value)
-                    {
+                let mut seen = Vec::new();
+                for value in addresses {
+                    let (address, _) = parse_interface_address(value, v6)?;
+                    // An address with a different spelling or prefix still
+                    // identifies the same local endpoint.
+                    if seen.contains(&address) {
                         return Err(fail("invalid/duplicate interface address"));
                     }
+                    seen.push(address);
                 }
                 if let Some(gateway) = gateway {
                     let address = gateway.parse::<IpAddr>().map_err(|_| fail("gateway IP"))?;
-                    if address.is_ipv6() != v6
-                        || address.is_unspecified()
-                        || address.is_loopback()
-                        || address.is_multicast()
-                    {
+                    if !valid_unicast(address, v6) {
                         return Err(fail("gateway address family"));
+                    }
+                    if addresses.is_empty()
+                        && !if v6 {
+                            nic.dhcp6 || nic.accept_ra
+                        } else {
+                            nic.dhcp4
+                        }
+                    {
+                        return Err(fail("gateway without an address source"));
                     }
                 }
             }
@@ -379,20 +410,20 @@ impl Reader<'_> {
 }
 
 pub fn write_manifest(path: &Path, manifest: &DeploymentManifest) -> Result<(), DeploymentError> {
-    crate::shared::dns::validate_planned_file(path)
+    crate::shared::configure::validate_planned_file(path)
         .map_err(|_| DeploymentError::Invalid("unsafe file path"))?;
     crate::fsutil::atomic_replace(path, &encode_manifest(manifest)?, 0o600)?;
     Ok(())
 }
 pub fn read_manifest(path: &Path) -> Result<DeploymentManifest, DeploymentError> {
-    crate::shared::dns::validate_planned_file(path)
+    crate::shared::configure::validate_planned_file(path)
         .map_err(|_| DeploymentError::Invalid("unsafe file path"))?;
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.is_file()
         || metadata.permissions().mode() & 0o077 != 0
         || metadata.len() > MAX_SIZE as u64
         || metadata.nlink() != 1
-        || metadata.uid() != unsafe { geteuid() }
+        || metadata.uid() != effective_uid()
     {
         return Err(DeploymentError::Invalid(
             "private caller-owned regular file required",
@@ -403,7 +434,4 @@ pub fn read_manifest(path: &Path) -> Result<DeploymentManifest, DeploymentError>
         .take((MAX_SIZE + 1) as u64)
         .read_to_end(&mut bytes)?;
     decode_manifest(&bytes)
-}
-unsafe extern "C" {
-    fn geteuid() -> u32;
 }

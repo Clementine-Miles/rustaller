@@ -124,28 +124,6 @@ fn native_keygen_prompts_outside_raw_mode_encrypts_key_and_restores_tui() {
     );
     std::fs::remove_dir_all(directory).unwrap();
 }
-
-#[test]
-fn current_system_configuration_can_discard_a_draft_and_return_home_without_applying() {
-    let output = run_in_terminal(&[
-        (b"\x1b[B", None),
-        (b"\r", Some("Current system")),
-        (b"\x1b[B", None),
-        (b"\r", Some("Host settings")),
-        (b"\r", Some("Edit field")),
-        (b"DISCARD-HOSTNAME-DRAFT", None),
-        (b"\r", None),
-        (b"\x1b", Some("Save draft and go back")),
-        (b"\x1b[B", None),
-        (b"\r", None),
-        (b"\x1b", None),
-        (b"\x03", None),
-    ]);
-    assert!(output.contains("Discard changes and go back"));
-    assert!(output.contains("Configure current system"));
-    assert!(!output.contains("Current-system configuration saved"));
-}
-
 fn run_in_terminal(input: &[(&[u8], Option<&str>)]) -> String {
     let mut master_fd = -1;
     let mut slave_fd = -1;

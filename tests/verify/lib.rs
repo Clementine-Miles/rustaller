@@ -78,7 +78,13 @@ fn normalize_english(text: &str) -> String {
     let mut result = text.to_owned();
     for row in include_str!("english-text.tsv").lines() {
         let (encoded, english) = row.split_once('\t').expect("translation fixture");
-        let original: String = encoded.split('.').map(|part| char::from_u32(u32::from_str_radix(part, 16).expect("code point")).expect("Unicode scalar")).collect();
+        let original: String = encoded
+            .split('.')
+            .map(|part| {
+                char::from_u32(u32::from_str_radix(part, 16).expect("code point"))
+                    .expect("Unicode scalar")
+            })
+            .collect();
         result = result.replace(&original, english);
     }
     result
@@ -1398,7 +1404,9 @@ mod tests {
     #[test]
     fn preliminary_option_scan_does_not_reinterpret_option_values() {
         let text = source("reinstall.sh");
-        let start = text.find("# The first scan to verify the system and version to be installed").unwrap();
+        let start = text
+            .find("# The first scan to verify the system and version to be installed")
+            .unwrap();
         let end = text.find("# Protect the already-downloaded ISO").unwrap();
         let code = &text[start..end];
         let setup = "init_basearch(){ :; }; init_confhome(){ :; }; verify_os_name(){ distro=$1; }; to_lower(){ tr '[:upper:]' '[:lower:]'; }; ORIGINAL_OPTS=\"'--password' '--iso' '--username' '--debug' '--no-cloud-kernel' '--hold' '2' '--' 'arch'\";";

@@ -2,10 +2,6 @@
 
 Read root directory first `AGENTS.md`、[Architecture](ARCHITECTURE.md)and[acceptance records](ACCEPTANCE.md)。This article lists development priorities，[history](HISTORY.md)Interpret old decisions; no need to rely on old sessions or local files not shipped with source code。
 
-## native management component
-
-2026-11-14 integrate the existing standalone project under `tools/dmitbox-local`；The warehouse entrance is `cargo xtask local-tool build|check`（Rust accomplish). The running product is a single file Bash，Maintain independent status and resource ownership verification, and do not automatically mount reinstallation/TUI/Live。Modules, development fixtures and proof of acceptance of original components are retained; full releases and external NAT66 Still not accepted。
-
 ## Current status
 
 - Linux x86_64，English multi-level TUI；Four Goals Certified Alpine Live and kexec Install and only reboot once at the end. Already have real liquidation capabilities, four systems BIOS/UEFI Full acceptance has not yet passed, keep development preview。
@@ -52,9 +48,8 @@ examine/Do not modify the source code during the build; only add validation for 
 | Host check with kexec | host/preflight.rs、handoff.rs | systemd/openrc-init PID 1；No two restarts and fallback |
 | Live Module, installation and scheduling | worker/install.rs | latest module/Service repair to be completed VM Retest |
 | Four target installation with minimal package policy | targets/install.rs、packages.rs、debian.rs、rolling.rs | There is no successful acceptance of the complete installation; we cannot promise that the final dozens of MB |
-| Current system persistent configuration | host/current.rs | Backup, native SSH Verification; do not automatically restart the service/Online loading sysctl |
 | Native ssh-keygen | host/ssh_keygen.rs、TUI | Call system tools, configurable rounds/cipher/type/comment，Public key serialization only |
-| DNS/Network and optional swapfile | shared/dns.rs、network.rs、swapfile.rs | preset/Custom Submit only selected values；swap New goals only XFS/ext4 |
+| DNS/Network and optional swapfile | shared/configure.rs、network.rs、swapfile.rs | preset/Custom Submit only selected values；swap New goals only XFS/ext4 |
 | Original hostname and privacy root Password input | host/hostname.rs、password.rs | Handover after testing of the original system; non- root Required for installation，root SSH Still disabled |
 | Optional CachyOS | targets/cachyos.rs | Fixed official scripts with keys、ISA Warehouse, independent first boot update service |
 | ISO/netboot.xyz/reset | host/iso.rs、boot.rs、args.rs、TUI | Rust The actual handover is not connected and must not be described as available |
@@ -106,7 +101,6 @@ UEFI for 64 Bit、Secure Boot closure，512 MiB FAT32 ESP、single sector cluste
 
 - ISO：Enable read-only preflight and media verification、GRUB loopback、Safe handover and rollback; no universal commitment ISO，Not mixed with automatic liquidation。
 - netboot.xyz/reset：Complementary execution and failure recovery to prevent accidental automatic installation。
-- Current system configuration: Currently no accounts are created, passwords are set, kernels are changed, or swap；Recovery boundaries must be clear before expansion。
 - minimal：Measuring root occupancy and startup RAM，Then cut according to the native dependencies and retain SSH、network、CA、Module, boot, and package maintenance capabilities。
 - Release: fixed version download and verification; keep preview before complete installation and acceptance, not made public draft Not used as an anonymous download portal。
 

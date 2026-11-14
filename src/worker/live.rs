@@ -1,4 +1,5 @@
 use crate::command::{CommandInput, CommandRunner, CommandSpec, OutputMode};
+use crate::fsutil::effective_uid;
 use crate::model::{InstallPlan, PlanError, RamError, Target, validate_host_arch, validate_ram};
 use crate::plan_file::{PlanFileError, PrivatePlanFile};
 use std::fmt;
@@ -199,12 +200,4 @@ pub fn validate_live_plan_with_uid(
         });
     }
     Ok(ValidatedLivePlan { plan })
-}
-
-unsafe extern "C" {
-    fn geteuid() -> u32;
-}
-
-fn effective_uid() -> u32 {
-    unsafe { geteuid() }
 }

@@ -2,6 +2,7 @@
 //! There is exactly one final reboot, and only after a verified target install.
 use crate::command::{CommandError, CommandRunner, CommandSpec, OutputMode, run_checked};
 use crate::deployment::{DeploymentError, DeploymentManifest, DiskIdentity, read_manifest};
+use crate::fsutil::effective_uid;
 use crate::host::handoff::read_disk_identity;
 use crate::model::Target;
 use crate::plan_file::PrivatePlanFile;
@@ -83,7 +84,7 @@ pub fn run_from_files<R: CommandRunner>(
     manifest_path: &Path,
 ) -> Result<InstallOutcome, LiveInstallError> {
     // Validate runtime provenance before even opening the credential-bearing plan.
-    if unsafe { geteuid() } != 0 {
+    if effective_uid() != 0 {
         return Err(LiveInstallError::Invalid("root is required"));
     }
     if !Path::new("/etc/alpine-release").is_file() {
@@ -227,7 +228,7 @@ pub fn run_from_files<R: CommandRunner>(
 /// modloop service searches mounted boot media and excludes /, so it cannot
 /// discover this file. This entry is used only by our Live sysinit service.
 pub fn prepare_live_modules<R: CommandRunner>(runner: &mut R) -> Result<(), LiveInstallError> {
-    if unsafe { geteuid() } != 0
+    if effective_uid() != 0
         || !Path::new("/etc/alpine-release").is_file()
         || !fs::read_to_string("/proc/cmdline")?
             .split_whitespace()
@@ -649,7 +650,4 @@ impl Drop for InstallLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
     }
-}
-unsafe extern "C" {
-    fn geteuid() -> u32;
 }

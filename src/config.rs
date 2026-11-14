@@ -120,7 +120,7 @@ impl DnsConfig {
             text.push_str(&format!("search {}\n", self.search_domains.join(" ")));
         }
         for server in &self.servers {
-            text.push_str(&format!("nameserver {server}\n"));
+            text.push_str(&format!("nameserver {}\n", server.to_canonical()));
         }
         Ok(Some(text))
     }
@@ -131,7 +131,7 @@ impl DnsConfig {
         }
         let mut text = "[Network]\nDNS=\nDomains=\n".to_owned();
         for server in &self.servers {
-            text.push_str(&format!("DNS={server}\n"));
+            text.push_str(&format!("DNS={}\n", server.to_canonical()));
         }
         if !self.search_domains.is_empty() {
             text.push_str(&format!("Domains={}\n", self.search_domains.join(" ")));

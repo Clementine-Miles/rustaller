@@ -25,8 +25,7 @@ pub(crate) fn atomic_replace(path: &Path, contents: &[u8], mode: u32) -> io::Res
         .parent()
         .ok_or_else(|| io::Error::other("file has no parent directory"))?;
     for _ in 0..16 {
-        let sequence = NEXT_FILE.fetch_add(1, Ordering::Relaxed);
-        let temporary = parent.join(format!(".rustaller.tmp.{}.{sequence}", std::process::id()));
+        let temporary = temporary_path(parent);
         let mut file = match OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -42,17 +41,59 @@ pub(crate) fn atomic_replace(path: &Path, contents: &[u8], mode: u32) -> io::Res
             file.set_permissions(Permissions::from_mode(mode))?;
             file.sync_all()?;
             drop(file);
-            fs::rename(&temporary, path)
+            Ok(())
         })();
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
-        }
-        return result;
+        return finish_publication(&temporary, path, result);
     }
     Err(io::Error::new(
         io::ErrorKind::AlreadyExists,
         "cannot allocate a unique temporary file",
     ))
+}
+
+/// Replace the link itself, never its target; the caller validates ownership
+/// and parent confinement. Keep bootstrap DNS in place until rename succeeds.
+pub(crate) fn atomic_symlink(path: &Path, target: &Path) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::other("link has no parent"))?;
+    for _ in 0..16 {
+        let temporary = temporary_path(parent);
+        match std::os::unix::fs::symlink(target, &temporary) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+        return finish_publication(&temporary, path, Ok(()));
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "cannot allocate a temporary link",
+    ))
+}
+
+fn temporary_path(parent: &Path) -> std::path::PathBuf {
+    let sequence = NEXT_FILE.fetch_add(1, Ordering::Relaxed);
+    parent.join(format!(".rustaller.tmp.{}.{sequence}", std::process::id()))
+}
+
+fn finish_publication(temporary: &Path, path: &Path, prepared: io::Result<()>) -> io::Result<()> {
+    let result = prepared.and_then(|()| {
+        fs::rename(temporary, path)?;
+        fs::File::open(path.parent().expect("validated parent"))?.sync_all()
+    });
+    if result.is_err() {
+        let _ = fs::remove_file(temporary);
+    }
+    result
+}
+
+pub(crate) fn effective_uid() -> u32 {
+    // SAFETY: geteuid has no arguments or caller-side preconditions.
+    unsafe { geteuid() }
+}
+unsafe extern "C" {
+    fn geteuid() -> u32;
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 //! Create an explicitly requested, inactive swapfile in an isolated XFS/ext4 root.
 //! No swapon/swapoff is called: target native boot services activate its fstab.
 use super::configure::{ConfigurationError, validate_root};
-use super::dns::{read_config, validate_planned_file};
+use super::configure::{read_config, validate_planned_file};
 use crate::command::{
     CommandError, CommandInput, CommandRunner, CommandSpec, OutputMode, run_checked,
 };
@@ -192,7 +192,7 @@ pub fn prepare_swapfile<R: CommandRunner>(
             return Err(e.into());
         }
         if let Some(value) = plan.system.swap.swappiness {
-            super::dns::publish_files(vec![super::dns::ConfigFile {
+            super::configure::publish_files(vec![super::configure::ConfigFile {
                 path: swappiness,
                 contents: format!("# rustaller target swap\nvm.swappiness = {value}\n")
                     .into_bytes(),

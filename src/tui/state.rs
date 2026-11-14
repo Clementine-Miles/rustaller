@@ -4,7 +4,6 @@ use super::fields::TCP_FIELDS;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rustaller::config::{AddressPreference, CongestionControl, Ipv6Policy, QueueDiscipline};
 use rustaller::config::{DnsMode, InstallProfile, RootFilesystem};
-use rustaller::host::current::{CurrentConfig, CurrentReport, detect_current_target};
 use rustaller::host::ssh_keygen::{self, GeneratedKey, KeyType, KeygenOptions};
 use rustaller::model::{BootMode, InstallPlan, Target};
 use rustaller::postinstall::KernelChoice;
@@ -303,13 +302,11 @@ pub(super) enum View {
 pub(super) enum Progress {
     Continue,
     Ready(Box<InstallPlan>),
-    ConfigureCurrent(CurrentConfig),
     GenerateKey(KeygenOptions),
     Cancel,
 }
 pub(super) enum Action {
     Open(Page),
-    Current,
     Back,
     Edit(EditSlot),
     Select(Setting),
@@ -319,7 +316,6 @@ pub(super) enum Action {
     ToggleKeepDocs,
     ToggleKeepCache,
     ToggleSwap,
-    TcpPreset,
     ResetTcp,
     GenerateKey,
     Review,
@@ -338,7 +334,6 @@ pub(super) struct Wizard {
     pub view: View,
     pub error: String,
     pub usable_terminal: bool,
-    pub current_target: Result<Target, String>,
 }
 
 impl Wizard {
@@ -364,11 +359,9 @@ impl Wizard {
             .join(".ssh/id_rustaller_ed25519")
             .to_string_lossy()
             .into_owned();
-        let mut drafts: Vec<_> = (0..9)
+        let drafts: Vec<_> = (0..CHOICES.len())
             .map(|_| Draft::new(confhome.as_deref(), &comment, &key_path))
             .collect();
-        drafts[8].authentication = Authentication::PublicKeys;
-        drafts[8].set(Field::SshPort, String::new());
         Self {
             choice: 0,
             drafts,
@@ -381,7 +374,6 @@ impl Wizard {
             view: View::Menu,
             error: String::new(),
             usable_terminal: true,
-            current_target: detect_current_target().map_err(|error| error.to_string()),
         }
     }
     pub fn draft(&self) -> &Draft {
@@ -396,34 +388,20 @@ impl Wizard {
     pub fn is_automatic(&self) -> bool {
         self.choice < 4
     }
-    pub fn is_current(&self) -> bool {
-        self.choice == 8
-    }
-    pub fn has_system_settings(&self) -> bool {
-        self.is_automatic() || self.is_current()
-    }
     pub fn selected_target(&self) -> Option<Target> {
         match self.choice {
             0 | 5 => Some(Target::Alpine),
             1 => Some(Target::Debian),
             2 => Some(Target::Arch),
             3 => Some(Target::Gentoo),
-            8 => self.current_target.as_ref().ok().copied(),
             _ => None,
         }
     }
     pub fn context_label(&self) -> String {
-        if self.is_current() {
-            match &self.current_target {
-                Ok(target) => format!("Current system ({target})"),
-                Err(_) => "Current system".into(),
-            }
-        } else {
-            CHOICES[self.choice].0.into()
-        }
+        CHOICES[self.choice].0.into()
     }
     pub fn has_account(&self) -> bool {
-        self.choice < 4 || self.choice == 5 || self.is_current()
+        self.choice < 4 || self.choice == 5
     }
     pub fn kernel_label(&self) -> &'static str {
         if self.choice < 3 && self.draft().kernel == KernelChoice::Auto {
@@ -488,24 +466,11 @@ impl Wizard {
     fn activate(&mut self, action: Action) -> Progress {
         match action {
             Action::Open(Page::Targets) => {
-                // Selecting an installation target is a separate route; the
-                // current-system draft remains intact at index eight.
                 self.choice = 0;
                 self.open(Page::Targets);
             }
             Action::Open(page) => self.open(page),
             Action::Back => return self.request_back(),
-            Action::Current => {
-                self.choice = 8;
-                self.frames.truncate(1);
-                self.open(Page::Overview);
-                self.error = self
-                    .current_target
-                    .as_ref()
-                    .err()
-                    .cloned()
-                    .unwrap_or_default();
-            }
             Action::Edit(slot) => {
                 let value = match slot {
                     EditSlot::Field(field) => self.draft().get(field),
@@ -536,17 +501,6 @@ impl Wizard {
                 // per-target size/swappiness drafts when disabled.
                 self.frames.last_mut().expect("swap menu").selected =
                     usize::from(self.draft().swap_enabled);
-            }
-            Action::TcpPreset => {
-                let draft = self.draft_mut();
-                draft.congestion = CongestionControl::Bbr;
-                draft.qdisc = QueueDiscipline::Fq;
-                for (field, value) in TCP_FIELDS
-                    .iter()
-                    .zip(["64", "8192", "8192", "16384", "1", "3", "1"])
-                {
-                    draft.set(*field, value.into());
-                }
             }
             Action::ResetTcp => {
                 let draft = self.draft_mut();
@@ -587,8 +541,7 @@ impl Wizard {
                 );
             }
             EditSlot::Field(Field::SshPort | Field::WebPort)
-                if !(self.is_current() && value.trim().is_empty())
-                    && value.parse::<u16>().ok().is_none_or(|port| port == 0) =>
+                if value.parse::<u16>().ok().is_none_or(|port| port == 0) =>
             {
                 return Err("Port must be an integer from 1 to 65535".into());
             }
@@ -604,11 +557,6 @@ impl Wizard {
             }
             EditSlot::Key(_) | EditSlot::NewKey if !valid_public_key_source(value) => {
                 return Err("Enter a nonempty SSH public key/source, never a private key".into());
-            }
-            EditSlot::Key(_) | EditSlot::NewKey
-                if self.is_current() && !valid_current_key_source(value) =>
-            {
-                return Err("Current-system keys require an inline OpenSSH public key or an absolute local file".into());
             }
             EditSlot::NewKey if self.draft().keys.len() >= 128 => {
                 return Err("At most 128 SSH public key sources are supported".into());
@@ -632,15 +580,7 @@ impl Wizard {
     }
     fn review(&mut self) {
         if matches!(self.page(), Page::Home | Page::Targets) {
-            self.error =
-                "Choose an installation target or current-system configuration first".into();
-            return;
-        }
-        if self.is_current() {
-            match self.build_current() {
-                Ok(_) => self.view = View::Review { scroll: 0 },
-                Err(error) => self.error = error,
-            }
+            self.error = "Choose an installation target first".into();
             return;
         }
         match self.build_plan() {
@@ -727,13 +667,6 @@ impl Wizard {
             }
             View::Review { mut scroll } => match key.code {
                 KeyCode::Esc | KeyCode::Left => {}
-                KeyCode::Enter if self.is_current() => match self.build_current() {
-                    Ok(config) => return Progress::ConfigureCurrent(config),
-                    Err(error) => {
-                        self.error = error;
-                        self.view = View::Review { scroll };
-                    }
-                },
                 KeyCode::Enter => match self.build_plan() {
                     Ok(plan) => return Progress::Ready(plan),
                     Err(error) => {
@@ -816,41 +749,12 @@ impl Wizard {
             "Action completed. Return to review to keep editing the configuration.".into()
         }));
     }
-    pub fn complete_current(&mut self, result: Result<CurrentReport, String>) {
-        self.complete_message(result.map(|report| {
-            let mut lines = if report.changed_files.is_empty() {
-                vec!["No configuration files needed changing.".to_owned()]
-            } else {
-                let mut lines = vec!["Current-system configuration saved:".to_owned()];
-                lines.extend(
-                    report
-                        .changed_files
-                        .iter()
-                        .map(|path| format!("  {}", path.display())),
-                );
-                lines
-            };
-            if let Some(directory) = report.backup_dir {
-                lines.push(format!("Backup directory: {}", directory.display()));
-            }
-            lines.extend(report.notes);
-            lines.join("\n")
-        }));
-    }
     fn complete_message(&mut self, result: Result<String, String>) {
         let success = result.is_ok();
         let mut message = match result {
             Ok(message) => message,
             Err(error) => error,
         };
-        if success && self.is_current() {
-            let saved = self.draft().clone();
-            for frame in &mut self.frames {
-                if frame.baseline.is_some() {
-                    frame.baseline = Some(saved.clone());
-                }
-            }
-        }
         let mut secrets = Vec::new();
         for draft in &self.drafts {
             for field in [
@@ -907,36 +811,13 @@ impl Wizard {
     }
 }
 
-pub(super) fn valid_username(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 32
-        && value
-            .as_bytes()
-            .first()
-            .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
-}
+pub(super) use rustaller::model::valid_account_name as valid_username;
 pub(super) fn valid_public_key_source(value: &str) -> bool {
     let value = value.trim();
     !value.is_empty()
         && !value.contains("PRIVATE KEY")
         && !value.contains("-----BEGIN")
         && !value.chars().any(char::is_control)
-}
-fn valid_current_key_source(value: &str) -> bool {
-    let value = value.trim();
-    value.starts_with('/')
-        || [
-            "ssh-ed25519 ",
-            "ssh-rsa ",
-            "ecdsa-sha2-",
-            "sk-ssh-ed25519@openssh.com ",
-            "sk-ecdsa-sha2-",
-        ]
-        .iter()
-        .any(|prefix| value.starts_with(prefix))
 }
 pub(super) fn clean(value: &str) -> String {
     value

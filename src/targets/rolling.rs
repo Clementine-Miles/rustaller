@@ -9,7 +9,7 @@ use crate::command::{CommandError, CommandRunner, CommandSpec, OutputMode, run_c
 use crate::host::sources::{ALPINE_ARCHIVE, ARCH_MIRROR};
 use crate::model::{BootMode, PlanError, Target};
 use crate::shared::configure::{ConfigurationError, validate_root};
-use crate::shared::dns::{read_config, replace_managed_block, validate_planned_file};
+use crate::shared::configure::{read_config, replace_managed_block, validate_planned_file};
 use crate::targets::packages;
 use crate::targets::packages::arch_policy;
 use crate::worker::live::ValidatedLivePlan;
@@ -515,7 +515,7 @@ fn write_target(root: &Path, name: &str, bytes: &[u8]) -> Result<(), RollingErro
     write_file(&root.join(name), bytes)
 }
 fn write_file(path: &Path, bytes: &[u8]) -> Result<(), RollingError> {
-    crate::shared::dns::write_config(path, bytes, 0o644)
+    crate::shared::configure::write_config(path, bytes, 0o644)
 }
 fn command<I, S>(program: &str, args: I, phase: &str) -> CommandSpec
 where

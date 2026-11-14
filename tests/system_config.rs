@@ -2,8 +2,6 @@ use rustaller::codec::{PlanCodecError, decode_plan, encode_plan};
 use rustaller::config::{DnsConfig, DnsMode, InstallProfile, SystemConfig, SystemConfigError};
 use rustaller::host::args::{CliOutcome, parse_args};
 use rustaller::model::{BootMode, InstallPlan, PlanError, Target};
-use rustaller::shared::configure::apply_basic_configuration;
-use rustaller::shared::dns::apply_target_dns;
 use rustaller::targets::packages::{
     PRESERVED_ROOTS, apply_package_policy, arch_policy, cleanup_plan,
 };
@@ -11,7 +9,6 @@ use rustaller::targets::{debian, packages as profile};
 use rustaller::worker::live::{ValidatedLivePlan, validate_live_plan_with_uid};
 use std::fs;
 use std::net::IpAddr;
-use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -219,98 +216,6 @@ fn defaults_preserve_existing_behavior_and_profiles_never_apply_to_rescue_or_med
 }
 
 #[test]
-fn static_dns_updates_networkd_and_replaces_resolver_link_without_following_it() {
-    for target in [Target::Debian, Target::Arch, Target::Gentoo] {
-        let scratch = Scratch::new();
-        scratch.write(
-            "etc/systemd/network/10-eth0.network",
-            "[Match]\nName=eth0\n[Network]\nDHCP=yes\nDNS=9.9.9.9\n",
-        );
-        let outside = scratch.0.join("outside-resolver");
-        fs::write(&outside, "keep\n").unwrap();
-        symlink(&outside, scratch.0.join("etc/resolv.conf")).unwrap();
-        let mut plan = plan(target);
-        plan.system.dns = dns();
-        let plan = live(plan);
-        for _ in 0..2 {
-            apply_target_dns(&scratch.0, &plan).unwrap();
-        }
-        assert_eq!(fs::read_to_string(&outside).unwrap(), "keep\n");
-        assert_eq!(
-            fs::read_to_string(scratch.0.join("etc/resolv.conf")).unwrap(),
-            dns().resolv_conf().unwrap().unwrap()
-        );
-        let network =
-            fs::read_to_string(scratch.0.join("etc/systemd/network/10-eth0.network")).unwrap();
-        assert!(network.contains("DHCP=yes"));
-        assert!(network.contains("DNS=1.1.1.1"));
-        assert!(network.contains("DNS=2606:4700:4700::1111"));
-        assert_eq!(network.matches("# BEGIN rustaller target DNS").count(), 1);
-        assert!(network.contains("[IPv6AcceptRA]\nUseDNS=no\nUseDomains=no"));
-        fs::rename(
-            scratch.0.join("etc/systemd/network/10-eth0.network"),
-            scratch.0.join("etc/systemd/network/10-ens3.network"),
-        )
-        .unwrap();
-        assert!(
-            fs::read_to_string(scratch.0.join("etc/systemd/network/10-ens3.network"))
-                .unwrap()
-                .contains("DNS=1.1.1.1")
-        );
-    }
-}
-
-#[test]
-fn alpine_static_dns_disables_both_dhcpcd_and_udhcpc_dns_hooks_globally() {
-    let scratch = Scratch::new();
-    scratch.write(
-        "etc/dhcpcd.conf",
-        "slaac hwaddr\ninterface eth0\nmetric 100\n",
-    );
-    let mut plan = plan(Target::Alpine);
-    plan.system.dns = dns();
-    let plan = live(plan);
-    for _ in 0..2 {
-        apply_target_dns(&scratch.0, &plan).unwrap();
-    }
-    let text = fs::read_to_string(scratch.0.join("etc/dhcpcd.conf")).unwrap();
-    assert!(text.find("nohook resolv.conf").unwrap() < text.find("interface eth0").unwrap());
-    assert!(text.contains("slaac hwaddr"));
-    assert_eq!(text.matches("nohook resolv.conf").count(), 1);
-    assert!(
-        fs::read_to_string(scratch.0.join("etc/udhcpc/udhcpc.conf"))
-            .unwrap()
-            .contains("RESOLV_CONF=\"no\"")
-    );
-}
-
-#[test]
-fn automatic_dns_is_a_noop_and_unsafe_target_paths_fail_before_hostname_is_written() {
-    let scratch = Scratch::new();
-    scratch.write("etc/resolv.conf", "original\n");
-    apply_target_dns(&scratch.0, &live(plan(Target::Debian))).unwrap();
-    assert_eq!(
-        fs::read_to_string(scratch.0.join("etc/resolv.conf")).unwrap(),
-        "original\n"
-    );
-    let outside = scratch.0.join("outside.network");
-    fs::write(&outside, "do not edit\n").unwrap();
-    fs::create_dir_all(scratch.0.join("etc/systemd/network")).unwrap();
-    symlink(
-        &outside,
-        scratch.0.join("etc/systemd/network/10-eth0.network"),
-    )
-    .unwrap();
-    let mut selected = plan(Target::Debian);
-    selected.system.dns = dns();
-    selected.post_install.hostname = Some("new-host".into());
-    assert!(apply_basic_configuration(&scratch.0, &live(selected), true).is_err());
-    assert!(!scratch.0.join("etc/hostname").exists());
-    assert_eq!(fs::read_to_string(outside).unwrap(), "do not edit\n");
-    assert!(apply_target_dns(std::path::Path::new("/"), &live(plan(Target::Alpine))).is_err());
-}
-
-#[test]
 fn native_minimal_package_policies_preserve_boot_crypto_databases_and_licenses() {
     for target in [Target::Alpine, Target::Debian, Target::Arch, Target::Gentoo] {
         let scratch = Scratch::new();
@@ -370,4 +275,29 @@ fn arch_minimal_policy_rejects_repository_signature_bypasses_and_replaces_global
     assert!(!value.contains("SigLevel = Never"));
     assert!(value.contains("SigLevel = Required DatabaseOptional"));
     assert_eq!(arch_policy(&value, true).unwrap(), value);
+}
+
+#[test]
+fn mapped_ipv4_dns_is_rendered_as_ipv4_even_when_ipv6_is_disabled() {
+    let mut selected = plan(Target::Debian);
+    selected.system.network.ipv6 = rustaller::config::Ipv6Policy::Disable;
+    selected.system.dns = DnsConfig {
+        mode: DnsMode::Static,
+        servers: vec!["::ffff:1.1.1.1".parse().unwrap()],
+        search_domains: Vec::new(),
+    };
+    selected.validate().unwrap();
+    let dns = &selected.system.dns;
+    assert!(
+        dns.resolv_conf()
+            .unwrap()
+            .unwrap()
+            .contains("nameserver 1.1.1.1\n")
+    );
+    assert!(
+        !dns.networkd_settings()
+            .unwrap()
+            .unwrap()
+            .contains("::ffff:")
+    );
 }

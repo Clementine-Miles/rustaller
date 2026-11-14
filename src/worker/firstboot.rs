@@ -1,10 +1,12 @@
 use crate::command::{CommandInput, CommandRunner, CommandSpec, OutputMode};
 use crate::fsutil::replace_config as atomic_replace;
+use crate::shared::configure::{
+    validate_directory_tree, validate_planned_file, validate_planned_parent, write_config,
+};
 use std::ffi::OsString;
 use std::fmt;
-use std::fs::{self, Permissions};
+use std::fs;
 use std::io;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,6 +45,17 @@ impl fmt::Display for FirstbootError {
 
 impl std::error::Error for FirstbootError {}
 
+impl From<io::Error> for FirstbootError {
+    fn from(error: io::Error) -> Self {
+        Self::Filesystem(error)
+    }
+}
+impl From<crate::shared::configure::ConfigurationError> for FirstbootError {
+    fn from(error: crate::shared::configure::ConfigurationError) -> Self {
+        Self::Filesystem(io::Error::other(error))
+    }
+}
+
 pub fn non_loopback_links(ip_link_output: &str) -> String {
     let mut state = String::new();
     for line in ip_link_output
@@ -63,25 +76,16 @@ pub fn wait_for_stable_links<R: CommandRunner>(runner: &mut R) -> Result<String,
 
     loop {
         check_count += 1;
-        let pipeline = [
-            CommandSpec::new("ip", ["-o", "link"])
-                .phase("firstboot-wait-for-nics")
-                .stdin(CommandInput::Null),
-            CommandSpec::new("awk", [format!("$2 != {quote}lo:{quote}", quote = '\"')])
-                .phase("firstboot-wait-for-nics")
-                .stdout_mode(OutputMode::Capture),
-        ];
-        let output = runner
-            .run_pipeline(&pipeline)
-            .map_err(FirstbootError::Command)?;
-        let status = output.statuses.last().copied().flatten();
+        let command = CommandSpec::new("ip", ["-o", "link"])
+            .phase("firstboot-wait-for-nics")
+            .stdin(CommandInput::Null)
+            .stdout_mode(OutputMode::Capture);
+        let output = runner.run(&command).map_err(FirstbootError::Command)?;
+        let status = output.status;
         if status != Some(0) {
-            return Err(FirstbootError::CommandFailed {
-                name: "awk",
-                status,
-            });
+            return Err(FirstbootError::CommandFailed { name: "ip", status });
         }
-        let current_state = String::from_utf8_lossy(&output.stdout)
+        let current_state = non_loopback_links(&String::from_utf8_lossy(&output.stdout))
             .trim_end_matches(char::from(10))
             .to_owned();
         if !current_state.is_empty() {
@@ -148,11 +152,7 @@ pub fn install_firstboot_service<R: CommandRunner>(
         return Err(FirstbootError::WorkerVersionMismatch);
     }
     let worker = root.join("usr/local/bin/rustaller-worker");
-    fs::create_dir_all(worker.parent().expect("worker path has parent"))
-        .map_err(FirstbootError::Filesystem)?;
-    atomic_replace(&worker, worker_elf).map_err(FirstbootError::Filesystem)?;
-    fs::set_permissions(&worker, Permissions::from_mode(0o755))
-        .map_err(FirstbootError::Filesystem)?;
+    write_config::<FirstbootError>(&worker, worker_elf, 0o755)?;
 
     let (service_path, command_args, service_mode) = match manager {
         InitManager::OpenRc => (
@@ -177,12 +177,11 @@ pub fn install_firstboot_service<R: CommandRunner>(
             0o644,
         ),
     };
-    fs::create_dir_all(service_path.parent().expect("service path has parent"))
-        .map_err(FirstbootError::Filesystem)?;
-    atomic_replace(&service_path, render_firstboot_service(manager).as_bytes())
-        .map_err(FirstbootError::Filesystem)?;
-    fs::set_permissions(&service_path, Permissions::from_mode(service_mode))
-        .map_err(FirstbootError::Filesystem)?;
+    write_config::<FirstbootError>(
+        &service_path,
+        render_firstboot_service(manager).as_bytes(),
+        service_mode,
+    )?;
 
     let command_name = if manager == InitManager::OpenRc {
         "rc-update"
@@ -216,8 +215,7 @@ pub fn install_firstboot_service<R: CommandRunner>(
             )));
         }
         let preset = preset_dir.join("01-fix-eth-name.preset");
-        atomic_replace(&preset, b"enable fix-eth-name.service\n")
-            .map_err(FirstbootError::Filesystem)?;
+        write_config::<FirstbootError>(&preset, b"enable fix-eth-name.service\n", 0o644)?;
     }
     Ok(())
 }
@@ -250,16 +248,20 @@ pub fn cleanup_firstboot<R: CommandRunner>(
                 });
             }
         }
-        remove_if_exists(&root.join("etc/init.d/fix-eth-name"))
-            .map_err(FirstbootError::Filesystem)?;
+        remove_if_exists(&root.join("etc/init.d/fix-eth-name"))?;
     } else {
         for path in [
             "etc/systemd/system/fix-eth-name.service",
             "etc/systemd/system/multi-user.target.wants/fix-eth-name.service",
-            "lib/systemd/system-preset/01-fix-eth-name.preset",
             "usr/lib/systemd/system-preset/01-fix-eth-name.preset",
         ] {
-            remove_if_exists(&root.join(path)).map_err(FirstbootError::Filesystem)?;
+            remove_if_exists(&root.join(path))?;
+        }
+        // The installer selects usr/lib on merged-/usr targets. Only inspect
+        // the legacy lib path when it is a real directory, never through a
+        // link that could lead outside an isolated target root.
+        if fs::symlink_metadata(root.join("lib")).is_ok_and(|metadata| metadata.is_dir()) {
+            remove_if_exists(&root.join("lib/systemd/system-preset/01-fix-eth-name.preset"))?;
         }
     }
     remove_if_exists(&root.join("usr/local/bin/rustaller-worker"))
@@ -272,9 +274,10 @@ pub fn apply_network_fixes<R: CommandRunner>(runner: &mut R, root: &Path) -> io:
 
 pub fn apply_network_fixes_from_links(root: &Path, ip_link_output: &str) -> io::Result<()> {
     apply_network_fixes_with_lookup(root, |mac| {
-        Ok(eth_names_by_mac(ip_link_output, mac, false)
-            .into_iter()
-            .next())
+        Ok(super::initrd_network::interface_for_mac(
+            ip_link_output,
+            mac,
+        ))
     })
 }
 
@@ -283,54 +286,38 @@ pub fn lookup_ethx_by_mac<R: CommandRunner>(
     mac: &str,
     include_master: bool,
 ) -> io::Result<Option<String>> {
-    let mut input = mac.as_bytes().to_vec();
-    input.push(10);
-    let lower = CommandSpec::new("tr", ["[:upper:]", "[:lower:]"])
+    let command = CommandSpec::new("ip", ["-o", "link"])
         .phase("firstboot-nic-lookup")
-        .stdin(CommandInput::Bytes(input))
+        .stdin(CommandInput::Null)
         .stdout_mode(OutputMode::Capture)
         .stderr_mode(OutputMode::Stream);
-    let output = runner.run(&lower)?;
+    let output = runner.run(&command)?;
     if output.status != Some(0) {
         return Err(io::Error::other(
-            "tr failed while normalizing NIC MAC address",
+            "ip failed while looking up NIC MAC address",
         ));
     }
-    let mac = String::from_utf8_lossy(&output.stdout)
-        .trim_end_matches(char::from(10))
-        .to_owned();
-    let mut commands = vec![
-        CommandSpec::new("ip", ["-o", "link"])
-            .phase("firstboot-nic-lookup")
-            .stdin(CommandInput::Null),
-        CommandSpec::new("grep", ["-i", mac.as_str()]).phase("firstboot-nic-lookup"),
-    ];
-    if include_master {
-        commands.push(CommandSpec::new("grep", ["-w", "master"]).phase("firstboot-nic-lookup"));
-    } else {
-        commands.push(CommandSpec::new("grep", ["-v", "master"]).phase("firstboot-nic-lookup"));
+    let links =
+        String::from_utf8(output.stdout).map_err(|_| io::Error::other("invalid NIC inventory"))?;
+    let names = eth_names_by_mac(&links, mac, include_master);
+    if names.len() > 1 {
+        return Err(io::Error::other("ambiguous NIC MAC identity"));
     }
-    commands.push(CommandSpec::new("awk", ["{print $2}"]).phase("firstboot-nic-lookup"));
-    commands.push(CommandSpec::new("cut", ["-d:", "-f1"]).phase("firstboot-nic-lookup"));
-    commands.push(
-        CommandSpec::new("grep", ["."])
-            .phase("firstboot-nic-lookup")
-            .stdout_mode(OutputMode::Capture),
-    );
-    let output = runner.run_pipeline(&commands)?;
-    let names = String::from_utf8_lossy(&output.stdout)
-        .trim_end_matches(char::from(10))
-        .to_owned();
-    Ok((!names.is_empty()).then_some(names))
+    Ok(names.into_iter().next())
 }
 
 pub fn eth_names_by_mac(ip_link_output: &str, mac: &str, include_master: bool) -> Vec<String> {
     let mac = mac.to_ascii_lowercase();
     ip_link_output
         .lines()
-        .filter(|line| line.to_ascii_lowercase().contains(&mac))
         .filter(|line| {
-            let has_master = line.contains("master");
+            let fields: Vec<_> = line.split_whitespace().collect();
+            fields
+                .windows(2)
+                .any(|pair| pair[0] == "link/ether" && pair[1].eq_ignore_ascii_case(&mac))
+        })
+        .filter(|line| {
+            let has_master = line.split_whitespace().any(|word| word == "master");
             if include_master {
                 has_master
             } else {
@@ -343,11 +330,11 @@ pub fn eth_names_by_mac(ip_link_output: &str, mac: &str, include_master: bool) -
                 .map(|field| {
                     field
                         .trim_end_matches(':')
-                        .split(':')
+                        .split('@')
                         .next()
                         .unwrap_or(field)
                 })
-                .filter(|name| !name.is_empty())
+                .filter(|name| crate::deployment::valid_interface_name(name))
                 .map(str::to_owned)
         })
         .collect()
@@ -377,16 +364,16 @@ where
         }
 
         if let Some(eth) = current_eth.as_deref() {
-            if line.starts_with("iface e")
-                || line.starts_with("auto e")
-                || line.starts_with("allow-hotplug e")
+            if line.starts_with("iface ")
+                || line.starts_with("auto ")
+                || line.starts_with("allow-hotplug ")
             {
                 let mut fields: Vec<&str> = line.split_whitespace().collect();
                 if fields.len() >= 2 {
                     fields[1] = eth;
                     line = fields.join(" ");
                 }
-            } else if line.contains(" dev e")
+            } else if line.contains(" dev ")
                 && let Some(last_space) = line.rfind(' ')
             {
                 line.replace_range(last_space + 1.., eth);
@@ -450,6 +437,7 @@ where
     F: FnMut(&str) -> io::Result<Option<String>>,
 {
     let interfaces = root.join("etc/network/interfaces");
+    validate_planned_file(&interfaces).map_err(io::Error::other)?;
     if interfaces.is_file() {
         let input = fs::read_to_string(&interfaces)?;
         if input.is_empty() {
@@ -458,7 +446,11 @@ where
                 "refusing to rewrite empty interfaces file",
             ));
         }
-        let output = rewrite_ifupdown_fallible(&input, |mac| lookup(mac))?;
+        let output = rewrite_ifupdown_fallible(&input, |mac| {
+            let name = lookup(mac)?
+                .ok_or_else(|| io::Error::other("inherited interface MAC is missing"))?;
+            Ok(Some(name))
+        })?;
         atomic_replace(&interfaces, &output)?;
     }
 
@@ -468,11 +460,18 @@ where
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
     };
+    validate_directory_tree(&networkd).map_err(io::Error::other)?;
     let mut files = entries
         .collect::<io::Result<Vec<_>>>()?
         .into_iter()
         .map(|entry| entry.path())
-        .filter(|path| path.is_file())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.starts_with("10-cloud-init-eth") && name.ends_with(".network")
+                })
+        })
         .collect::<Vec<_>>();
     files.sort();
 
@@ -480,14 +479,18 @@ where
         let Some(filename) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
+        validate_planned_file(&path).map_err(io::Error::other)?;
         let input = fs::read_to_string(&path)?;
         let Some((new_name, output)) =
             rewrite_networkd_file_fallible(filename, &input, |mac| lookup(mac))?
         else {
             continue;
         };
-        atomic_replace(&path, output.as_bytes())?;
         let destination = path.with_file_name(new_name);
+        if destination != path && fs::symlink_metadata(&destination).is_ok() {
+            return Err(io::Error::other("firstboot destination already exists"));
+        }
+        atomic_replace(&path, output.as_bytes())?;
         fs::rename(path, destination)?;
     }
     Ok(())
@@ -505,6 +508,7 @@ fn replace_eth_name(line: &str, eth: &str) -> String {
 }
 
 fn remove_if_exists(path: &Path) -> io::Result<()> {
+    validate_planned_parent(path).map_err(io::Error::other)?;
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),

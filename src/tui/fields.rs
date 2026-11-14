@@ -120,17 +120,15 @@ impl Field {
     }
     pub fn hint(self) -> &'static str {
         match self {
-            Self::Username => {
-                "1-32 ASCII letters, digits, _ or -; begin with a letter or _. Current-system mode requires an existing user."
-            }
+            Self::Username => "1-32 ASCII letters, digits, _ or -; begin with a letter or _.",
             Self::Password | Self::Confirm | Self::RootPassword | Self::RootConfirm => {
                 "Hidden input. Leading/trailing spaces are preserved; both passwords must match."
             }
             Self::SshPort | Self::WebPort => {
-                "Use a port from 1 to 65535. A blank SSH port leaves the current system unchanged."
+                "Use a port from 1 to 65535. The installation default is 22."
             }
             Self::Hostname => {
-                "One ASCII label, 1-63 letters, digits or hyphens. Blank: use the existing hostname, then the target system name; unchanged in current-system mode."
+                "One ASCII label, 1-63 letters, digits or hyphens. Blank: use the existing hostname, then the target system name."
             }
             Self::Timezone => {
                 "Optional IANA name, for example Etc/UTC, Asia/Shanghai or America/New_York."

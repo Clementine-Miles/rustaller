@@ -6,7 +6,6 @@ mod fsutil;
 pub mod host {
     pub mod args;
     pub mod boot;
-    pub mod current;
     pub mod disk;
     pub mod handoff;
     pub mod hostname;
@@ -22,7 +21,6 @@ pub mod plan_file;
 pub mod postinstall;
 pub mod shared {
     pub mod configure;
-    pub mod dns;
     pub mod network;
     pub mod storage;
     pub mod swapfile;

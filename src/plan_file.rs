@@ -1,4 +1,5 @@
 use crate::codec::{PlanCodecError, decode_plan, encode_plan};
+use crate::fsutil::effective_uid;
 use crate::model::InstallPlan;
 use std::ffi::CString;
 use std::fs::{self, OpenOptions};
@@ -114,13 +115,7 @@ impl Drop for PrivatePlanFile {
 }
 
 unsafe extern "C" {
-    fn geteuid() -> u32;
     fn syscall(number: c_long, ...) -> c_long;
-}
-
-fn effective_uid() -> u32 {
-    // SAFETY: geteuid has no arguments, pointers or caller-side preconditions.
-    unsafe { geteuid() }
 }
 
 fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {

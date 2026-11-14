@@ -12,9 +12,18 @@ use crate::worker::live::ValidatedLivePlan;
 use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, Read};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
 const MAX_ZONEFILE_SIZE: u64 = 1024 * 1024;
+const MAX_CONFIG_SIZE: u64 = 1024 * 1024;
+
+/// A complete rendered regular configuration file, relative to the target root.
+#[derive(Debug, Eq, PartialEq)]
+pub struct ConfigFile {
+    pub path: PathBuf,
+    pub contents: Vec<u8>,
+}
 
 #[derive(Debug)]
 pub enum ConfigurationError {
@@ -25,9 +34,10 @@ pub enum ConfigurationError {
     InvalidZonefile,
     Plan(PostInstallError),
     SystemConfig(SystemConfigError),
-    MissingNetworkConfig,
     InvalidConfigFile,
     UnsupportedNetworkKernel,
+    InvalidNetwork(&'static str),
+    Publication { path: PathBuf, source: io::Error },
     Filesystem(io::Error),
 }
 
@@ -49,13 +59,12 @@ impl fmt::Display for ConfigurationError {
             Self::InvalidZonefile => f.write_str("Timezone file is not a bounded TZif file"),
             Self::Plan(error) => error.fmt(f),
             Self::SystemConfig(error) => error.fmt(f),
-            Self::MissingNetworkConfig => {
-                f.write_str("Static DNS requires the generated target systemd-networkd files")
-            }
             Self::InvalidConfigFile => f.write_str(
                 "Target configuration is oversized, invalid or has ambiguous managed blocks",
             ),
-            Self::UnsupportedNetworkKernel => f.write_str("Requested congestion control/qdisc is absent from the installed target kernel configuration"),
+            Self::UnsupportedNetworkKernel => f.write_str("Requested network setting is absent or ambiguous in the installed target kernel configuration"),
+            Self::InvalidNetwork(reason) => write!(f, "Invalid target network configuration: {reason}"),
+            Self::Publication { path, source } => write!(f, "Cannot publish target configuration {}: {source}; earlier files may already have been replaced", path.display()),
             Self::Filesystem(error) => write!(f, "Cannot configure target system: {error}"),
         }
     }
@@ -103,7 +112,6 @@ pub fn apply_basic_configuration(
     } else {
         None
     };
-    let dns_files = super::dns::prepare_target_dns(root, plan)?;
 
     // Every path and all zone data are checked before the first config write.
     if let Some(contents) = configuration.hostname_contents {
@@ -113,7 +121,6 @@ pub fn apply_basic_configuration(
         atomic_replace(&timezone, contents.as_bytes(), 0o644)?;
         atomic_replace(&localtime, &zonefile, 0o644)?;
     }
-    super::dns::publish_files(dns_files)?;
     Ok(())
 }
 
@@ -126,18 +133,18 @@ pub(crate) fn validate_root(root: &Path) -> Result<(), ConfigurationError> {
     {
         return Err(ConfigurationError::InvalidRoot);
     }
-    validate_directory_tree(root)
+    validate_directory_tree(root)?;
+    let metadata = fs::metadata(root)?;
+    if metadata.uid() != crate::fsutil::effective_uid() || metadata.mode() & 0o022 != 0 {
+        return Err(ConfigurationError::UnsafePath);
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_directory_tree(path: &Path) -> Result<(), ConfigurationError> {
-    let mut prefix = PathBuf::new();
-    for component in path.components() {
-        prefix.push(component);
-        let metadata = fs::symlink_metadata(&prefix)?;
-        if !metadata.file_type().is_dir() {
-            return Err(ConfigurationError::UnsafePath);
-        }
-    }
+    walk_directories(path, false)?;
+    // Planned parents may be missing; required directories must exist.
+    fs::symlink_metadata(path)?;
     Ok(())
 }
 
@@ -147,8 +154,11 @@ pub(crate) fn validate_destination(
 ) -> Result<(), ConfigurationError> {
     match fs::symlink_metadata(path) {
         Ok(metadata)
-            if metadata.file_type().is_file()
-                || (allow_symlink && metadata.file_type().is_symlink()) =>
+            if metadata.uid() == crate::fsutil::effective_uid()
+                && ((metadata.file_type().is_file()
+                    && metadata.nlink() == 1
+                    && metadata.mode() & 0o022 == 0)
+                    || (allow_symlink && metadata.file_type().is_symlink())) =>
         {
             Ok(())
         }
@@ -306,7 +316,6 @@ fn tzif_block(bytes: &[u8], time_width: usize) -> Option<(u8, usize)> {
 }
 
 // Offline OpenRC service publication, after configuration validation.
-use super::dns::{ensure_parent, validate_planned_file, validate_planned_parent};
 use std::os::unix::fs::{PermissionsExt, symlink};
 pub(crate) struct OpenRcLink {
     path: PathBuf,
@@ -349,4 +358,164 @@ pub(crate) fn publish_openrc(links: Vec<OpenRcLink>) -> Result<(), Configuration
         symlink(&link.target, &link.path)?;
     }
     Ok(())
+}
+pub(crate) fn publish_files(files: Vec<ConfigFile>) -> Result<(), ConfigurationError> {
+    // Entire set checked before any directory creation or file publication.
+    // The resolver link, when present, is separately checked by network.rs.
+    for file in &files {
+        validate_planned_parent(&file.path)?;
+        validate_destination(&file.path, file.path.ends_with("etc/resolv.conf"))?;
+        if file.contents.is_empty() || file.contents.contains(&0) {
+            return Err(ConfigurationError::InvalidConfigFile);
+        }
+    }
+    for file in files {
+        ensure_parent(&file.path)?;
+        atomic_replace(&file.path, &file.contents, 0o644).map_err(|source| {
+            ConfigurationError::Publication {
+                path: file.path.clone(),
+                source,
+            }
+        })?;
+        let bytes = fs::read(&file.path).map_err(|source| ConfigurationError::Publication {
+            path: file.path.clone(),
+            source,
+        })?;
+        validate_planned_file(&file.path)?;
+        if bytes != file.contents || fs::metadata(&file.path)?.mode() & 0o777 != 0o644 {
+            return Err(ConfigurationError::InvalidConfigFile);
+        }
+    }
+    Ok(())
+}
+
+/// Validate a target destination before creating parents and publishing bytes.
+/// Batch publishers keep their separate validate-all-before-write phase.
+pub(crate) fn write_config<E>(path: &Path, contents: &[u8], mode: u32) -> Result<(), E>
+where
+    E: From<ConfigurationError> + From<io::Error>,
+{
+    validate_planned_file(path)?;
+    ensure_parent(path)?;
+    atomic_replace(path, contents, mode)?;
+    Ok(())
+}
+
+/// Missing future directories are allowed; existing ancestors may not be links.
+pub(crate) fn validate_planned_file(path: &Path) -> Result<(), ConfigurationError> {
+    validate_planned_parent(path)?;
+    validate_destination(path, false)
+}
+
+pub(crate) fn validate_planned_parent(path: &Path) -> Result<(), ConfigurationError> {
+    walk_parents(path, false)
+}
+
+pub(crate) fn ensure_parent(path: &Path) -> Result<(), ConfigurationError> {
+    walk_parents(path, true)
+}
+
+fn walk_parents(path: &Path, create_missing: bool) -> Result<(), ConfigurationError> {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
+    {
+        return Err(ConfigurationError::UnsafePath);
+    }
+    walk_directories(
+        path.parent().ok_or(ConfigurationError::UnsafePath)?,
+        create_missing,
+    )
+}
+
+fn walk_directories(path: &Path, create_missing: bool) -> Result<(), ConfigurationError> {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
+    {
+        return Err(ConfigurationError::UnsafePath);
+    }
+    let mut prefix = PathBuf::new();
+    for component in path.components() {
+        prefix.push(component);
+        match fs::symlink_metadata(&prefix) {
+            Ok(metadata)
+                if metadata.file_type().is_dir()
+                    && (metadata.mode() & 0o022 == 0 || metadata.mode() & 0o1000 != 0) => {}
+            Ok(_) => return Err(ConfigurationError::UnsafePath),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                if create_missing {
+                    fs::create_dir(&prefix)?;
+                }
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn read_config(path: &Path) -> Result<String, ConfigurationError> {
+    // Check before open: FIFOs/devices must never be opened for config reads.
+    validate_planned_file(path)?;
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(String::new()),
+        Err(error) => return Err(error.into()),
+    };
+    if !file.metadata()?.is_file() || file.metadata()?.len() > MAX_CONFIG_SIZE {
+        return Err(ConfigurationError::InvalidConfigFile);
+    }
+    let mut text = String::new();
+    file.take(MAX_CONFIG_SIZE + 1).read_to_string(&mut text)?;
+    if text.len() as u64 > MAX_CONFIG_SIZE || text.contains('\0') {
+        return Err(ConfigurationError::InvalidConfigFile);
+    }
+    Ok(text)
+}
+
+pub(crate) fn replace_managed_block(
+    existing: &str,
+    body: &str,
+    begin: &str,
+    end: &str,
+    prepend: bool,
+) -> Result<String, ConfigurationError> {
+    let mut base = existing.to_owned();
+    match (
+        existing.matches(begin).count(),
+        existing.matches(end).count(),
+    ) {
+        (0, 0) => {}
+        (1, 1) => {
+            let start = existing.find(begin).expect("one begin");
+            let finish = existing.find(end).expect("one end") + end.len();
+            if start >= finish
+                || (start > 0 && existing.as_bytes()[start - 1] != b'\n')
+                || existing.as_bytes().get(start + begin.len()) != Some(&b'\n')
+                || existing
+                    .find(end)
+                    .is_some_and(|offset| offset > 0 && existing.as_bytes()[offset - 1] != b'\n')
+                || (finish < existing.len() && existing.as_bytes()[finish] != b'\n')
+            {
+                return Err(ConfigurationError::InvalidConfigFile);
+            }
+            let finish = finish + usize::from(existing.as_bytes().get(finish) == Some(&b'\n'));
+            base.replace_range(start..finish, "");
+        }
+        _ => return Err(ConfigurationError::InvalidConfigFile),
+    }
+    if body.is_empty() {
+        return Ok(base);
+    }
+    if !base.is_empty() && !base.ends_with('\n') {
+        base.push('\n');
+    }
+    let block = format!("{begin}\n{body}{end}\n");
+    Ok(if prepend {
+        format!("{block}{base}")
+    } else {
+        format!("{base}{block}")
+    })
 }

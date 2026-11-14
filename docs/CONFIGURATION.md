@@ -23,7 +23,7 @@ Rust pass kexec Enter Live，Only final restart after successful installation ve
 
 Create non- root User must set another root Account password；TUI Enter twice and mask, interact CLI Ask privately when parameters are missing. Non-interactive calls must provide `--root-password`，Its value may be exposed to shell History or process parameters, interactive input is preferred。root Passwords and user passwords/Public key authentication is independent and is not enabled. root SSH。
 
-The host name will first inherit the effective name of the original system. If it cannot be detected, the release name will be used; explicit `--hostname` priority. The current system configuration is not automatically filled in or modified hostname，See details[target configuration](POSTINSTALL.md)。
+The host name will first inherit the effective name of the original system. If it cannot be detected, the release name will be used; explicit `--hostname` priority. See details[target configuration](POSTINSTALL.md)。
 
 `--filesystem xfs|ext4` Select the root file system after the entire disk installation, the default XFS；TUI lie in Disk and boot。Live Check selected modules before liquidation，fstab、initramfs and GRUB configure according to the selection。ESP still FAT32，Gentoo of systemd/The kernel route remains unchanged。
 
@@ -54,20 +54,24 @@ Preserves options mappable to quad-target native configurations：
 | TCP Fast Open | Leave blank and use；0–3 | closure / client / Server / Both, applications must still support |
 | SYN cookies | Leave blank and use；0 / 1 | Explicitly turn off or on |
 
-“Fill in reference script fixed TCP Parameters” only populates the draft：BBR/fq、64 MiB max buffer、somaxconn/SYN queue 8192、netdev queue 16384、MTU probing=1、Fast Open=3、cookies=1。Can be modified or cleared item by item, and will not be executed on the current host. sysctl，It does not mean that these parameters will necessarily improve performance. low memory VPS You can keep the kernel default or choose a smaller upper limit。
+TCP tuning has no fixed preset. Every retained value is an explicit manual option; leaving it blank preserves the target kernel default. Configuration generation does not prove activation or performance.
 
 Not included in network configuration: dynamic speed measurement/BDP/HTB、NAT66 random outbound selection、IPv6 Address pools, full firewall rules, provider-specific ”defaults”, obsolete `tcp_adv_win_scale`、`kernel.panic=-1`、force RA=2、Automatically restart current network services, etc. The kernel only provides[clearly listed choices](POSTINSTALL.md)。
 
 configuration applies only to the target，Live Use the original system network. refuse to disable IPv6 and IPv6 DNS Same election, and must prove IPv4 path available。TUI Manual is not available yet IP/Route replacement；IPv6-only Separate acceptance with provider-specific network。
 
-### Native placement component
+### Native target pipeline
 
-- `shared::dns`：static `/etc/resolv.conf`；Alpine global shutdown dhcpcd/udhcpc of DNS cover；networkd File settings DNS/Domains and prohibit DHCPv4/v6/RA replace. Automatic mode does not write files. Deny loopback, multicast, unspecified and unscoped link-local DNS，Allow intranet DNS；Address reachability is not tested。
-- `shared::network`：Target `/etc/sysctl.d/90-rustaller-network.conf`；Module loading configuration；glibc whole precedence surface；MTU write existing networkd file or Alpine ifupdown stanza。The modification is inside the network file. If you rename the file according to the network card name for the first time, you will not lose the option.。
-- OpenRC of sysctl/modules Serving with goals runlevel enable offline through links; the service script must already exist and be executable。systemd via native modules-load/sysctl Read configuration。
-- BBR/qdisc use**Target has kernel installed**of Kconfig，bind to the version, check modules and verify after boot。
+`InstallPlan` plus the validated deployment manifest → pure `shared::network::render_network_configuration` → installed-kernel and complete output/service validation → per-file publication and readback → final target verification. Network files are never reparsed to add DNS or MTU.
 
-These functions only accept inspected standalone root directories, rejecting hosts `/`、Path escapes, symbolic link parent directories, and unsafe configuration files。resolver Final link passed rename Replace without following. All precheckable items are checked first, and each file is replaced atomically; no cross-file transactions are provided, and the caller must exclusively occupy the target tree.。
+- `shared::network` owns ifupdown/dhcpcd/udhcpc or MAC-matched networkd output, DNS overrides, MTU, IPv6 policy, sysctl, modules and glibc GAI policy. `DnsConfig` remains the sole typed DNS policy.
+- Static DNS owns a regular resolver and suppresses DHCPv4/DHCPv6/RA DNS and domains. Automatic systemd DNS replaces bootstrap DNS with the native resolved link after package operations; automatic Alpine DNS remains with native lease clients. Unknown resolver symlinks are rejected.
+- Captured DHCP/RA addresses and gateways are snapshots, not static boot routes. Static provider gateways retain on-link routing for /32 and /128 addresses. IPv6 disable removes all generated IPv6 addresses, routes, DHCPv6 and RA.
+- `shared::configure` owns bounded file reads, path/ownership checks, complete-batch validation and publication. Each regular file is replaced and read back; replacement is atomic per file, not across the batch. The caller must exclusively own the target tree.
+- Requested BBR/qdisc and explicitly enabled IPv6 or SYN cookies require installed-kernel capability evidence; module payloads are checked before publication. Arch can infer module capabilities from its authenticated inventory, but cannot infer SYN cookies without Kconfig. Files written offline do not establish runtime activation; boot acceptance is still pending.
+- Existing package/OpenRC service policy, isolated XFS/ext4 swapfile allocation and hostname/timezone configuration remain in their existing Rust modules. No live administration or independent recovery supervisor is installed.
+
+See [reference matrix and evidence limits](DMITBOX-REVIEW.md).
 
 ## SSH Key generation
 

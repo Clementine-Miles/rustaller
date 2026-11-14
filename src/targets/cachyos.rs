@@ -4,7 +4,7 @@ use crate::command::{
     CommandInput, CommandRunner, CommandSpec, OutputMode, capture_checked, run_checked,
 };
 use crate::shared::configure::validate_root;
-use crate::shared::dns::write_config;
+use crate::shared::configure::write_config;
 use std::{
     ffi::OsStr,
     fs, io,
@@ -420,7 +420,7 @@ pub fn install_firstboot_update_with_worker(root: &Path, bytes: &[u8]) -> Result
     )?;
     let link =
         root.join("etc/systemd/system/multi-user.target.wants/rustaller-cachyos-update.service");
-    crate::shared::dns::ensure_parent(&link).map_err(error)?;
+    crate::shared::configure::ensure_parent(&link).map_err(error)?;
     symlink("../rustaller-cachyos-update.service", link)?;
     Ok(())
 }

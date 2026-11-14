@@ -6,8 +6,8 @@ use crate::command::{
     CommandError, CommandInput, CommandOutput, CommandRunner, CommandSpec, OutputMode,
     PipelineOutput, run_checked,
 };
-use crate::config::Ipv6Policy;
 use crate::deployment::{DeploymentManifest, DiskIdentity, NetworkInterface, write_manifest};
+use crate::fsutil::effective_uid;
 use crate::model::{BootMode, InstallPlan, Target};
 use crate::worker::initrd_network::{
     AddressFamily, InitrdNetworkConfig, ProxyEndpoint, gateway_from_route_output,
@@ -172,15 +172,6 @@ pub fn discover<R: CommandRunner>(
         )
     })?;
     let network = collect_network(runner)?;
-    if plan.system.network.ipv6 == Ipv6Policy::Disable
-        && !network
-            .iter()
-            .any(|nic| !nic.ipv4_addresses.is_empty() && nic.ipv4_gateway.is_some())
-    {
-        return Err(HandoffError::Invalid(
-            "disabling IPv6 requires an inherited IPv4 address and default gateway",
-        ));
-    }
     let alpine =
         sources::parse_alpine_netboot(&fetch_text(runner, sources::ALPINE_RELEASES_URL)?, "x86_64")
             .map_err(|_| HandoffError::Invalid("invalid official Alpine netboot metadata"))?;
@@ -219,6 +210,11 @@ pub fn discover<R: CommandRunner>(
     manifest
         .validate()
         .map_err(|_| HandoffError::Invalid("unsupported disk or network inventory"))?;
+    if plan.hold != Some(1) {
+        crate::shared::network::validate_network_policy(plan, &manifest).map_err(|_| {
+            HandoffError::Invalid("incompatible inherited network and target policy")
+        })?;
+    }
     let confirmation = confirmation_for_plan(plan, &manifest.disk);
     Ok(HostDeployment {
         manifest,
@@ -320,12 +316,7 @@ pub fn collect_network<R: CommandRunner>(
         if name == "lo" || fields.contains(&"master") {
             continue;
         }
-        if name.is_empty()
-            || name.len() > 15
-            || !name
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"_.:-".contains(&b))
-        {
+        if !crate::deployment::valid_interface_name(name) {
             return Err(HandoffError::Invalid("unsupported interface name"));
         }
         let mac = fields
@@ -374,8 +365,8 @@ pub fn collect_network<R: CommandRunner>(
             mac,
             ipv4_addresses,
             ipv6_addresses,
-            ipv4_gateway: gateway_from_route_output(&route4),
-            ipv6_gateway: gateway_from_route_output(&route6),
+            ipv4_gateway: parse_default_gateway(&route4, AddressFamily::Ipv4)?,
+            ipv6_gateway: parse_default_gateway(&route6, AddressFamily::Ipv6)?,
             dhcp4: v4.split_whitespace().any(|v| v == "dynamic"),
             dhcp6: v6.split_whitespace().any(|v| v == "dynamic"),
             accept_ra: v6.split_whitespace().any(|v| v == "dynamic"),
@@ -387,6 +378,46 @@ pub fn collect_network<R: CommandRunner>(
         ));
     }
     Ok(result)
+}
+
+/// The manifest represents one simple default gateway per family and link.
+/// Refuse multipath/ambiguous routes rather than silently selecting one.
+pub fn parse_default_gateway(
+    output: &str,
+    family: AddressFamily,
+) -> Result<Option<String>, HandoffError> {
+    let lines: Vec<_> = output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    if lines.is_empty() {
+        return Ok(None);
+    }
+    if lines.len() != 1
+        || lines[0]
+            .split_whitespace()
+            .any(|word| matches!(word, "nexthop" | "nhid" | "encap"))
+    {
+        return Err(HandoffError::Invalid(
+            "unsupported multipath/ambiguous default route",
+        ));
+    }
+    let gateway = gateway_from_route_output(output).ok_or(HandoffError::Invalid(
+        "default route requires a simple gateway",
+    ))?;
+    let ip = gateway
+        .parse::<std::net::IpAddr>()
+        .map_err(|_| HandoffError::Invalid("invalid default gateway"))?;
+    if ip.is_ipv6() != (family == AddressFamily::Ipv6)
+        || ip.is_unspecified()
+        || ip.is_loopback()
+        || ip.is_multicast()
+    {
+        return Err(HandoffError::Invalid(
+            "invalid default gateway family/address",
+        ));
+    }
+    Ok(Some(ip.to_string()))
 }
 
 pub fn parse_addresses(output: &str, family: AddressFamily) -> Result<Vec<String>, HandoffError> {
@@ -406,6 +437,19 @@ pub fn parse_addresses(output: &str, family: AddressFamily) -> Result<Vec<String
             .get(index + 1)
             .ok_or(HandoffError::Invalid("missing CIDR"))?
             .to_string();
+        if fields
+            .iter()
+            .any(|field| matches!(*field, "tentative" | "dadfailed"))
+        {
+            return Err(HandoffError::Invalid(
+                "inherited address has not passed duplicate address detection",
+            ));
+        }
+        if fields.contains(&"temporary") {
+            continue;
+        }
+        crate::deployment::parse_interface_address(&value, family == AddressFamily::Ipv6)
+            .map_err(|_| HandoffError::Invalid("invalid inherited CIDR address"))?;
         if !result.contains(&value) {
             result.push(value);
         }
@@ -1453,12 +1497,6 @@ fn validate_new_workspace(path: &Path) -> Result<(), HandoffError> {
         }
     }
     Ok(())
-}
-unsafe extern "C" {
-    fn geteuid() -> u32;
-}
-fn effective_uid() -> u32 {
-    unsafe { geteuid() }
 }
 fn program_available(program: &str) -> bool {
     std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).any(|directory| {

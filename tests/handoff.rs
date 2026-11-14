@@ -293,3 +293,71 @@ fn network_address_parser_preserves_multiple_cidrs_but_rejects_missing_family_fi
     assert!(parse_addresses("2: eth0 missing-address\n", AddressFamily::Ipv4).is_err());
     assert!(parse_addresses("2: eth0 inet\n", AddressFamily::Ipv4).is_err());
 }
+
+#[test]
+fn inherited_default_routes_reject_ambiguity_multipath_and_wrong_families() {
+    use rustaller::host::handoff::parse_default_gateway;
+    assert_eq!(
+        parse_default_gateway("", AddressFamily::Ipv4).unwrap(),
+        None
+    );
+    assert_eq!(
+        parse_default_gateway(
+            "default via 192.0.2.1 dev eth0 proto dhcp metric 100\n",
+            AddressFamily::Ipv4
+        )
+        .unwrap()
+        .as_deref(),
+        Some("192.0.2.1")
+    );
+    assert_eq!(
+        parse_default_gateway(
+            "default via fe80::1 dev eth0 proto ra\n",
+            AddressFamily::Ipv6
+        )
+        .unwrap()
+        .as_deref(),
+        Some("fe80::1")
+    );
+    for route in [
+        "default via 192.0.2.1 dev eth0\ndefault via 192.0.2.2 dev eth0\n",
+        "default nexthop via 192.0.2.1 dev eth0 weight 1",
+        "default nhid 5",
+        "default dev eth0",
+        "default via 127.1 dev eth0",
+        "default via fe80::1 dev eth0",
+    ] {
+        assert!(
+            parse_default_gateway(route, AddressFamily::Ipv4).is_err(),
+            "{route}"
+        );
+    }
+}
+
+#[test]
+fn inherited_address_capture_checks_dad_and_ignores_temporary_slaac_addresses() {
+    for flag in ["tentative", "dadfailed"] {
+        assert!(
+            parse_addresses(
+                &format!("2: eth0 inet6 2001:db8::1/64 scope global {flag}\n"),
+                AddressFamily::Ipv6
+            )
+            .is_err()
+        );
+    }
+    assert!(
+        parse_addresses(
+            "2: eth0 inet6 2001:db8::1/64 scope global temporary dynamic\n",
+            AddressFamily::Ipv6
+        )
+        .unwrap()
+        .is_empty()
+    );
+    assert!(
+        parse_addresses(
+            "2: eth0 inet 01.2.3.4/24 scope global\n",
+            AddressFamily::Ipv4
+        )
+        .is_err()
+    );
+}

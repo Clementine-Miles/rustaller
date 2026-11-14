@@ -41,12 +41,12 @@ fn stability_input_excludes_only_the_loopback_interface() {
 fn waits_for_ten_consecutive_stable_ip_link_states() {
     let links = "1: lo: <LOOPBACK>\n2: ens3: <UP> link/ether 00:11:22:33:44:55\n";
     let filtered_links = non_loopback_links(links);
-    let mut responses = vec![
-        CommandOutput::new(Some(0), Vec::new(), Vec::new()),
-        CommandOutput::new(Some(0), filtered_links.as_bytes().to_vec(), Vec::new()),
-    ];
+    let mut responses = vec![CommandOutput::new(
+        Some(0),
+        links.as_bytes().to_vec(),
+        Vec::new(),
+    )];
     for _ in 0..10 {
-        responses.push(CommandOutput::new(Some(0), Vec::new(), Vec::new()));
         responses.push(CommandOutput::new(Some(0), Vec::new(), Vec::new()));
         responses.push(CommandOutput::new(
             Some(0),
@@ -57,12 +57,10 @@ fn waits_for_ten_consecutive_stable_ip_link_states() {
     let mut runner = MockRunner::new(responses);
     let stable = wait_for_stable_links(&mut runner).expect("stable NIC state");
     assert_eq!(stable, filtered_links.trim_end_matches(char::from(10)));
-    assert_eq!(runner.calls().len(), 32);
+    assert_eq!(runner.calls().len(), 21);
     assert_eq!(runner.calls()[0].program, "ip");
-    assert_eq!(runner.calls()[1].program, "awk");
-    assert_eq!(runner.calls()[1].args[0], r#"$2 != "lo:""#);
-    assert_eq!(runner.calls()[2].program, "sleep");
-    assert_eq!(runner.calls()[31].program, "awk");
+    assert_eq!(runner.calls()[1].program, "sleep");
+    assert_eq!(runner.calls()[20].program, "ip");
 }
 
 #[test]
@@ -82,41 +80,27 @@ fn mac_lookup_preserves_master_and_azure_slave_rules() {
 }
 
 #[test]
-fn mac_lookup_retains_the_original_tr_grep_awk_cut_pipeline() {
-    let mut lower_mac = b"00:11:22:33:44:55".to_vec();
-    lower_mac.push(10);
-    let mut responses = vec![CommandOutput::new(Some(0), lower_mac, Vec::new())];
-    for index in 0..6 {
-        let output = if index == 5 {
-            let mut name = b"ens3".to_vec();
-            name.push(10);
-            name
-        } else {
-            Vec::new()
-        };
-        responses.push(CommandOutput::new(Some(0), output, Vec::new()));
-    }
-    let mut runner = MockRunner::new(responses);
-
+fn mac_lookup_uses_native_rust_parsing_and_checks_ip_failures_and_ambiguity() {
+    let mut runner = MockRunner::new([CommandOutput::new(
+        Some(0),
+        IP_LINKS.as_bytes().to_vec(),
+        Vec::new(),
+    )]);
     assert_eq!(
         lookup_ethx_by_mac(&mut runner, "00:11:22:33:44:55", false).unwrap(),
         Some("ens3".into())
     );
-    let calls = runner.calls();
-    assert_eq!(calls.len(), 7);
-    assert_eq!(
-        calls
-            .iter()
-            .map(|call| call.program.to_string_lossy().into_owned())
-            .collect::<Vec<_>>(),
-        ["tr", "ip", "grep", "grep", "awk", "cut", "grep"]
-    );
-    assert_eq!(calls[1].args, ["-o", "link"]);
-    assert_eq!(calls[2].args, ["-i", "00:11:22:33:44:55"]);
-    assert_eq!(calls[3].args, ["-v", "master"]);
-    assert_eq!(calls[4].args, ["{print $2}"]);
-    assert_eq!(calls[5].args, ["-d:", "-f1"]);
-    assert_eq!(calls[6].args, ["."]);
+    assert_eq!(runner.calls().len(), 1);
+    assert_eq!(runner.calls()[0].program, "ip");
+    let mut failed = MockRunner::new([CommandOutput::new(Some(1), Vec::new(), Vec::new())]);
+    assert!(lookup_ethx_by_mac(&mut failed, "00:11:22:33:44:55", false).is_err());
+    let duplicate = format!("{IP_LINKS}5: eth9: <UP> link/ether 00:11:22:33:44:55\n");
+    let mut ambiguous = MockRunner::new([CommandOutput::new(
+        Some(0),
+        duplicate.into_bytes(),
+        Vec::new(),
+    )]);
+    assert!(lookup_ethx_by_mac(&mut ambiguous, "00:11:22:33:44:55", false).is_err());
 }
 
 #[test]
@@ -269,4 +253,70 @@ fn networkd_rewrite_changes_only_matching_generated_files() {
         "[Match]\nMACAddress=00:11:22:33:44:55\nName=ens3\n[Network]\nDHCP=yes\n"
     );
     assert!(rewrite_networkd_file("10-other.network", input, |_| Some("ens3".into())).is_none());
+}
+
+#[test]
+fn firstboot_rejects_symlinked_files_missing_macs_and_destination_collisions() {
+    use std::os::unix::fs::symlink;
+    for scenario in ["symlink", "missing", "collision"] {
+        let scratch = Scratch::new(scenario);
+        fs::create_dir_all(scratch.0.join("etc/network")).unwrap();
+        let outside = scratch.0.join("outside");
+        fs::write(&outside, "unchanged\n").unwrap();
+        let interfaces = scratch.0.join("etc/network/interfaces");
+        match scenario {
+            "symlink" => symlink(&outside, &interfaces).unwrap(),
+            "missing" => fs::write(
+                &interfaces,
+                "# mac 52:54:00:99:99:99\nauto eth0\niface eth0 inet dhcp\n",
+            )
+            .unwrap(),
+            _ => {
+                let network = scratch.0.join("etc/systemd/network");
+                fs::create_dir_all(&network).unwrap();
+                fs::write(
+                    network.join("10-cloud-init-eth0.network"),
+                    "[Match]\nMACAddress=00:11:22:33:44:55\nName=eth0\n",
+                )
+                .unwrap();
+                fs::write(network.join("10-ens3.network"), "foreign\n").unwrap();
+            }
+        }
+        assert!(
+            apply_network_fixes_from_links(&scratch.0, IP_LINKS).is_err(),
+            "{scenario}"
+        );
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "unchanged\n");
+        if scenario == "missing" {
+            assert!(fs::read_to_string(&interfaces).unwrap().contains("# mac "));
+        }
+        if scenario == "collision" {
+            assert_eq!(
+                fs::read_to_string(scratch.0.join("etc/systemd/network/10-ens3.network")).unwrap(),
+                "foreign\n"
+            );
+        }
+    }
+}
+
+#[test]
+fn systemd_cleanup_supports_merged_usr_without_following_legacy_lib_links() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new("merged-usr");
+    fs::create_dir_all(scratch.0.join("usr/lib/systemd/system-preset")).unwrap();
+    fs::create_dir_all(scratch.0.join("usr/local/bin")).unwrap();
+    let preset = scratch
+        .0
+        .join("usr/lib/systemd/system-preset/01-fix-eth-name.preset");
+    fs::write(&preset, "enable fix-eth-name.service\n").unwrap();
+    fs::write(scratch.0.join("usr/local/bin/rustaller-worker"), "fixture").unwrap();
+    symlink("usr/lib", scratch.0.join("lib")).unwrap();
+    cleanup_firstboot(&mut MockRunner::empty(), &scratch.0, InitManager::Systemd).unwrap();
+    assert!(!preset.exists());
+    assert!(!scratch.0.join("usr/local/bin/rustaller-worker").exists());
+    assert!(
+        fs::symlink_metadata(scratch.0.join("lib"))
+            .unwrap()
+            .is_symlink()
+    );
 }

@@ -17,7 +17,6 @@ impl Wizard {
         match self.page() {
             Page::Home => {
                 add("Install a system  >".into(), Action::Open(Page::Targets));
-                add("Configure current system  >".into(), Action::Current);
                 add("Quit".into(), Action::Quit);
             }
             Page::Targets => {
@@ -34,29 +33,17 @@ impl Wizard {
                         "Installation profile  ›".into(),
                         Action::Open(Page::Installation),
                     );
-                }
-                if self.has_system_settings() {
-                    add(
-                        if self.is_current() {
-                            "Host settings  ›"
-                        } else {
-                            "New host settings  ›"
-                        }
-                        .into(),
-                        Action::Open(Page::Host),
-                    );
+                    add("New host settings  ›".into(), Action::Open(Page::Host));
                     add("Network and DNS  ›".into(), Action::Open(Page::Network));
-                }
-                if self.is_automatic() {
                     add("Target swapfile  ›".into(), Action::Open(Page::Swap));
                 }
                 if self.choice == 4 {
                     add("ISO media  ›".into(), Action::Open(Page::Iso));
                 }
-                if self.choice != 7 && !self.is_current() {
+                if self.choice != 7 {
                     add("Disk and boot  ›".into(), Action::Open(Page::Boot));
                 }
-                if self.has_account() && !self.is_current() {
+                if self.has_account() {
                     add(
                         "Resources and logs  ›".into(),
                         Action::Open(Page::Resources),
@@ -68,47 +55,24 @@ impl Wizard {
                         Action::ToggleDebug,
                     );
                 }
-                add(
-                    if self.is_current() {
-                        "Review and apply configuration  >"
-                    } else {
-                        "Review installation  >"
-                    }
-                    .into(),
-                    Action::Review,
-                );
+                add("Review installation  >".into(), Action::Review);
             }
             Page::Account => {
                 add(
-                    format!(
-                        "{}: {}",
-                        if self.is_current() {
-                            "Existing user"
-                        } else {
-                            "Username"
-                        },
-                        draft.display(Field::Username)
-                    ),
+                    format!("Username: {}", draft.display(Field::Username)),
                     Action::Edit(EditSlot::Field(Field::Username)),
                 );
-                if self.is_current() {
-                    add(
-                        format!("Public keys for existing user: {}  >", draft.keys.len()),
-                        Action::Open(Page::Keys),
-                    );
-                } else {
-                    add(
-                        format!(
-                            "Authentication: {}  ›",
-                            if draft.authentication == Authentication::Password {
-                                "Password"
-                            } else {
-                                "SSH public keys"
-                            }
-                        ),
-                        Action::Open(Page::Auth),
-                    );
-                }
+                add(
+                    format!(
+                        "Authentication: {}  ›",
+                        if draft.authentication == Authentication::Password {
+                            "Password"
+                        } else {
+                            "SSH public keys"
+                        }
+                    ),
+                    Action::Open(Page::Auth),
+                );
                 add(
                     format!("SSH port: {}", draft.display(Field::SshPort)),
                     Action::Edit(EditSlot::Field(Field::SshPort)),
@@ -187,12 +151,10 @@ impl Wizard {
                         Action::Edit(EditSlot::Field(field)),
                     );
                 }
-                if !self.is_current() {
-                    add(
-                        format!("Kernel: {}", self.kernel_label()),
-                        Action::Select(Setting::Kernel),
-                    );
-                }
+                add(
+                    format!("Kernel: {}", self.kernel_label()),
+                    Action::Select(Setting::Kernel),
+                );
             }
             Page::Installation => {
                 add(
@@ -274,10 +236,6 @@ impl Wizard {
                         Action::Edit(EditSlot::Field(*field)),
                     );
                 }
-                add(
-                    "Fill reference TCP values (editable draft)".into(),
-                    Action::TcpPreset,
-                );
                 add("Clear TCP draft overrides".into(), Action::ResetTcp);
             }
             Page::IpStack => {

@@ -127,21 +127,10 @@ impl fmt::Display for InitrdNetworkError {
 impl std::error::Error for InitrdNetworkError {}
 
 pub fn interface_for_mac(link_output: &str, mac_addr: &str) -> Option<String> {
-    link_output.lines().find_map(|line| {
-        if line
-            .to_ascii_lowercase()
-            .contains(&mac_addr.to_ascii_lowercase())
-            && !line.contains("master")
-        {
-            line.split_whitespace()
-                .nth(1)
-                .and_then(|name| name.split(':').next())
-                .filter(|name| valid_interface_name(name))
-                .map(str::to_owned)
-        } else {
-            None
-        }
-    })
+    let names = super::firstboot::eth_names_by_mac(link_output, mac_addr, false);
+    (names.len() == 1)
+        .then(|| names.into_iter().next())
+        .flatten()
 }
 
 pub fn address_from_ip_output(output: &str, family: AddressFamily) -> Option<String> {
@@ -989,7 +978,7 @@ fn atomic_replace(path: &Path, contents: &[u8]) -> io::Result<()> {
     result
 }
 
-fn valid_mac(value: &str) -> bool {
+pub(crate) fn valid_mac(value: &str) -> bool {
     let mut octets = value.split(':');
     (0..6).all(|_| {
         octets.next().is_some_and(|octet| {
@@ -1027,14 +1016,6 @@ fn valid_address(value: &str, family: AddressFamily, allow_prefix: bool) -> bool
         (AddressFamily::Ipv4, IpAddr::V4(_)) | (AddressFamily::Ipv6, IpAddr::V6(_))
     );
     family_matches && (!allow_prefix || !prefix || value.contains('/'))
-}
-
-fn valid_interface_name(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 15
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"_.:@-".contains(&byte))
 }
 
 fn strip_prefix(value: &str) -> &str {

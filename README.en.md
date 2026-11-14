@@ -24,8 +24,6 @@ Choose a kernel, XFS/ext4 root and public/custom DNS. Non-root accounts require 
 
 Source PID 1 must be systemd or openrc-init. Failed kexec support stops preparation without a two-reboot fallback. `hold=1` enters Alpine Live rescue without automatic partitioning. Rust ISO/netboot.xyz/reset execution is not connected; the retained Shell interfaces below provide those routes.
 
-`Configure current system` persists existing-account keys, SSH port, hostname, timezone, DNS and supported network settings, with private backups and a changed-file report. It does not restart services or load sysctl values. Static DNS changes may affect lookups immediately. Save keeps a session draft; Apply writes configuration.
-
 ## Scope
 
 - Linux x86_64 hosts and targets only. Containers, enabled Secure Boot and tmpfs-root source systems are rejected.
@@ -118,6 +116,4 @@ Shell tests use syntax checks, isolated functions, temporary mocks and byte-for-
 
 Tests do not establish installation success. Four-target BIOS/UEFI acceptance remains pending. See the [handoff](docs/AGENT-HANDOFF.md), [trimming notes](docs/TRIMMING.md) and [history](docs/HISTORY.md).
 
-## Local administration component
-
-[DMITBox local](tools/dmitbox-local/README.md) is included as an independently invoked standalone Bash component. Build it with `cargo xtask local-tool build`, inspect `bash tools/dmitbox-local/dist/dmitbox-local.sh --help`, and run `cargo xtask local-tool check`. It is not automatically applied by the installer or worker. Review its [ownership prerequisites](tools/dmitbox-local/docs/CONFIGURATION.md), [native evidence](tools/dmitbox-local/docs/NATIVE-EVIDENCE.md) and [unverified boundaries](tools/dmitbox-local/docs/LIMITATIONS.md) before use.
+DMITBox Local informed the [target configuration review](docs/DMITBOX-REVIEW.md). Rustaller maintains reinstallation and target configuration only.

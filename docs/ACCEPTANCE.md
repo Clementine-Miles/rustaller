@@ -169,3 +169,18 @@ EFI Stub was cancelled. GRUB remains; pre-wipe capacity accounts for ESP/alignme
 ## Reference review follow-up
 
 [REFERENCE-REVIEW.md](REFERENCE-REVIEW.md) records inspected upstream blobs. Fixes cover fstab order, fresh-target hosts, Alpine Hyper-V PCI and final GRUB XFS/config checks. Historical 277 workspace + 49 Shell tests and bundle passed (`/workspace/scratch/reference-check.log`, `reference-bundle.log`); no new VM acceptance evidence.
+
+## Target configuration consolidation — 2026-11-14
+
+The [DMITBox reference review](DMITBOX-REVIEW.md) records removal of standalone
+local administration, the complete Rust target-network pipeline, dedicated
+simplification pass and final verification. 295 workspace tests and 49 retained
+Shell tests, formatting, Clippy, ShellCheck, syntax checks, static musl bundle
+and both bundled help commands passed. No dependencies or retained Shell runtime
+assets changed.
+
+These are isolated rendering/filesystem/mocked-command and build checks, not
+new installation acceptance. DHCP/RA renewal, IPv6-only and multiple-NIC first
+boot, native DNS reachability, active TCP/sysctl settings and the existing
+four-distribution BIOS/UEFI matrix remain pending. No destructive host or VM
+action was run in this refactor.

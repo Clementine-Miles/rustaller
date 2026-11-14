@@ -24,8 +24,6 @@ cargo xtask bundle
 
 原系统 PID 1 须为 systemd 或 openrc-init；kexec 不可用时停止，不退回两次重启。`hold=1` 进入 Alpine Live 救援，不自动分区。Rust 的 ISO/netboot.xyz/reset 尚未接通执行；下文 Shell 基线保留这些接口。
 
-`Configure current system` 可持久化现有账户公钥、SSH 端口、主机名、时区、DNS 和受支持的网络设置，提供私有备份与变更清单。不自动重启服务或加载 sysctl；静态 DNS 变化可能立即影响解析。Save 仅保存本次会话草稿，Apply 才写入系统。
-
 ## 支持范围
 
 - 原系统与目标均为 Linux x86_64；支持不同原系统发行版，拒绝容器、启用 Secure Boot 及 tmpfs 根的原系统。
@@ -145,14 +143,4 @@ Shell 测试仅做语法检查、隔离调用、临时目录 mock 和上游逐�
 
 静态测试不证明安装成功。四目标 BIOS/UEFI 全流程仍待验收；开发续接见[指南](docs/AGENT-HANDOFF.md)，改动记录见[裁剪](docs/TRIMMING.md)、[重构](docs/REFACTOR.md)和[历史](docs/HISTORY.md)。
 
-## 本机管理工具
-
-仓库集成了独立的 [DMITBox 本机管理组件](tools/dmitbox-local/README.md)，提供受事务保护的 SSH/nftables、DNS、MTU、静态 IPv6、TCP 与新建 Swap 管理。它保持单文件 Bash 分发，使用独立状态目录，不由重装流程自动执行。
-
-```console
-cargo xtask local-tool build
-bash tools/dmitbox-local/dist/dmitbox-local.sh --help
-cargo xtask local-tool check
-```
-
-修改现有系统前须按[配置说明](tools/dmitbox-local/docs/CONFIGURATION.md)登记资源所有权和恢复后端。该组件仍是开发候选：[原生恢复证据](tools/dmitbox-local/docs/NATIVE-EVIDENCE.md)已包含重启与定时恢复；[完整发行版矩阵及随机/外部 NAT66 验证](tools/dmitbox-local/docs/LIMITATIONS.md)尚未完成。
+DMITBox Local 的配置验证设计参考记录见 [整合审查](docs/DMITBOX-REVIEW.md)；本项目仅维护重装和目标系统配置。

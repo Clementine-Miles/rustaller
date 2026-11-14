@@ -33,7 +33,7 @@ impl Wizard {
         ])
         .areas(area);
         frame.render_widget(
-            Paragraph::new(if self.is_current(){"Configure this system without reinstalling. Settings are persisted; network and SSH services are not restarted."}else{PREVIEW})
+            Paragraph::new(PREVIEW)
                 .wrap(Wrap { trim: false })
                 .style(Style::default().fg(Color::Yellow)),
             banner,
@@ -46,7 +46,6 @@ impl Wizard {
         );
         let entries = self.entries();
         let summary = self.summary();
-        let current = self.is_current();
         let context = self.context_label();
         let selector = match &self.view {
             View::Select { setting, .. } => self.choices(*setting),
@@ -109,17 +108,9 @@ impl Wizard {
                     Constraint::Min(1),
                 ])
                 .areas(body);
-                let key_slot = matches!(
-                    slot,
-                    super::state::EditSlot::Key(_) | super::state::EditSlot::NewKey
-                );
                 frame.render_widget(
-                    Paragraph::new(if current && key_slot {
-                        "SSH public key / absolute local file"
-                    } else {
-                        slot.label()
-                    })
-                    .style(Style::default().add_modifier(Modifier::BOLD)),
+                    Paragraph::new(slot.label())
+                        .style(Style::default().add_modifier(Modifier::BOLD)),
                     label,
                 );
                 let password = matches!(
@@ -140,11 +131,7 @@ impl Wizard {
                         inner.y,
                     ));
                 }
-                let help = if current && key_slot {
-                    "For the current system: inline SSH public key or absolute local .pub file only. Remote URLs and private keys are not accepted."
-                } else {
-                    slot.hint()
-                };
+                let help = slot.hint();
                 frame.render_widget(Paragraph::new(help).wrap(Wrap { trim: false }), hint);
                 "Enter: save  Esc: cancel  Left/Right/Home/End: move  Ctrl-U: clear"
             }
@@ -152,19 +139,11 @@ impl Wizard {
                 render_text(
                     frame,
                     body,
-                    if current {
-                        "Review current-system changes"
-                    } else {
-                        "Review installation"
-                    },
+                    "Review installation",
                     summary.join("\n"),
                     scroll,
                 );
-                if current {
-                    "Enter: apply configuration  Esc: edit  Up/Down/PgUp/PgDn: scroll"
-                } else {
-                    "Enter: continue to confirmation  Esc: edit  Up/Down/PgUp/PgDn: scroll"
-                }
+                "Enter: continue to confirmation  Esc: edit  Up/Down/PgUp/PgDn: scroll"
             }
             View::Outcome {
                 success,

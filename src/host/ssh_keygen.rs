@@ -1,6 +1,7 @@
 //! Host-only native ssh-keygen tool. Private key data never enters InstallPlan.
 use crate::command::{CommandError, CommandRunner, CommandSpec, run_checked};
-use crate::shared::dns::validate_planned_file;
+use crate::fsutil::effective_uid;
+use crate::shared::configure::validate_planned_file;
 use std::fs::{self, DirBuilder};
 use std::io;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
@@ -200,13 +201,6 @@ fn public_path(path: &Path) -> PathBuf {
     path.push(".pub");
     path.into()
 }
-unsafe extern "C" {
-    fn geteuid() -> u32;
-}
-fn effective_uid() -> u32 {
-    unsafe { geteuid() }
-}
-
 pub fn date_comment() -> String {
     // Same system-date behavior as date +%Y%m%d, without command substitution.
     std::process::Command::new("date")

@@ -4,7 +4,6 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
-use rustaller::host::current::{CurrentConfig, CurrentReport};
 use rustaller::model::InstallPlan;
 use std::io;
 
@@ -34,7 +33,6 @@ impl Drop for TerminalMode {
 pub fn run(
     confhome: Option<String>,
     mut execute: impl FnMut(&InstallPlan) -> Result<(), String>,
-    mut configure_current: impl FnMut(&CurrentConfig) -> Result<CurrentReport, String>,
 ) -> Result<(), String> {
     enable_raw_mode().map_err(|error| error.to_string())?;
     let _mode = TerminalMode;
@@ -56,9 +54,6 @@ pub fn run(
                         native_terminal(&mut terminal, || {
                             execute_ready(&mut wizard, &mut execute, &plan)
                         })?;
-                    }
-                    Progress::ConfigureCurrent(config) => {
-                        wizard.complete_current(configure_current(&config))
                     }
                     Progress::GenerateKey(options) => {
                         // Restore the real terminal for native passphrase prompts.

@@ -3,14 +3,10 @@ use rustaller::command::{
     CommandInput, CommandOutput, CommandRunner, CommandSpec, MockRunner, PipelineOutput,
     SwapSafeRunner,
 };
-use rustaller::config::{
-    AddressPreference, CongestionControl, Ipv6Policy, NetworkConfig, QueueDiscipline,
-};
 use rustaller::host::args::{CliOutcome, parse_args};
 use rustaller::host::preflight::{KexecError, validate_one_reboot_support};
 use rustaller::host::ssh_keygen::{KeyType, KeygenOptions, generate};
 use rustaller::model::{InstallPlan, Target};
-use rustaller::shared::network::{alpine_mtu, apply_network_configuration};
 use rustaller::shared::swapfile::prepare_swapfile;
 use rustaller::worker::live::{ValidatedLivePlan, validate_live_plan_with_uid};
 use std::fs;
@@ -78,20 +74,6 @@ fn live(plan: InstallPlan) -> ValidatedLivePlan {
 fn out(status: i32, text: &str) -> CommandOutput {
     CommandOutput::new(Some(status), text.as_bytes().to_vec(), vec![])
 }
-fn tuned() -> NetworkConfig {
-    NetworkConfig {
-        congestion: CongestionControl::Bbr,
-        qdisc: QueueDiscipline::Fq,
-        mtu: Some(1450),
-        buffer_mib: Some(16),
-        mtu_probing: Some(1),
-        fastopen: Some(3),
-        syncookies: Some(true),
-        ..Default::default()
-    }
-}
-const KERNEL: &str = "CONFIG_TCP_CONG_BBR=m\nCONFIG_NET_SCH_FQ=y\n";
-
 #[test]
 fn advanced_cli_roundtrips_for_four_targets_and_rejects_incompatible_or_out_of_range_values() {
     for target in ["alpine", "debian", "arch", "gentoo"] {
@@ -159,109 +141,6 @@ fn advanced_cli_roundtrips_for_four_targets_and_rejects_incompatible_or_out_of_r
         .is_err()
     );
     assert!(plan(Target::Debian).system.is_default());
-}
-
-#[test]
-fn networkd_settings_survive_renaming_and_use_the_target_kernel_and_native_files() {
-    for target in [Target::Debian, Target::Arch, Target::Gentoo] {
-        let scratch = Scratch::new();
-        scratch.write(
-            "etc/systemd/network/10-eth0.network",
-            "[Match]\nMACAddress=aa:bb:cc:dd:ee:ff\n[Network]\nDHCP=yes\n",
-        );
-        scratch.write("etc/gai.conf", "# existing comment\n");
-        scratch.write(
-            "etc/systemd/network/00-lo.network",
-            "[Match]\nName = lo\n[Network]\n",
-        );
-        scratch.write("etc/resolv.conf", "unchanged\n");
-        let mut selected = plan(target);
-        selected.system.network = tuned();
-        selected.system.network.address_preference = AddressPreference::Ipv4;
-        let selected = live(selected);
-        let services = apply_network_configuration(&scratch.0, &selected, KERNEL).unwrap();
-        assert!(services.openrc_boot.is_empty());
-        let text = scratch.read("etc/sysctl.d/90-rustaller-network.conf");
-        assert!(text.contains("tcp_congestion_control = bbr"));
-        assert!(text.contains("16777216"));
-        assert!(!text.contains("accept_ra"));
-        assert!(!text.contains("kernel.panic"));
-        assert!(!text.contains("tcp_adv_win_scale"));
-        assert!(
-            scratch
-                .read("etc/modules-load.d/90-rustaller-network.conf")
-                .contains("tcp_bbr")
-        );
-        assert!(
-            scratch
-                .read("etc/gai.conf")
-                .contains("precedence ::1/128 50")
-        );
-        assert_eq!(scratch.read("etc/resolv.conf"), "unchanged\n");
-        assert!(
-            !scratch
-                .read("etc/systemd/network/00-lo.network")
-                .contains("MTUBytes")
-        );
-        let before = scratch.read("etc/systemd/network/10-eth0.network");
-        assert!(before.contains("MTUBytes=1450"));
-        fs::rename(
-            scratch.0.join("etc/systemd/network/10-eth0.network"),
-            scratch.0.join("etc/systemd/network/10-ens3.network"),
-        )
-        .unwrap();
-        apply_network_configuration(&scratch.0, &selected, KERNEL).unwrap();
-        assert_eq!(scratch.read("etc/systemd/network/10-ens3.network"), before);
-    }
-}
-
-#[test]
-fn network_defaults_are_noop_and_unsupported_kernel_or_symlinks_fail_before_publication() {
-    let scratch = Scratch::new();
-    apply_network_configuration(&scratch.0, &live(plan(Target::Debian)), "").unwrap();
-    assert!(!scratch.0.join("etc/sysctl.d").exists());
-    let mut selected = plan(Target::Debian);
-    selected.system.network = tuned();
-    let selected = live(selected);
-    assert!(apply_network_configuration(&scratch.0, &selected, "").is_err());
-    assert!(!scratch.0.join("etc/sysctl.d").exists());
-    scratch.write("outside", "unchanged");
-    fs::create_dir_all(scratch.0.join("etc/systemd/network")).unwrap();
-    symlink(
-        scratch.0.join("outside"),
-        scratch.0.join("etc/systemd/network/10-eth0.network"),
-    )
-    .unwrap();
-    assert!(apply_network_configuration(&scratch.0, &selected, KERNEL).is_err());
-    assert_eq!(scratch.read("outside"), "unchanged");
-    assert!(!scratch.0.join("etc/sysctl.d").exists());
-}
-
-#[test]
-fn alpine_native_mtu_and_ipv6_policy_preserve_dhcp_and_loopback_without_forcing_ra() {
-    let original = "auto lo\niface lo inet loopback\n\nauto eth0\niface eth0 inet dhcp\n    mtu 1500\niface eth0 inet6 auto\n    accept_ra 1\n";
-    let text = alpine_mtu(original, 1450).unwrap();
-    assert_eq!(text.matches("mtu 1450").count(), 2);
-    assert!(!text.contains("mtu 1500"));
-    assert!(text.contains("iface lo inet loopback\n\n"));
-    assert_eq!(alpine_mtu(&text, 1450).unwrap(), text);
-    let scratch = Scratch::new();
-    scratch.service("sysctl");
-    scratch.service("modules");
-    scratch.write("etc/network/interfaces", original);
-    let mut selected = plan(Target::Alpine);
-    selected.system.network = tuned();
-    selected.system.network.ipv6 = Ipv6Policy::Enable;
-    let services = apply_network_configuration(&scratch.0, &live(selected), KERNEL).unwrap();
-    assert_eq!(services.openrc_boot, ["sysctl", "modules"]);
-    assert!(scratch.read("etc/modules").contains("tcp_bbr"));
-    assert_eq!(
-        fs::read_link(scratch.0.join("etc/runlevels/boot/sysctl")).unwrap(),
-        PathBuf::from("/etc/init.d/sysctl")
-    );
-    let sysctl = scratch.read("etc/sysctl.d/90-rustaller-network.conf");
-    assert!(sysctl.contains("all.disable_ipv6 = 0"));
-    assert!(!sysctl.contains("accept_ra"));
 }
 
 #[test]

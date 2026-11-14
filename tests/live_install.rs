@@ -4,7 +4,7 @@ use rustaller::deployment::{
 use rustaller::host::sources::{GENTOO_ARCHIVE, GentooStage3};
 use rustaller::model::{BootMode, InstallPlan, Target};
 use rustaller::targets::install::{
-    gentoo_sha512, valid_gentoo_signature, validate_install_options, write_network,
+    gentoo_sha512, valid_gentoo_signature, validate_install_options,
 };
 use rustaller::worker::install::{
     parse_unmounted_descendants, reject_target_swaps, same_physical_disk, validate_live_root,
@@ -187,7 +187,16 @@ fn all_four_targets_validate_before_mutation_and_reject_unresolved_public_key_so
 fn alpine_dual_stack_static_configuration_survives_mac_based_interface_rename() {
     let directory = Scratch::new();
     let metadata = manifest();
-    write_network(&directory.0, &metadata, Target::Alpine).unwrap();
+    let selected = validate_live_plan_with_uid(
+        plan(Target::Alpine),
+        "x86_64",
+        4096,
+        rustaller::RUNTIME_VERSION,
+        0,
+    )
+    .unwrap();
+    rustaller::shared::network::apply_network_configuration(&directory.0, &selected, &metadata, "")
+        .unwrap();
     let text = fs::read_to_string(directory.0.join("etc/network/interfaces")).unwrap();
     assert!(text.contains("# mac 52:54:00:11:22:33"));
     assert!(text.contains("iface ens3 inet static"));
@@ -212,11 +221,20 @@ fn networkd_uses_mac_match_and_onlink_gateways_but_does_not_pin_dynamic_leases()
     let mut metadata = manifest();
     metadata.network[0].dhcp4 = true;
     metadata.network[0].accept_ra = true;
-    write_network(&directory.0, &metadata, Target::Debian).unwrap();
+    let selected = validate_live_plan_with_uid(
+        plan(Target::Debian),
+        "x86_64",
+        4096,
+        rustaller::RUNTIME_VERSION,
+        0,
+    )
+    .unwrap();
+    rustaller::shared::network::apply_network_configuration(&directory.0, &selected, &metadata, "")
+        .unwrap();
     let text = fs::read_to_string(directory.0.join("etc/systemd/network/10-ens3.network")).unwrap();
     assert!(text.contains("MACAddress=52:54:00:11:22:33"));
     assert!(text.contains("DHCP=ipv4"));
-    assert!(text.contains("GatewayOnLink=yes"));
+    assert!(!text.contains("GatewayOnLink=yes"));
     assert!(!text.contains("Address=192.0.2.7"));
     assert!(!text.contains("Address=2001:db8::7"));
 }
