@@ -3,34 +3,34 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2086
 
-# nixos 默认的配置不会生成 /bin/bash，因此需要用 /usr/bin/env
-# alpine 默认没有 bash，因此 shebang 用 sh，再 exec 切换到 bash
+# nixos the default configuration does not generate /bin/bash，Therefore it is necessary to use /usr/bin/env
+# alpine absent by default bash，therefore shebang use sh，Again exec switch to bash
 
 set -eE
 confhome=${REINSTALL_CONFHOME:-}
 # Optional network state; collect_netconf may leave this unset when no extra IPv6 address exists.
 ipv6_extra_addrs=${ipv6_extra_addrs:-}
 
-# 用于判断 reinstall.sh 和 trans.sh 是否兼容
+# used to judge reinstall.sh and trans.sh Is it compatible
 SCRIPT_VERSION=PERSONAL-LINUX-ONLY-20261119-04
 
 BOOT_ENTEY_START_MARK='### BEGIN reinstall.sh ###'
 BOOT_ENTEY_END_MARK='### END reinstall.sh ###'
 
-# 临时目录
-# 不用 /tmp，因为 /tmp 挂载在内存的话，可能不够空间
+# temporary directory
+# Need not /tmp，because /tmp If mounted in memory, there may not be enough space.
 tmp=/reinstall-tmp
 
-# 强制 linux 程序输出英文，防止 grep 不到想要的内容
+# force linux The program outputs English to prevent grep Can’t find what you want
 # https://www.gnu.org/software/gettext/manual/html_node/The-LANGUAGE-variable.html
 export LC_ALL=C
 
-# 处理部分用户用 su 切换成 root 导致环境变量没 sbin 目录
+# Handle some users su switch to root As a result, the environment variables are not sbin Table of contents
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
 
-# 如果不是 bash 的话，继续执行会有语法错误，因此在这里判断是否 bash
+# if not bash If so, there will be a syntax error if you continue to execute, so here you can determine whether bash
 if [ -z "$BASH" ] ||
-    # el 的 sh 是 bash 运行在 posix 模式，依然有 $BASH 和 $BASH_VERSION
+    # el of sh yes bash running on posix mode, there is still $BASH and $BASH_VERSION
     { [ -n "$BASH" ] && [ -n "$POSIXLY_CORRECT" ]; }; then
     if ! command -v bash >/dev/null; then
         if [ -f /etc/alpine-release ]; then
@@ -46,8 +46,8 @@ if [ -z "$BASH" ] ||
     exec bash "$0" "$@"
 fi
 
-# 好像跟 trap SIGINT 有冲突
-# 记录日志，过滤含有 password 的行
+# seems to follow trap SIGINT There is conflict
+# Logging, filtering contains password of rows
 # exec > >(tee >(grep -iv password >>/reinstall.log)) 2>&1
 THIS_SCRIPT=$(readlink -f "$0")
 trap 'trap_err $LINENO $?' ERR
@@ -138,18 +138,18 @@ show_url_in_args() {
 curl() {
     is_have_cmd curl || install_pkg curl
 
-    # 显示 url
+    # show url
     show_url_in_args "$@" >&2
 
-    # 添加 -f, --fail，不然 404 退出码也为0
-    # centos 7 curl 不支持 --retry-connrefused --retry-all-errors
-    # 因此手动 retry
+    # Add to -f, --fail，otherwise 404 exit status is also0
+    # centos 7 curl Not supported --retry-connrefused --retry-all-errors
+    # So manually retry
     for i in $(seq 5); do
         if command curl --connect-timeout 10 -f "$@"; then
             return
         else
             ret=$?
-            # 403 404 错误，或者达到重试次数
+            # 403 404 error or exhausted retries
             if [ $ret -eq 22 ] || [ $i -eq 5 ]; then
                 return $ret
             fi
@@ -188,7 +188,7 @@ get_os_part() {
 
 umount_all() {
     if mount_lists=$(mount | grep -w "on $1" | awk '{print $3}' | grep .); then
-        # alpine 没有 -R
+        # alpine No -R
         if umount --help 2>&1 | grep -wq -- '-R'; then
             umount -R "$1"
         else
@@ -210,9 +210,9 @@ is_host_has_ipv4_and_ipv6() {
     host=$1
 
     install_pkg dig
-    # dig会显示cname结果，cname结果以.结尾，grep -v '\.$' 用于去除 cname 结果
+    # digwill be displayedcnameresult，cnameThe result ends with.ending，grep -v '\.$' for removal cname result
     res=$(dig +short $host A $host AAAA | grep -v '\.$')
-    # 有.表示有ipv4地址，有:表示有ipv6地址
+    # have.means there isipv4address, yes:means there isipv6address
     grep -q \. <<<$res && grep -q : <<<$res
 }
 
@@ -262,7 +262,7 @@ insert_into_file() {
         error_and_exit "File not found: $file"
     fi
 
-    # 默认 grep -E
+    # default grep -E
     if [ $# -eq 0 ]; then
         set -- -E
     fi
@@ -309,11 +309,11 @@ test_url_real() {
 
     tmp_file=$tmp/img-test
 
-    # TODO: 好像无法识别 nixos 官方源的跳转
-    # 有的服务器不支持 range，curl会下载整个文件
-    # 所以用 head 限制 1M
-    # 过滤 curl 23 错误（head 限制了大小）
-    # ${PIPESTATUS[n]} 表示第n个管道的返回值
+    # TODO: Can’t seem to recognize nixos Jump to official source
+    # Some servers do not support it range，curlwill download the entire file
+    # So use head limitation 1M
+    # filter curl 23 error（head limits the size）
+    # ${PIPESTATUS[n]} Indicates the firstnThe return value of a pipe
     echo $url
     for i in $(seq 5 -1 0); do
         if command curl --insecure --connect-timeout 10 -Lfr 0-1048575 "$url" \
@@ -326,16 +326,16 @@ test_url_real() {
             case $ret in
             22)
                 # 403 404
-                # 这里的 failed 虽然返回 1，但是不会中断脚本，因此要手动 return
+                # Here’s failed Although return 1，But it won’t interrupt the script, so manually return
                 failed "$msg"
                 return "$ret"
                 ;;
             23)
-                # 限制了空间
+                # limits the space
                 break
                 ;;
             *)
-                # 其他错误
+                # Other errors
                 if [ $i -eq 0 ]; then
                     failed "$msg"
                     return "$ret"
@@ -346,16 +346,16 @@ test_url_real() {
         fi
     done
 
-    # 如果要检查文件类型
+    # If you want to check the file type
     if [ -n "$expect_types" ]; then
         install_pkg file
         real_type=$(file_enhanced $tmp_file)
         echo "File type: $real_type"
 
-        # debian 9 ubuntu 16.04-20.04 可能会将 iso 识别成 raw
+        # debian 9 ubuntu 16.04-20.04 may be iso recognized as raw
         for type in $expect_types $([ "$expect_types" = iso ] && echo raw); do
             if [[ ."$real_type" = *."$type" ]]; then
-                # 如果要设置变量
+                # If you want to set a variable
                 if [ -n "$var_to_eval" ]; then
                     IFS=. read -r "${var_to_eval?}" "${var_to_eval}_warp" <<<"$real_type"
                 fi
@@ -370,37 +370,37 @@ Actually type: $real_type"
 }
 
 fix_file_type() {
-    # gzip的mime有很多种写法
-    # centos7中显示为 x-gzip，在其他系统中显示为 gzip，可能还有其他
-    # 所以不用mime判断
+    # gzipofmimeThere are many ways to write
+    # centos7shown as x-gzip，Appears as gzip，There may be others
+    # So no needmimejudge
     # https://www.digipres.org/formats/sources/tika/formats/#application/gzip
 
-    # centos 7 上的 file 显示 qcow2 的 mime 为 application/octet-stream
+    # centos 7 on file show qcow2 of mime for application/octet-stream
     # file debian-12-genericcloud-amd64.qcow2
     # debian-12-genericcloud-amd64.qcow2: QEMU QCOW Image (v3), 2147483648 bytes
     # file --mime debian-12-genericcloud-amd64.qcow2
     # debian-12-genericcloud-amd64.qcow2: application/octet-stream; charset=binary
 
-    # --extension 不靠谱
+    # --extension Unreliable
     # file -b /reinstall-tmp/img-test --mime-type
     # application/x-qemu-disk
     # file -b /reinstall-tmp/img-test --extension
     # ???
 
-    # 1. 删除,;#
+    # 1. delete,;#
     # DOS/MBR boot sector; partition 1: ...
     # gzip compressed data, was ...
-    # # ISO 9660 CD-ROM filesystem data... (有些 file 版本开头输出有井号)
+    # # ISO 9660 CD-ROM filesystem data... (some file There is a pound sign at the beginning of the version output.)
 
-    # 2. 删除开头的空格
+    # 2. Remove leading spaces
 
-    # 3. 删除无意义的单词 POSIX, Unicode, UTF-8, ASCII
+    # 3. Remove meaningless words POSIX, Unicode, UTF-8, ASCII
     # POSIX tar archive (GNU)
     # Unicode text, UTF-8 text
     # UTF-8 Unicode text, with very long lines
     # ASCII text
 
-    # 4. 下面两种都是 raw
+    # 4. Both of the following are raw
     # DOS/MBR boot sector
     # x86 boot sector; partition 1: ...
     sed -E \
@@ -415,13 +415,13 @@ fix_file_type() {
         awk '{print $1}' | to_lower
 }
 
-# 不用 file -z，因为
-# 1. file -z 只能看透一层
-# 2. alpine file -z 无法看透部分镜像（前1M），例如：
+# Need not file -z，because
+# 1. file -z Can only see through one layer
+# 2. alpine file -z Unable to see through part of the mirror (front1M），For example：
 # guajibao-win10-ent-ltsc-2021-x64-cn-efi.vhd.gz
 # guajibao-win7-sp1-ent-x64-cn-efi.vhd.gz
 # win7-ent-sp1-x64-cn-efi.vhd.gz
-# 还要注意 centos 7 没有 -Z 只有 -z
+# Also note centos 7 No -Z only -z
 file_enhanced() {
     file=$1
 
@@ -437,7 +437,7 @@ file_enhanced() {
             ;;
         tar)
             install_pkg "$type"
-            # 隐藏 gzip: unexpected end of file 提醒
+            # hide gzip: unexpected end of file remind
             tar xf "$file" -O 2>/dev/null | head -c 1048576 >"$file.inside"
             mv -f "$file.inside" "$file"
             ;;
@@ -450,11 +450,11 @@ file_enhanced() {
     echo "$full_type" | sed 's/\.$//'
 }
 
-# trans.sh 有相同方法
+# trans.sh There is the same method
 add_community_repo_for_alpine() {
     local ver mirror
 
-    # 先检查原来的 repo 是不是 edge 或者 latest-stable
+    # Check the original first repo Yes or no edge or latest-stable
     if grep -q "^http.*/edge/main$" /etc/apk/repositories; then
         ver=edge
     elif grep -q "^http.*/latest-stable/main$" /etc/apk/repositories; then
@@ -475,22 +475,22 @@ is_in_container() {
         { [ -f /proc/1/environ ] && grep -q container=lxc /proc/1/environ; }
 }
 
-# 使用 | del_br ，但返回 del_br 之前返回值
+# use | del_br ，but returns del_br Return value before
 
 is_virt() {
     if [ -z "$_is_virt" ]; then
         # aws t4g debian 11
-        # systemd-detect-virt: 为 none，即使装了dmidecode
-        # virt-what: 未装 deidecode时结果为空，装了deidecode后结果为aws
-        # 所以综合两个命令的结果来判断
+        # systemd-detect-virt: for none，Even if installeddmidecode
+        # virt-what: Not installed deidecodeWhen the result is empty, it is installed.deidecodeThe final result isaws
+        # So we can judge based on the results of the two commands.
         if is_have_cmd systemd-detect-virt && systemd-detect-virt -v; then
             _is_virt=true
         fi
 
         if [ -z "$_is_virt" ]; then
-            # debian 安装 virt-what 不会自动安装 dmidecode，因此结果有误
+            # debian Install virt-what Will not install automatically dmidecode，Therefore the result is wrong
             install_pkg dmidecode virt-what
-            # virt-what 返回值始终是0，所以用是否有输出作为判断
+            # virt-what The return value is always0，So use whether there is output as a judgment
             if [ -n "$(virt-what)" ]; then
                 _is_virt=true
             fi
@@ -508,15 +508,15 @@ get_http_log_url() {
     echo "http://IP$([ "${web_port:-80}" = 80 ] || echo :$web_port)$web_path"
 }
 
-# 判断语言字符是否合法，允许全名和缩写
+# Determine whether the language characters are legal, allowing full names and abbreviations
 
 set_var() {
-    # eval 不安全
+    # eval not safe
 
-    # 仅 bash 可用
+    # only bash Available
     printf -v "$1" "%s" "$2"
 
-    # 或者
+    # or
     # IFS= read -r "$1" <<<"$2"
 }
 
@@ -586,7 +586,7 @@ setos() {
     *) error_and_exit "Unsupported internal target: $distro" ;;
     esac
 
-    # 集中测试云镜像格式
+    # centralized cloud-image format tests
 }
 
 resolve_latest_stable() {
@@ -618,7 +618,7 @@ get_latest_distro_releasever() {
     printf '%s\n' "$latest_releasever"
 }
 
-# 检查是否为正确的系统名
+# Check if it is the correct system name
 verify_os_name() {
     local input
     input=$(printf '%s' "$*" | to_lower)
@@ -653,9 +653,9 @@ verify_os_args() {
 }
 
 get_cmd_path() {
-    # arch 云镜像不带 which
-    # command -v 包括脚本里面的方法
-    # ash 无效
+    # arch Cloud mirror does not come with which
+    # command -v Including methods in scripts
+    # ash invalid
     type -f -p $1
 }
 
@@ -668,8 +668,8 @@ install_pkg() {
     find_pkg_mgr() {
         [ -n "$pkg_mgr" ] && return
 
-        # 查找方法1: 通过 ID / ID_LIKE
-        # 因为可能装了多种包管理器
+        # Find method1: pass ID / ID_LIKE
+        # Because there may be multiple package managers installed
         if [ -f /etc/os-release ]; then
             # shellcheck source=/dev/null
             for id in $({ . /etc/os-release && echo $ID $ID_LIKE; }); do
@@ -687,7 +687,7 @@ install_pkg() {
             done
         fi
 
-        # 查找方法 2
+        # Find method 2
         for mgr in dnf yum apt-get pacman zypper emerge apk nix-env; do
             is_have_cmd $mgr && pkg_mgr=$mgr && return
         done
@@ -759,11 +759,11 @@ install_pkg() {
         esac
     }
 
-    # 系统                       package名称                                    repo名称
+    # system                       packagename                                    reponame
     # centos/alma/rocky/fedora   epel-release                                   epel
     # oracle linux               oracle-epel-release                            ol9_developer_EPEL
     # opencloudos                epol-release                                   EPOL
-    # alibaba cloud linux 3      epel-release/epel-aliyuncs-release(qcow2自带)  epel
+    # alibaba cloud linux 3      epel-release/epel-aliyuncs-release(qcow2Bring your own)  epel
     # anolis 23                  anolis-epao-release                            EPAO
 
     # anolis 8
@@ -771,25 +771,25 @@ install_pkg() {
     # ========================== Name Matched: *ep*-release ==========================
     # anolis-epao-release.noarch : EPAO Packages for Anolis OS 8 repository configuration
     # epel-aliyuncs-release.noarch : Extra Packages for Enterprise Linux repository configuration
-    # epel-release.noarch : Extra Packages for Enterprise Linux repository configuration (qcow2自带)
+    # epel-release.noarch : Extra Packages for Enterprise Linux repository configuration (qcow2Bring your own)
 
     check_is_need_epel() {
         is_need_epel() {
             case "$pkg" in
             dpkg) true ;;
-            jq) is_have_cmd yum && ! is_have_cmd dnf ;; # el7/ol7 的 jq 在 epel 仓库
+            jq) is_have_cmd yum && ! is_have_cmd dnf ;; # el7/ol7 of jq exist epel storehouse
             *) false ;;
             esac
         }
 
         get_epel_repo_name() {
-            # el7 不支持 yum repolist --all，要使用 yum repolist all
-            # el7 yum repolist 第一栏有 /x86_64 后缀，因此要去掉。而 el9 没有
+            # el7 Not supported yum repolist --all，To use yum repolist all
+            # el7 yum repolist The first column has /x86_64 suffix, so it needs to be removed. and el9 No
             $pkg_mgr repolist all | awk '{print $1}' | awk -F/ '{print $1}' | grep -Ei 'ep(el|ol|ao)$'
         }
 
         get_epel_pkg_name() {
-            # el7 不支持 yum list --available，要使用 yum list available
+            # el7 Not supported yum list --available，To use yum list available
             $pkg_mgr list available | grep -E '(.*-)?ep(el|ol|ao)-(.*-)?release' |
                 awk '{print $1}' | cut -d. -f1 | grep -v next | head -1
         }
@@ -833,7 +833,7 @@ install_pkg() {
             DEBIAN_FRONTEND=noninteractive apt-get install -y $pkg
             ;;
         nix-env)
-            # 不指定 channel 会很慢，而且很占内存
+            # Not specified channel It will be very slow and takes up a lot of memory.
             [ -z "$nix_updated" ] && nix-channel --update && nix_updated=1
             nix-env -iA nixos.$pkg
             ;;
@@ -843,15 +843,15 @@ install_pkg() {
     is_need_reinstall() {
         local cmd=$1
 
-        # gentoo 默认编译的 unsquashfs 不支持 xz
+        # gentoo compiled by default unsquashfs Not supported xz
         if [ "$cmd" = unsquashfs ] && is_have_cmd emerge && ! "$cmd" |& grep -wq xz; then
             echo "unsquashfs not supported xz. rebuilding."
             return 0
         fi
 
-        # busybox grep  不支持 -oP
-        # busybox lsblk 不支持 -r -n --inverse
-        # busybox fdisk 无法显示 mbr 分区表的 id
+        # busybox grep  Not supported -oP
+        # busybox lsblk Not supported -r -n --inverse
+        # busybox fdisk Unable to display mbr partition table id
         if { [ "$cmd" = grep ] || [ "$cmd" = lsblk ] || [ "$cmd" = fdisk ]; } &&
             is_have_cmd apk && "$cmd" --help |& grep -wq BusyBox; then
             return 0
@@ -888,7 +888,7 @@ ram_floor_for_target() {
 check_ram() {
     ram_standard=$(ram_floor_for_target "$distro")
 
-    # 不用检查内存的情况
+    # No need to check memory status
     if [ "$ram_standard" -eq 0 ]; then
         return
     fi
@@ -904,13 +904,13 @@ check_ram() {
 
     if ! is_valid_ram_size "$ram_size"; then
         install_pkg lshw
-        # 不能忽略 -i，alpine 显示的是 System memory
+        # cannot be ignored -i，alpine Shown is System memory
         ram_str=$(lshw -c memory -short | grep -i 'System Memory' | awk '{print $3}')
         ram_size=$(grep <<<$ram_str -o '[0-9]*')
         grep <<<$ram_str GiB && ram_size=$((ram_size * 1024))
     fi
 
-    # 用于兜底，不太准确
+    # Used to give the bottom line, not very accurate
     if ! is_valid_ram_size "$ram_size"; then
         ram_size_k=$(grep '^MemTotal:' /proc/meminfo | awk '{print $2}')
         ram_size=$((ram_size_k / 1024 + 64 + 4))
@@ -932,10 +932,10 @@ is_efi() {
 }
 
 is_grub_dir_linked() {
-    # cloudcone 重装前/重装后(方法1)
+    # cloudcone before installation/after installation(method1)
     [ "$(readlink -f /boot/grub/grub.cfg)" = /boot/grub2/grub.cfg ] ||
         [ "$(readlink -f /boot/grub2/grub.cfg)" = /boot/grub/grub.cfg ] ||
-        # cloudcone 重装后(方法2)
+        # cloudcone after installation(method2)
         { [ -f /boot/grub2/grub.cfg ] && [ "$(cat /boot/grub2/grub.cfg)" = 'chainloader (hd0)+1' ]; }
 }
 
@@ -955,7 +955,7 @@ is_need_boot_vmlinuz() {
     ! { is_netboot_xyz && is_efi; }
 }
 
-# 只有 linux bios 是用本机的 grub/extlinux
+# only linux bios It’s using this machine grub/extlinux
 is_use_local_grub_extlinux() {
     is_need_boot_vmlinuz && ! is_efi
 }
@@ -968,10 +968,10 @@ is_use_local_extlinux() {
     is_use_local_grub_extlinux && ! is_mbr_using_grub
 }
 
-# 软 raid 时 xda 可能不是引导盘，以后再修正
+# soft raid hour xda It may not be the boot disk, I will correct it later.
 is_mbr_using_grub() {
     find_main_disk
-    # 各发行版不一定自带 strings hexdump xxd od 命令
+    # Each distribution may not come with its own strings hexdump xxd od Order
     head -c 440 /dev/$xda | grep -a -iq 'GRUB'
 }
 
@@ -1001,25 +1001,25 @@ trim() {
 }
 
 assert_username_valid() {
-    # 不能为 none [ ] / \ : | < > + = ; , ? * % @
+    # cannot be none [ ] / \ : | < > + = ; , ? * % @
 
-    # 账号为空
+    # Account is empty
     if [ -z "$username" ]; then
         error_and_exit "Username: Can not be empty."
     fi
 
-    # 账号为 none
+    # The account number is none
     if [ "$(to_lower <<<"$username")" = none ]; then
         error_and_exit "Username: Can not be 'none'."
     fi
 
-    # 账号包含非法字符
+    # Account contains illegal characters
     if grep -q '[][/\:|<>+=;,?*%@]' <<<"$username"; then
         error_and_exit "Username: Do not use any of the following characters: / \ [ ] : | < > + = ; , ? * % @"
     fi
 }
 
-# trans.sh 有同名方法
+# trans.sh There is a method with the same name
 
 prompt_username() {
     info "prompt username"
@@ -1027,7 +1027,7 @@ prompt_username() {
     default_username=root
 
     warn false "Set username, leave blank to use $default_username"
-    warn false "设置用户名，不填写则使用 $default_username"
+    warn false "Set username, use if left blank $default_username"
     IFS= read -r -p "Username: " username
     username="$(printf "%s" "$username" | trim)"
 
@@ -1040,7 +1040,7 @@ prompt_username() {
 prompt_password() {
     info "prompt password"
     warn false "Set password, leave blank to use a random password."
-    warn false "设置密码，不填写则使用随机密码"
+    warn false "Set a password. If not filled in, a random password will be used."
     while true; do
         IFS= read -r -p "Password: " password
         if [ -n "$password" ]; then
@@ -1051,8 +1051,8 @@ prompt_password() {
                 error "Passwords don't match. Try again."
             fi
         else
-            # 特殊字符列表
-            # 有的机器运行 centos 7 ，用 /dev/random 产生 16 位密码，开启了 rngd 也要 5 秒，关闭了 rngd 则长期阻塞
+            # Special character list
+            # Some machines are running centos 7 ，use /dev/random produce 16 password, turned on rngd Also want 5 seconds, closed rngd long-term blockage
             chars=\''A-Za-z0-9~!@#$%^&*_=+`|(){}[]:;"<>,.?/-'
             password=$(tr -dc "$chars" </dev/urandom | head -c16)
             break
@@ -1063,31 +1063,31 @@ prompt_password() {
 save_password() {
     dir=$1
 
-    # mkpasswd 有三个
-    # expect 里的 mkpasswd 是用来生成随机密码的
-    # whois 里的 mkpasswd 才是我们想要的，可能不支持 yescrypt，alpine 的 mkpasswd 是独立的包
-    # busybox 里的 mkpasswd 也是我们想要的，但多数不支持 yescrypt
+    # mkpasswd There are three
+    # expect inside mkpasswd is used to generate random passwords
+    # whois inside mkpasswd That’s what we want, it may not be supported yescrypt，alpine of mkpasswd It is an independent package
+    # busybox inside mkpasswd This is also what we want, but most people don’t support it. yescrypt
 
-    # alpine 这两个包有冲突
+    # alpine There is a conflict between these two packages
     # apk add expect mkpasswd
 
-    # 不要用 echo "$password" 保存密码，原因：
+    # Don’t use echo "$password" Save password, reason：
     # password="-n"
-    # echo "$password"  # 空白
+    # echo "$password"  # blank
 
-    # 明文密码
-    # 假如用户运行 alpine live 直接打包硬盘镜像，如果保存了明文密码，则会暴露明文密码，因为 netboot initrd 在里面
-    # 通过 --password 传入密码，history 有记录，也会暴露明文密码
-    # /reinstall.log 也会暴露明文密码（已处理）
+    # clear text password
+    # If the user runs alpine live Directly package the hard disk image. If the clear text password is saved, the clear text password will be exposed because netboot initrd inside
+    # pass --password Pass in password，history If there is a record, the clear text password will also be exposed.
+    # /reinstall.log Also exposes clear text passwords (processed）
 
     # sha512
-    # 以下系统均支持 sha512 密码，但是生成密码需要不同的工具
-    # 兼容性     openssl   mkpasswd          busybox  python
-    # centos 7     ×      只有expect的       需要编译    √
-    # centos 8     √      只有expect的
+    # The following systems are supported sha512 Passwords, but generating passwords requires different tools
+    # compatibility     openssl   mkpasswd          busybox  python
+    # centos 7     ×      onlyexpectThe need to compile    √
+    # centos 8     √      onlyexpectof
     # debian 9     ×         √
     # ubuntu 16    ×         √
-    # alpine       √      可能系统装了expect     √
+    # alpine       √      Maybe the system is installedexpect     √
     # others       √
 
     # alpine
@@ -1100,9 +1100,9 @@ save_password() {
     elif is_have_cmd apt-get && install_pkg whois && mkpasswd -m help | grep -wq sha-512; then
         crypted=$(printf '%s' "$password" | mkpasswd -m sha-512 --stdin)
     # centos 7
-    # crypt.mksalt 是 python3 的
-    # 红帽把它 backport 到了 centos7 的 python2 上
-    # 在其它发行版的 python2 上运行会出错
+    # crypt.mksalt yes python3 of
+    # red hat put it backport arrive centos7 of python2 superior
+    # in other distributions python2 An error will occur when running on
     elif is_have_cmd yum && is_have_cmd python2; then
         crypted=$(python2 -c "import crypt, sys; print(crypt.crypt(sys.argv[1], crypt.mksalt(crypt.METHOD_SHA512)))" "$password")
     else
@@ -1111,54 +1111,54 @@ save_password() {
     echo "$crypted" >"$dir/password-linux-sha512"
 
     # yescrypt
-    # 旧系统不支持，先不管
+    # The old system does not support it, so ignore it for now.
 
 }
 
-# 记录主硬盘
+# Record master hard drive
 find_main_disk() {
     if [ -n "$main_disk" ]; then
         return
     fi
 
     if [ -z "$xda" ]; then
-        # centos7下测试     lsblk --inverse $mapper | grep -w disk     grub2-probe -t disk /
-        # 跨硬盘btrfs       只显示第一个硬盘                            显示两个硬盘
-        # 跨硬盘lvm         显示两个硬盘                                显示/dev/mapper/centos-root
-        # 跨硬盘软raid      显示两个硬盘                                显示/dev/md127
+        # centos7Next test     lsblk --inverse $mapper | grep -w disk     grub2-probe -t disk /
+        # Across hard drivesbtrfs       Show only the first hard drive Show both hard drives
+        # Across hard driveslvm         Display two hard disks Display/dev/mapper/centos-root
+        # Cross hard disk softraid      Display two hard disks Display/dev/md127
 
-        # 还有 findmnt
+        # besides findmnt
 
-        # 理论上 /boot/efi /efi /boot 可以不在主硬盘上
-        # 因此只查找 / 分区
+        # Theoretically /boot/efi /efi /boot It doesn’t have to be on the main hard drive
+        # So only look for / Partition
 
         install_pkg lsblk
-        # lvm 显示的是 /dev/mapper/xxx-yyy，再用第二条命令得到sda
+        # lvm Shown is /dev/mapper/xxx-yyy，Then use the second command to getsda
         mapper=$(mount | awk '$3=="/" {print $1}' | grep .)
         xdas=$(lsblk -rn --inverse $mapper | grep -w disk | awk '{print $1}' | sort -u | grep .)
 
-        # 注意 wc -l 的坑
-        # wc -l <<<"" 输出 1
+        # Notice wc -l pit
+        # wc -l <<<"" output 1
 
-        # 检测主硬盘是否横跨多个磁盘
+        # Detect whether the primary hard drive spans multiple disks
         if [ "$(wc -l <<<"$xdas")" -eq 1 ]; then
             xda=$xdas
         else
-            # vultr 官网新建数据盘时有写，部分地区的实例，不能从数据盘启动
-            # 实测 nvram 可写入数据盘的条目但不生效，手动安装 debian 到此硬盘，nvram 也不生效
-            # 从 bios 手动选择数据盘的 efi 文件才能启动
-            # 但是 nvram BootNext 数据盘的条目却可以生效
+            # vultr There is writing when creating a new data disk on the official website. In some regions, instances cannot be started from the data disk.
+            # Actual measurement nvram Can write entries to the data disk but does not take effect, manual installation debian Go to this hard drive，nvram Doesn’t work either
+            # from bios Manually select the data disk efi file can be started
+            # but nvram BootNext The entries on the data disk can take effect.
 
-            # vultr 从软 raid 0 debian 下用本脚本安装 debian ，进入 grub efi 时，无法识别系统分区 md1 的文件系统，也少了 hd1
-            # 但是从 bios 手动选择 reinstall 的 grub efi 时却可以识别
-            # 后期应该将 vmlinux/initrd 放到 efi/boot 分区
+            # vultr from soft raid 0 debian Use this script to install debian ，Enter grub efi The system partition cannot be recognized when md1 The file system is also missing hd1
+            # But from bios Manual selection reinstall of grub efi can be identified
+            # Later it should be vmlinux/initrd put in efi/boot Partition
 
-            # Gemini 说:
-            # 使用 efibootmgr 的 BootNext 时，固件走的是“快速路径”：
-            # 它只初始化存放 EFI 引导文件（grubx64.efi）的那块硬盘（hd0），然后直接把控制权交给 GRUB。
-            # 因为 hd1 还没“醒”，GRUB 自然无法拼凑出完整的 md1 阵列，导致无法识别文件系统。
+            # Gemini explain:
+            # use efibootmgr of BootNext , the firmware takes the ”fast path””：
+            # It only initializes and stores EFI boot file（grubx64.efi）the hard drive（hd0），Then directly hand over control to GRUB。
+            # because hd1 Not ”awakened” yet”，GRUB Naturally, it is impossible to piece together a complete md1 array, preventing filesystem recognition。
 
-            # 使用 nativedisk 可以强制 grub 识别所有硬盘?
+            # use nativedisk can be forced grub Identify all hard drives?
             info false "Multiple disks found for root partition:"
             echo '-----'
             printf "%s\n" "$xdas"
@@ -1172,23 +1172,23 @@ find_main_disk() {
 
     info "Main disk: $xda"
 
-    # 可以用 dd 找出 guid?
+    # available dd find out guid?
 
-    # centos7 blkid lsblk 不显示 PTUUID
-    # centos7 sfdisk 不显示 Disk identifier
-    # alpine blkid 不显示 gpt 分区表的 PTUUID
-    # 因此用 fdisk
+    # centos7 blkid lsblk Don’t show PTUUID
+    # centos7 sfdisk Don’t show Disk identifier
+    # alpine blkid Don’t show gpt partition table PTUUID
+    # Therefore use fdisk
 
     # Disk identifier: 0x36778223                                  # gnu fdisk + mbr
     # Disk identifier: D6B17C1A-FA1E-40A1-BDCB-0278A3ED9CFC        # gnu fdisk + gpt
     # Disk identifier (GUID): d6b17c1a-fa1e-40a1-bdcb-0278a3ed9cfc # busybox fdisk + gpt
-    # 不显示 Disk identifier                                        # busybox fdisk + mbr
+    # Don’t show Disk identifier                                        # busybox fdisk + mbr
 
-    # 获取 xda 的 id
+    # get xda of id
     install_pkg fdisk
     main_disk=$(fdisk -l /dev/$xda | grep 'Disk identifier' | awk '{print $NF}' | sed 's/0x//')
 
-    # 检查 id 格式是否正确
+    # examine id Is the format correct?
     if ! grep -Eix '[0-9a-f]{8}' <<<"$main_disk" &&
         ! grep -Eix '[0-9a-f-]{36}' <<<"$main_disk"; then
         error_and_exit "Disk ID is invalid: $main_disk"
@@ -1203,13 +1203,13 @@ is_found_ipv6_netconf() {
     [ -n "$ipv6_mac" ] && [ -n "$ipv6_addr" ] && [ -n "$ipv6_gateway" ]
 }
 
-# TODO: 单网卡多IP
+# TODO: Multiple network cardsIP
 collect_netconf() {
     # linux
-    # 通过默认网关得到默认网卡
+    # identify the default interface through the default gateway
 
-    # 多个默认路由下
-    # ip -6 route show default dev ens3 完全不显示
+    # Under multiple default routes
+    # ip -6 route show default dev ens3 Don’t show at all
 
     # ip -6 route show default
     # default proto static metric 1024 pref medium
@@ -1230,11 +1230,11 @@ collect_netconf() {
             set_var ipv${v}_mac "$(ip link show dev $ethx | grep link/ether | head -1 | awk '{print $2}')"
             set_var ipv${v}_gateway "$gateway"
 
-            # 获取所有全局地址
+            # Get all global addresses
             all_addrs=$(ip -$v -o addr show scope global dev $ethx | grep -v temporary | awk '{print $4}')
             primary_addr=$(echo "$all_addrs" | head -1)
 
-            # IPv6: 用 ip route get 让内核返回正确的源 IP，指定 dev 避免 tun/warp 干扰
+            # IPv6: use ip route get Have the kernel return the correct source IP，Specify dev avoid tun/warp interference
             if [ "$v" = 6 ] && [ -n "$primary_addr" ]; then
                 route_src=$(ip -6 route get 2001:4860:4860::8888 dev "$ethx" 2>/dev/null | grep -oP 'src \K[^ ]+')
                 if [ -n "$route_src" ]; then
@@ -1248,7 +1248,7 @@ collect_netconf() {
             fi
 
             set_var ipv${v}_addr "$primary_addr"
-            # extra_addrs: 除主地址外的所有地址
+            # extra_addrs: all addresses except the primary
             set_var ipv${v}_extra_addrs "$(echo "$all_addrs" | grep -Fxve "$primary_addr" | tr '\n' ',' | sed 's/,$//')"
         fi
     done
@@ -1269,19 +1269,19 @@ collect_netconf() {
 }
 
 get_maybe_efi_dirs_in_linux() {
-    # 不从 fstab 查找，因为极端情况下可能只用 systemd mount
-    # arch云镜像efi分区挂载在/efi，且使用 autofs，mount 命令会有两个 /efi 条目
+    # Disobey fstab search, because in extreme cases you may just use systemd mount
+    # archCloud mirrorefiThe partition is mounted on/efi，and use autofs，mount There will be two commands /efi entry
 
     install_pkg findmnt >&2
 
-    # 寻找 efi 分区，并输出根目录
+    # looking for efi Partition and output the root directory
     # root_dirs=$(mount | awk '$5=="vfat" || $5=="autofs" {print $3}' | grep -Ex '/efi|/boot/efi|/boot' | sort -u)
     root_dirs=$(findmnt -t fat,vfat -n -o TARGET | grep -Ex '/efi|/boot/efi|/boot' | sort -u)
 
     efi_dirs=$(
         for dir in $root_dirs; do
-            # 只显示有 efi 文件的
-            # -quit 表示找到第一个 *.efi 就立即退出 find
+            # Only show that there are efi Documentary
+            # -quit Indicates finding the first *.efi Just exit immediately find
             if [ -d "$dir" ]; then
                 find "$dir" -type f -iname "*.efi" -exec printf '%s\n' "$dir" \; -quit
             fi
@@ -1318,12 +1318,12 @@ grep_efi_entry() {
     # MirroredPercentageAbove4G: 0.00
     # MirrorMemoryBelow4GB: false
 
-    # 根据文档，* 表示 active，也就是说有可能没有*(代表inactive)
+    # According to the documentation，* express active，That is to say, it is possible that there is not*(representinactive)
     # https://manpages.debian.org/testing/efibootmgr/efibootmgr.8.en.html
     grep -E '^Boot[0-9a-fA-F]{4}'
 }
 
-# trans.sh 有同名方法
+# trans.sh There is a method with the same name
 grep_efi_index() {
     awk '{print $1}' | sed -e 's/Boot//' -e 's/\*//'
 }
@@ -1348,17 +1348,17 @@ add_efi_entry_in_linux() {
 
     install_pkg efibootmgr
 
-    # 只取第一个
-    # 因为不用关心是否为 efi 分区，只要是 fat/vfat 格式的分区即可添加到引导
-    # 这里用了管道导致 get_maybe_efi_dirs_in_linux 里面的 error_and_exit 不生效
+    # Only take the first one
+    # Because there is no need to care whether it is efi partition, as long as it is fat/vfat formatted partition can be added to the boot
+    # Pipes are used here to cause get_maybe_efi_dirs_in_linux inside error_and_exit Not effective
     efi_part=$(get_maybe_efi_dirs_in_linux | head -1 | grep .)
     dist_dir=$efi_part/EFI/reinstall
     basename=$(basename $source)
     download_or_copy_file "$source" "$dist_dir/$basename"
 
-    # 原系统可能不是用 grub 引导，因此不一定有 grub-probe
+    # The original system may not be used grub guidance, so there may not necessarily be grub-probe
     install_pkg findmnt
-    # arch findmnt 会得到
+    # arch findmnt will get
     # systemd-1
     # /dev/sda2
     dev_part=$(findmnt -T "$dist_dir" -no SOURCE | grep '^/dev/')
@@ -1410,11 +1410,11 @@ find_grub_extlinux_cfg() {
     filename=$2
     keyword=$3
 
-    # 当 ln -s /boot/grub /boot/grub2 时
-    # find /boot/ 会自动忽略 /boot/grub2 里面的文件
+    # when ln -s /boot/grub /boot/grub2 hour
+    # find /boot/ will be ignored automatically /boot/grub2 files inside
     cfgs=$(
-        # 只要 $dir 存在
-        # 无论是否找到结果，返回值都是 0
+        # if only $dir exist
+        # Regardless of whether the result is found, the return value is 0
         find $dir \
             -type f -name $filename \
             -exec grep -E -l "$keyword" {} \;
@@ -1428,12 +1428,12 @@ find_grub_extlinux_cfg() {
     fi
 }
 
-# 空格、&、用户输入的网址要加引号，否则 grub 无法正确识别
+# space、&、The URL entered by the user must be enclosed in quotation marks, otherwise grub Unable to correctly identify
 is_need_quote() {
     [[ "$1" = *' '* ]] || [[ "$1" = *'&'* ]] || [[ "$1" = http* ]]
 }
 
-# 转换 finalos_a=1 为 finalos.a=1 ，排除 finalos_mirrorlist
+# Convert finalos_a=1 for finalos.a=1 ，exclude finalos_mirrorlist
 build_finalos_cmdline() {
     if vars=$(compgen -v finalos_); then
         for key in $vars; do
@@ -1459,14 +1459,14 @@ build_extra_cmdline() {
         fi
     done
 
-    # 指定最终安装系统的 mirrorlist，链接有&，在grub中是特殊字符，所以要加引号
+    # Specify the final installation system mirrorlist，links contain&，existgrubare special characters, so you need to add quotation marks
     if [ -n "$finalos_mirrorlist" ]; then
         extra_cmdline+=" extra_mirrorlist='$finalos_mirrorlist'"
     elif [ -n "$nextos_mirrorlist" ]; then
         extra_cmdline+=" extra_mirrorlist='$nextos_mirrorlist'"
     fi
 
-    # cloudcone 特殊处理
+    # cloudcone special handling
     if is_grub_dir_linked; then
         finalos_cmdline+=" extra_link_grub_dir=1"
     fi
@@ -1496,7 +1496,7 @@ build_cmdline() {
     build_nextos_cmdline
 
     # finalos
-    # trans 需要 finalos_distro 识别是安装 alpine 还是其他系统
+    # trans requires finalos_distro Identification is installation alpine Or other systems
     if [ "$distro" = alpine ]; then
         finalos_distro=alpine
     fi
@@ -1525,7 +1525,7 @@ set_boot_targets() {
     esac
 }
 
-# 脚本可能多次运行，先清理之前的残留
+# The script may be run multiple times, clean up the previous remnants first.
 mkdir_clear() {
     local dir=$1
 
@@ -1533,8 +1533,8 @@ mkdir_clear() {
         return
     fi
 
-    # 再次运行时，有可能 mount 了 btrfs root，因此先要 umount_all
-    # 但目前不需要 mount ，因此用不到
+    # When running again, it is possible mount Got it btrfs root，So first umount_all
+    # But not needed at the moment mount ，Therefore not used
     # umount_all "$dir"
     rm -rf "$dir"
     mkdir -p "$dir"
@@ -1561,7 +1561,7 @@ is_need_web_viewer() {
 }
 
 mod_initrd_alpine() {
-    # hack 1 v3.19 和之前的 virt 内核需添加 ipv6 模块
+    # hack 1 v3.19 and previous virt Kernel needs to be added ipv6 module
     if virt_dir=$(ls -d $initrd_dir/lib/modules/*-virt 2>/dev/null); then
         ipv6_dir=$virt_dir/kernel/net/ipv6
         if ! [ -f $ipv6_dir/ipv6.ko ] && ! grep -q ipv6 $initrd_dir/lib/modules/*/modules.builtin; then
@@ -1576,13 +1576,13 @@ mod_initrd_alpine() {
         fi
     fi
 
-    # hack 下载 dhcpcd
+    # hack download dhcpcd
     # shellcheck disable=SC2154
     download_and_extract_apk "$nextos_releasever" dhcpcd "$initrd_dir"
     sed -i -e '/^slaac private/s/^/#/' -e '/^#slaac hwaddr/s/^#//' $initrd_dir/etc/dhcpcd.conf
 
     # hack 2 /usr/share/udhcpc/default.script
-    # 脚本被调用的顺序
+    # The order in which scripts are called
     # udhcpc:  deconfig
     # udhcpc:  bound
     # udhcpc6: deconfig
@@ -1603,11 +1603,11 @@ mod_initrd_alpine() {
     get_function_content udhcpc |
         insert_into_file usr/share/udhcpc/default.script after 'deconfig\|renew\|bound'
 
-    # 允许设置 ipv4 onlink 网关
+    # Allow setting ipv4 onlink gateway
     sed -Ei 's,(0\.0\.0\.0\/0),"\1 onlink",' usr/share/udhcpc/default.script
 
-    # hack 3 网络配置
-    # alpine 根据 MAC_ADDRESS 判断是否有网络
+    # hack 3 Network configuration
+    # alpine according to MAC_ADDRESS Determine if there is a network
     # https://github.com/alpinelinux/mkinitfs/blob/c4c0115f9aa5aa8884c923dc795b2638711bdf5c/initramfs-init.in#L914
     insert_into_file init after 'configure_ip\(\)' <<EOF
         depmod
@@ -1639,7 +1639,7 @@ EOF
         fi
 EOF
 
-    # 临时修复 liveos getty 运行在 tty0
+    # temporary fix liveos getty running on tty0
     # shellcheck disable=SC2016
     if [ "$nextos_releasever" = 3.24 ] &&
         txt_to_grep='done < "$ROOT"/sys/class/tty/"$1"/active' &&
@@ -1654,33 +1654,33 @@ mod_initrd() {
     info "mod $nextos_distro initrd"
     install_pkg gzip cpio
 
-    # 解压
-    # 先删除临时文件，避免之前运行中断有残留文件
+    # Unzip
+    # Delete temporary files first to avoid residual files from previous interruptions.
     initrd_dir=$tmp/initrd
     mkdir_clear $initrd_dir
     cd $initrd_dir
 
-    # 解压/重新打包/删除 initrd 的 /dev/console /dev/null 都会报错
+    # Unzip/repackage/delete initrd of /dev/console /dev/null will report errors
     # cpio: dev/console: Cannot utime: Invalid argument
     # cpio: ./dev/console: Cannot stat: Bad address
 
-    # 但同样运行 zcat /reinstall-initrd | cpio -idm
+    # But the same runs zcat /reinstall-initrd | cpio -idm
 
     # shellcheck disable=SC2046
-    # nonmatching 是精确匹配路径
+    # nonmatching is an exact matching path
     zcat /reinstall-initrd | cpio -idm
 
     curl -Lo $initrd_dir/trans.sh $confhome/trans.sh
     if ! grep -iq "$SCRIPT_VERSION" $initrd_dir/trans.sh; then
         error_and_exit "
 This script is outdated, please download reinstall.sh again.
-脚本有更新，请重新下载 reinstall.sh"
+The script has been updated, please download it again reinstall.sh"
     fi
 
     curl -Lo $initrd_dir/initrd-network.sh $confhome/initrd-network.sh
     chmod a+x $initrd_dir/trans.sh $initrd_dir/initrd-network.sh
 
-    # 保存配置
+    # Save configuration
     mkdir -p $initrd_dir/configs
     if [ -n "$ssh_keys" ]; then
         cat <<<"$ssh_keys" >$initrd_dir/configs/ssh_keys
@@ -1694,8 +1694,8 @@ This script is outdated, please download reinstall.sh again.
     [ "$nextos_distro" = alpine ] || error_and_exit "Only Alpine Live initrds are supported."
     mod_initrd_alpine
 
-    # alpine live 不精简 initrd
-    # 因为不知道用户想干什么，可能会用到精简的文件
+    # alpine live Not streamlined initrd
+    # Because we don’t know what the user wants to do, we may use streamlined files.
     if is_virt && ! is_alpine_live; then
         remove_useless_initrd_files
     fi
@@ -1706,8 +1706,8 @@ This script is outdated, please download reinstall.sh again.
         read -r -p 'Press Enter to continue...'
     fi
 
-    # 重建
-    # 注意要用 cpio -H newc 不要用 cpio -c ，不同版本的 -c 作用不一样，很坑
+    # rebuild
+    # Pay attention to use cpio -H newc Don’t use cpio -c ，different versions -c The effect is different, it’s a trap
     # -c    Use the old portable (ASCII) archive format
     # -c    Identical to "-H newc", use the new (SVR4)
     #       portable format.If you wish the old portable
@@ -1719,10 +1719,10 @@ This script is outdated, please download reinstall.sh again.
 remove_useless_initrd_files() {
     info "slim initrd"
 
-    # 显示精简前的大小
+    # Show size before reduction
     du -sh .
 
-    # 删除 initrd 里面没用的文件/驱动
+    # delete initrd unused files inside/driver
     rm -rf bin/brltty
     rm -rf etc/brltty
     rm -rf sbin/wpa_supplicant
@@ -1739,7 +1739,7 @@ remove_useless_initrd_files() {
                     cd "$item"
                     for sub_item in *; do
                         case "$sub_item" in
-                        # 有 e100.ko e1000文件夹 e1000e文件夹
+                        # have e100.ko e1000folder e1000efolder
                         e100* | lib* | *vf | idpf) ;;
                         *) rm -rf $sub_item ;;
                         esac
@@ -1776,7 +1776,7 @@ remove_useless_initrd_files() {
         done
     )
 
-    # 显示精简后的大小
+    # Show reduced size
     du -sh .
 }
 
@@ -1953,8 +1953,8 @@ remove_exist_reinstall_efi_dir() {
 
     local dir='' dirs=''
     dirs=$(get_maybe_efi_dirs_in_linux)
-    # 后期可能会将 reinstall-vmlinuz 和 reinstall-initrd 放到 efi 分区下
-    # 因此也删除它们
+    # Later it may be reinstall-vmlinuz and reinstall-initrd put in efi Under partition
+    # So delete them too
     for dir in $dirs; do
         rm -f "$dir/reinstall-vmlinuz"
         rm -f "$dir/reinstall-initrd"
@@ -1970,8 +1970,8 @@ remove_exist_reinstall_efi_dir() {
 }
 
 # bios        /boot/grub*/custom.cfg                     /cygdrive/c/grub/grub.cfg
-# efi         efi分区的/EFI/reinstall/grub.cfg           /cygdrive/c/grub.cfg
-# efi文件夹    efi分区的/EFI/reinstall/                  /cygdrive/a/EFI/reinstall/
+# efi         efipartitioned/EFI/reinstall/grub.cfg           /cygdrive/c/grub.cfg
+# efifolder    efipartitioned/EFI/reinstall/                  /cygdrive/a/EFI/reinstall/
 
 init_bootloader_facts() {
     # linux
@@ -1985,8 +1985,8 @@ init_bootloader_facts() {
                 # alpine debian ubuntu
                 _grub_cfg=$(grep -o '[^ ]*grub.cfg' "$(get_cmd_path update-grub)" | head -1)
             else
-                # 找出主配置文件（含有menuentry|blscfg）
-                # 有没有可能在 efi 目录?
+                # Find the main configuration file (containingmenuentry|blscfg）
+                # Is it possible in efi Table of contents?
                 _grub_cfg=$(find_grub_extlinux_cfg '/boot/grub*' grub.cfg 'menuentry|blscfg')
             fi
             target_cfg=$(dirname $_grub_cfg)/custom.cfg
@@ -2006,11 +2006,11 @@ init_bootloader_facts() {
     fi
 }
 
-# 重新生成 grub.cfg
-# 因为有些机子例如hython debian的grub.cfg少了40_custom 41_custom 部分
+# regenerate grub.cfg
+# Because some machines such ashython debianofgrub.cfgless40_custom 41_custom part
 recreate_grub_or_extlinux_cfg() {
-    # 没用到原机的 grub 和 extlinux
-    # 因此不需要重新生成 grub.cfg 或 extlinux.conf
+    # Didn’t use the original machine grub and extlinux
+    # So no need to regenerate grub.cfg or extlinux.conf
     if is_efi; then
         return
     fi
@@ -2018,13 +2018,13 @@ recreate_grub_or_extlinux_cfg() {
     if is_mbr_using_grub; then
         info "recreate grub.cfg"
 
-        # nixos 手动执行 grub-mkconfig -o /boot/grub/grub.cfg 会丢失系统启动条目
-        # 正确的方法是修改 configuration.nix 的 boot.loader.grub.extraEntries
-        # 但是修改 configuration.nix 不是很好，因此改成修改 grub.cfg
+        # nixos Manual execution grub-mkconfig -o /boot/grub/grub.cfg System startup entries will be lost
+        # The correct way is to modify configuration.nix of boot.loader.grub.extraEntries
+        # But modify configuration.nix Not very good, so I changed it to a modification grub.cfg
         if [ -x /nix/var/nix/profiles/system/bin/switch-to-configuration ]; then
-            # 生成 grub.cfg
+            # generate grub.cfg
             /nix/var/nix/profiles/system/bin/switch-to-configuration boot
-            # 手动启用 41_custom
+            # Manually enable 41_custom
             nixos_grub_home="$(dirname "$(readlink -f "$(get_cmd_path grub-mkconfig)")")/.."
             $nixos_grub_home/etc/grub.d/41_custom >>"$(dirname "$target_cfg")/grub.cfg"
         elif is_have_cmd update-grub; then
@@ -2033,7 +2033,7 @@ recreate_grub_or_extlinux_cfg() {
             $grub-mkconfig -o $target_cfg
         fi
     elif is_have_cmd update-extlinux; then
-        # alpine 才有 update-extlinux
+        # alpine only have update-extlinux
         info "recreate extlinux.conf"
         update-extlinux
     else
@@ -2041,14 +2041,14 @@ recreate_grub_or_extlinux_cfg() {
     fi
 }
 
-# 删除之前的 reinstall 启动项
+# delete previous reinstall Startup items
 remove_exist_reinstall() {
     info "remove exist reinstall"
 
     rm -f /reinstall-vmlinuz /reinstall-initrd
     rm -f /boot/reinstall-vmlinuz /boot/reinstall-initrd
 
-    # 使用外部 grub 时，删除外部 grub.cfg
+    # Use external grub when, delete the external grub.cfg
     if ! is_use_local_grub_extlinux; then
         rm -f "$target_cfg"
     fi
@@ -2056,11 +2056,11 @@ remove_exist_reinstall() {
     if is_efi; then
         # efi
 
-        # 题外话
-        # 1. 如果用本机的 grub，则 custom.cfg 可能在 efi 分区，也可能在 /boot 分区
-        # 2. 有可能没有 /boot 文件夹
-        #    如果 nixos 的 efi 挂载到 /efi，则不会生成 /boot 文件夹
-        # 3. find 不存在的路径会报错
+        # aside
+        # 1. If you use the local grub，but custom.cfg may be in efi Partition, may also be in /boot Partition
+        # 2. Maybe not /boot folder
+        #    if nixos of efi mount to /efi，will not be generated /boot folder
+        # 3. find An error will be reported if the path does not exist.
         remove_exist_reinstall_efi_dir
 
         install_pkg efibootmgr
@@ -2070,19 +2070,19 @@ remove_exist_reinstall() {
     else
         # bios
 
-        # 删除 reinstall 条目
+        # delete reinstall entry
         if [ -f "$target_cfg" ]; then
             sed -i "/^$BOOT_ENTEY_START_MARK/,/^$BOOT_ENTEY_END_MARK/d" "$target_cfg"
         fi
 
-        # 清除 next entry
+        # Clear next entry
         if is_use_local_grub; then
             $grub-editenv - unset next_entry
         elif is_use_local_extlinux; then
             extlinux --clear-once "$(dirname "$target_cfg")"
         fi
 
-        # 重新创建 grub.cfg / extlinux.conf
+        # recreate grub.cfg / extlinux.conf
         recreate_grub_or_extlinux_cfg
     fi
 }
@@ -2095,12 +2095,12 @@ reset_and_exit() {
         info "Caught Ctrl+C, reseting..."
     fi
 
-    # 清除
+    # Clear
     remove_exist_reinstall
     rm -rf "$tmp"
     echo "reset done."
 
-    # 退出
+    # quit
     if $from_ctrl_c; then
         exit 1
     else
@@ -2108,7 +2108,7 @@ reset_and_exit() {
     fi
 }
 
-# 脚本入口
+# Script entry
 
 # Help must not require root, fetch metadata or initialize a bootloader.
 for arg in "$@"; do
@@ -2124,7 +2124,7 @@ if is_in_container; then
     error_and_exit "Not Supported OS in Container.\nPlease use https://github.com/LloydAsp/OsMutation"
 fi
 
-# 整理参数
+# Arrange parameters
 long_opts=
 for o in debug no-cloud-kernel help hold: sleep: iso: iso-config: iso-kernel: iso-initrd: iso-cmdline: confhome: \
     user: username: passwd: password: ssh-port: ssh-key: public-key: web-port: http-port: \
@@ -2133,12 +2133,12 @@ for o in debug no-cloud-kernel help hold: sleep: iso: iso-config: iso-kernel: is
     long_opts+=$o
 done
 
-# 使用 getopt 解析参数
+# use getopt Parse parameters
 if ! ORIGINAL_OPTS=$(getopt -n $0 -o "h,x" --long "$long_opts" -- "$@"); then
     exit 1
 fi
 
-# 第一遍扫描，验证要安装的系统和版本
+# The first scan to verify the system and version to be installed
 eval set -- "$ORIGINAL_OPTS"
 while true; do
     case "$1" in
@@ -2178,19 +2178,19 @@ done
 if [ "$distro" = iso ]; then
     protect_iso_source
 fi
-# 处理 --frpc-config 时会下载文件，因此在处理参数前就创建临时目录
+# deal with --frpc-config The file will be downloaded, so a temporary directory is created before processing the parameters.
 mkdir_clear "$tmp"
 
-# 安装必备组件
+# Install prerequisites
 install_pkg curl grep
 
-# 第二遍扫描，处理参数
+# Second pass of scan, processing parameters
 eval set -- "$ORIGINAL_OPTS"
 # shellcheck disable=SC2034
 while true; do
     case "$1" in
     -x | --debug)
-        # 第一遍扫描已处理
+        # First scan processed
         shift
         ;;
     -h | --help)
@@ -2218,7 +2218,7 @@ while true; do
         http://* | https://*)
             frpc_config_url=$2
             frpc_config=$tmp/frpc.conf
-            # 用 file 识别文件类型？
+            # use file Identify file types？
             if ! curl -L "$frpc_config_url" -o "$frpc_config"; then
                 error_and_exit "Can't get frpc config from $frpc_config_url"
             fi
@@ -2230,7 +2230,7 @@ while true; do
             ;;
         esac
 
-        # 转为绝对路径
+        # Convert to absolute path
         frpc_config=$(readlink -f "$frpc_config")
 
         shift 2
@@ -2297,11 +2297,11 @@ EOF
             fi
             ;;
         *)
-            # 检测值是否为 ssh key
+            # Check whether the value is ssh key
             if is_valid_ssh_key "$2"; then
                 ssh_key=$2
             else
-                # 视为路径
+                # Treat as path
                 if ! { ssh_key_file=$(get_unix_path "$2") && [ -f "$ssh_key_file" ]; }; then
                     ssh_key_error_and_exit "SSH Key/File/Url \"$2\" is invalid."
                 fi
@@ -2310,14 +2310,14 @@ EOF
             ;;
         esac
 
-        # 检查 key 格式
+        # examine key Format
         if ! is_valid_ssh_key "$ssh_key"; then
             ssh_key_error_and_exit "SSH Key/File/Url \"$2\" is invalid."
         fi
 
-        # 保存 key
-        # 不用处理注释，可以支持写入 authorized_keys
-        # 安装 nixos 时再处理注释/空行，转成数组，再添加到 nix 配置文件中
+        # save key
+        # No need to process comments, can support writing authorized_keys
+        # Install nixos Comments will be processed later/Empty lines, converted into arrays, then added to nix in the configuration file
         if [ -n "$ssh_keys" ]; then
             ssh_keys+=$'\n'
         fi
@@ -2377,17 +2377,17 @@ if [ "$distro" = iso ]; then
     boot_local_iso_and_exit
 fi
 
-# 用户名
+# username
 if ! is_netboot_xyz && [ -z "$username" ]; then
     prompt_username
 fi
 
-# 密码
+# password
 if ! is_netboot_xyz && [ -z "$ssh_keys" ] && [ -z "$password" ]; then
     prompt_password
 fi
 
-# 检查内存
+# Check memory
 check_ram
 
 # Every automatic target except the interactive netboot.xyz route uses Alpine Live.
@@ -2397,18 +2397,18 @@ debian | arch | gentoo) alpine_ver_for_trans=$(get_latest_distro_releasever alpi
 esac
 set_boot_targets "$alpine_ver_for_trans"
 
-# 有的机器开启了 kexec，例如腾讯云轻量 debian，要禁用
+# Some machines are turned on kexec，For example, Tencent Cloud Lightweight debian，to disable
 if [ -f /etc/default/kexec ]; then
     sed -i 's/LOAD_KEXEC=true/LOAD_KEXEC=false/' /etc/default/kexec
 fi
 
-# 一切就绪，正式下载内核和添加引导项
-# 先删除之前的启动项，再设置 trap
-# 暂时不用 trap，因为 bat 下无效
+# Everything is ready, officially download the kernel and add boot items
+# Delete the previous startup items first, and then set trap
+# Not used for the time being trap，because bat Invalid next
 remove_exist_reinstall
 # trap 'reset_and_exit true' SIGINT
 
-# 下载 netboot.xyz / 内核
+# download netboot.xyz / Kernel
 # shellcheck disable=SC2154
 if is_netboot_xyz; then
     if is_efi; then
@@ -2417,37 +2417,37 @@ if is_netboot_xyz; then
         curl -Lo /reinstall-vmlinuz $nextos_vmlinuz
     fi
 else
-    # 下载 nextos 内核
+    # download nextos Kernel
     info download vmlnuz and initrd
     curl -Lo /reinstall-vmlinuz $nextos_vmlinuz
     curl -Lo /reinstall-initrd $nextos_initrd
     mod_initrd
 fi
 
-# web 路径
+# web path
 if is_need_web_viewer; then
     web_path="/$(tr -dc "A-Za-z0-9" </dev/urandom | head -c8)"
 fi
 
-# 将内核/netboot.xyz.lkrn 放到正确的位置
+# will kernel/netboot.xyz.lkrn Put it in the right place
 
-# 需要使用 vmlinuz/initrd 引导的情况
+# requires using vmlinuz/initrd boot situation
 if is_need_boot_vmlinuz; then
     # Use the system's external GRUB for Linux EFI boot.
     if is_efi; then
         install_grub_linux_efi
     fi
 
-    # 找到 /reinstall-vmlinuz /reinstall-initrd 的绝对路径
-    # extlinux + 单独的 boot 分区
-    # 把内核文件放在 extlinux.conf 所在的目录
+    # turn up /reinstall-vmlinuz /reinstall-initrd the absolute path of
+    # extlinux + alone boot Partition
+    # Put the kernel file in extlinux.conf directory
     if is_use_local_extlinux && is_boot_in_separate_partition; then
         dir=
     else
-        # 获取当前系统根目录在 btrfs 中的绝对路径
+        # Get the current system root directory in btrfs absolute path in
         if is_os_in_btrfs; then
             # btrfs subvolume show /
-            # 输出可能是 / 或 root 或 @/.snapshots/1/snapshot
+            # The output might be / or root or @/.snapshots/1/snapshot
             dir=$(btrfs subvolume show / | head -1)
             if ! [ "$dir" = / ]; then
                 dir="/$dir/"
@@ -2460,7 +2460,7 @@ if is_need_boot_vmlinuz; then
     vmlinuz=${dir}reinstall-vmlinuz
     initrd=${dir}reinstall-initrd
 
-    # 设置 linux initrd 命令
+    # set up linux initrd Order
     if is_use_local_extlinux; then
         linux_cmd=LINUX
         initrd_cmd=INITRD
@@ -2474,7 +2474,7 @@ if is_need_boot_vmlinuz; then
         fi
     fi
 
-    # 设置 cmdlind initrds
+    # set up cmdlind initrds
     if ! is_netboot_xyz; then
         find_main_disk
         build_cmdline
@@ -2487,8 +2487,8 @@ if is_need_boot_vmlinuz; then
         echo "$target_cfg"
         extlinux_dir="$(dirname "$target_cfg")"
 
-        # 不起作用
-        # 好像跟 extlinux --once 有冲突
+        # doesn’t work
+        # seems to follow extlinux --once There is conflict
         sed -i "/^MENU HIDDEN/d" "$target_cfg"
         sed -i "/^TIMEOUT /d" "$target_cfg"
 
@@ -2502,18 +2502,18 @@ LABEL reinstall
   $([ -n "$cmdline" ] && echo "APPEND $cmdline")
 $BOOT_ENTEY_END_MARK
 EOF
-        # 设置重启引导项
+        # Set restart boot items
         extlinux --once=reinstall $extlinux_dir
 
-        # 复制文件到 extlinux 工作目录
+        # Copy files to extlinux working directory
         if is_boot_in_separate_partition; then
             info "copying files to $extlinux_dir"
             is_have_initrd && cp -f /reinstall-initrd $extlinux_dir
-            # 放最后，防止前一条返回非 0 而报错
+            # Put it last to prevent the previous item from returning non- 0 And report an error
             cp -f /reinstall-vmlinuz $extlinux_dir
         fi
     else
-        # cloudcone 从光驱的 grub 启动，再加载硬盘的 grub.cfg
+        # cloudcone from optical drive grub Start, then load the hard drive grub.cfg
         # menuentry "Grub 2" --id grub2 {
         #         set root=(hd0,msdos1)
         #         configfile /boot/grub2/grub.cfg
@@ -2521,8 +2521,8 @@ EOF
 
         # The shared GRUB-language helper reloads grubenv for CloudCone.
 
-        # 生成 grub 配置
-        # 实测 centos 7 lvm 要手动加载 lvm 模块
+        # generate grub configuration
+        # Actual measurement centos 7 lvm To load manually lvm module
         info grub
         echo $target_cfg
 
@@ -2530,18 +2530,18 @@ EOF
 
         get_function_content load_grubenv_if_not_loaded >>$target_cfg
 
-        # 原系统为 openeuler 云镜像，需要添加 --unrestricted，否则要输入密码
+        # The original system was openeuler Cloud image needs to be added --unrestricted，Otherwise, enter password
         del_empty_lines <<EOF | del_comment_lines | tee -a $target_cfg
 set timeout_style=menu
 set timeout=5
 menuentry "$(get_entry_name)" --unrestricted {
     insmod lvm
     $(is_os_in_btrfs && echo 'set btrfs_relative_path=n')
-    # fedora efi 没有 load_video
+    # fedora efi No load_video
     insmod all_video
     # set gfxmode=800x600
     # set gfxpayload=keep
-    # terminal_output gfxterm 在 vultr 上会花屏
+    # terminal_output gfxterm exist vultr Shanghui Huaping
     # terminal_output console
     search --no-floppy --file --set=root $vmlinuz
     $linux_cmd $vmlinuz $cmdline
@@ -2550,7 +2550,7 @@ menuentry "$(get_entry_name)" --unrestricted {
 EOF
         echo '### END reinstall.sh ###' >>$target_cfg
 
-        # 设置重启引导项
+        # Set restart boot items
         if is_use_local_grub; then
             $grub-reboot "$(get_entry_name)"
         fi
@@ -2576,7 +2576,7 @@ elif [ "$distro" = alpine ] && [ "$hold" = 1 ]; then
     echo "SSH Port: $ssh_port"
 
 else
-    # 普通 linux
+    # ordinary linux
     info "While Install (View Logs)"
     echo "Username: $username"
     if [ -n "$ssh_keys" ]; then
@@ -2599,24 +2599,24 @@ fi
 
 echo
 if [ "$distro" = netboot.xyz ]; then
-    echo '重启后进入 netboot.xyz。'
-    echo "或者现在运行 \"$reinstall_____ reset\" 以清除该引导项。"
+    echo 'reboot into netboot.xyz。'
+    echo "Or run now \"$reinstall_____ reset\" to clear the boot entry。"
     echo
     echo 'Reboot to start netboot.xyz.'
     echo "Or run \"$reinstall_____ reset\" now to clear this boot entry."
     echo
 
 elif [ "$distro" = alpine ] && [ "$hold" = 1 ]; then
-    echo '重启后进入 Alpine Live OS。'
-    echo "或者现在运行 \"$reinstall_____ reset\" 以清除该引导项。"
+    echo 'reboot into Alpine Live OS。'
+    echo "Or run now \"$reinstall_____ reset\" to clear the boot entry。"
     echo
     echo 'Reboot to start Alpine Live OS.'
     echo "Or run \"$reinstall_____ reset\" now to clear this boot entry."
     echo
 else
-    warn false '警告：重装会清除主硬盘的所有数据，包括所有分区！'
-    echo '重启后开始重装。'
-    echo "或者现在运行 \"$reinstall_____ reset\" 以取消重装。"
+    warn false 'Warning: Reinstalling will erase all data on the primary hard drive, including all partitions！'
+    echo 'installation starts after reboot。'
+    echo "Or run now \"$reinstall_____ reset\" to cancel reinstallation。"
     echo
     warn false 'Warning: Reinstalling will erase all data on the main disk, including all partitions!'
     echo 'Reboot to start the reinstallation.'

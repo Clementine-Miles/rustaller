@@ -161,6 +161,6 @@ Fields are single-line, at most 8192 bytes; control/newline or oversized pastes 
 
 Below 48×16, hidden actions are blocked while drafts survive resizing. Navigation, privacy, terminal restoration and encrypted-key tests do not establish OS installation success.
 
-## 2026-11-02 界面调整
+## 2026-11-02 Interface adjustment
 
-新安装 hostname 当前优先继承原系统，缺失时使用发行版名称，替代旧 `rustaller` 默认；当前系统留空不变。启用 swapfile 后焦点转至 MiB 大小，空值必填；关闭保留草稿但不提交。返回使用 Save/Discard/Cancel。EFI Stub 已取消，不接入执行菜单，方案见 [EFI Stub 评估](EFI-STUB-OPTIONS.md)。
+New installation hostname Currently, priority is given to inheriting the original system. If missing, the release name is used to replace the old system. `rustaller` default; leave blank to preserve the current system setting. Enable swapfile After the focus goes to MiB Size, empty value is required; close to keep draft but not submit. Return to use Save/Discard/Cancel。EFI Stub Canceled, no access to execution menu, please see the plan [EFI Stub Evaluate](EFI-STUB-OPTIONS.md)。

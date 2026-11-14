@@ -1,0 +1,996 @@
+53ea.663e.793a.7b2c.4e00.4e2a.786c.76d8.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.663e.793a.4e24.4e2a.786c.76d8	Show only the first hard drive Show both hard drives
+663e.793a.4e24.4e2a.786c.76d8.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.20.663e.793a	Display two hard disks Display
+6709.4e00.79cd.60c5.51b5.662f.ff0c.591a.7f51.5361.ff0c.4e14.80fd.4e0a.7f51.7684.7f51.5361.5148.5b8c.6210.4e86.8fd9.4e2a.811a.672c.ff0c.4e0d.80fd.4e0a.7f51.7684.7f51.5361.540e.5b8c.6210	There is a situation where there are multiple network cards, and the network card that can access the Internet completes the script first, and the network card that cannot access the Internet completes it later.
+4f46.662f.5982.679c.7528.6237.5220.9664.4e86.6b64.6587.4ef6.ff0c.5305.6709.66f4.65b0.7684.8bdd.ff0c.53ef.80fd.4f1a.91cd.65b0.521b.5efa.8fd9.4e2a.6587.4ef6	However, if the user deletes this file, the file may be re-created if the package is updated.
+76f4.63a5.6253.5305.786c.76d8.955c.50cf.ff0c.5982.679c.4fdd.5b58.4e86.660e.6587.5bc6.7801.ff0c.5219.4f1a.66b4.9732.660e.6587.5bc6.7801.ff0c.56e0.4e3a	Directly package the hard disk image. If the clear text password is saved, the clear text password will be exposed because
+5b98.7f51.65b0.5efa.6570.636e.76d8.65f6.6709.5199.ff0c.90e8.5206.5730.533a.7684.5b9e.4f8b.ff0c.4e0d.80fd.4ece.6570.636e.76d8.542f.52a8	There is writing when creating a new data disk on the official website. In some regions, instances cannot be started from the data disk.
+51fa.9519.540e.518d.8fd0.884c.811a.672c.ff0c.786c.76d8.53ef.80fd.5df2.7ecf.683c.5f0f.5316.ff0c.4e4b.524d.8bb0.5f55.7684.5206.533a.8868	Run the script again after an error occurs. The hard disk may have been formatted and the partition table recorded previously
+7684.8bdd.ff0c.7ee7.7eed.6267.884c.4f1a.6709.8bed.6cd5.9519.8bef.ff0c.56e0.6b64.5728.8fd9.91cc.5224.65ad.662f.5426	If so, there will be a syntax error if you continue to execute, so here you can determine whether
+8b66.544a.ff1a.91cd.88c5.4f1a.6e05.9664.4e3b.786c.76d8.7684.6240.6709.6570.636e.ff0c.5305.62ec.6240.6709.5206.533a	Warning: Reinstalling will erase all data on the primary hard drive, including all partitions
+5982.679c.5df2.7ecf.6709.8fd9.4e2a.914d.7f6e.ff0c.4e14.4e0d.9700.8981.663e.5f0f.8bbe.7f6e.ff0c.5219.4e0d.4fee.6539	If this configuration already exists and does not need to be set explicitly, do not modify it.
+56e0.4e3a.4e0d.77e5.9053.7528.6237.60f3.5e72.4ec0.4e48.ff0c.53ef.80fd.4f1a.7528.5230.7cbe.7b80.7684.6587.4ef6	Because we don’t know what the user wants to do, we may use streamlined files.
+65f6.4f1a.4e0b.8f7d.6587.4ef6.ff0c.56e0.6b64.5728.5904.7406.53c2.6570.524d.5c31.521b.5efa.4e34.65f6.76ee.5f55	The file will be downloaded, so a temporary directory is created before processing the parameters.
+5148.5220.9664.4e34.65f6.6587.4ef6.ff0c.907f.514d.4e4b.524d.8fd0.884c.4e2d.65ad.6709.6b8b.7559.6587.4ef6	Delete temporary files first to avoid residual files from previous interruptions.
+51fa.9519.540e.505c.6b62.8fd0.884c.ff0c.5c06.8fdb.5165.5230.767b.5f55.754c.9762.ff0c.9632.6b62.5931.8054	After an error occurs, the operation will stop and the login interface will be entered to prevent loss of connection.
+7f51.5173.5bfc.81f4.65e0.6cd5.4e0a.7f51.ff0c.540e.9762.4e5f.4f1a.68c0.6d4b.5230.5e76.6539.6210.9759.6001	The gateway makes it impossible to access the Internet. It will be detected later and changed to static.
+65f6.95f4.53ef.80fd.4e0d.51c6.786e.ff0c.6bd5.7adf.4e0d.662f.4e13.95e8.7684.65f6.95f4.670d.52a1.5668	The time may not be accurate. After all, it is not a specialized time server.
+53ef.80fd.811a.672c.4e0d.662f.9996.6b21.8fd0.884c.ff0c.5148.6e05.7406.4e4b.524d.7684.6b8b.7559	Maybe the script is not run for the first time, so clean up the previous remnants first.
+662f.5b9e.6d4b.7ed3.679c.ff0c.56e0.6b64.5982.679c.5b9e.6d4b.4e0d.901a.8fc7.ff0c.4e5f.8fd4.56de	is the actual measurement result, so if the actual measurement fails, it will also be returned.
+5224.65ad.8bed.8a00.5b57.7b26.662f.5426.5408.6cd5.ff0c.5141.8bb8.5168.540d.548c.7f29.5199	Determine whether the language characters are legal, allowing full names and abbreviations
+53ef.5199.5165.6570.636e.76d8.7684.6761.76ee.4f46.4e0d.751f.6548.ff0c.624b.52a8.5b89.88c5	Can write entries to the data disk but does not take effect, manual installation
+6709.65f6.4f1a.91cd.590d.6536.53d6.ff0c.6240.4ee5.8bbe.7f6e.6536.4e00.4efd.540e.9000.51fa	Sometimes it will be collected repeatedly, so set it up to receive one copy and then exit.
+6240.4ee5.4e0d.8981.5728.539f.7cfb.7edf.4e0a.5224.65ad.5177.4f53.865a.62df.5316.73af.5883	So don’t judge the specific virtualization environment on the original system.
+4e0d.662f.91cd.88c5.524d.7684.ff0c.5219.6539.6210.9759.6001.ff0c.4f7f.7528.4e4b.524d.7684	If it is not the one before reinstallation, change it to static and use the previous one.
+811a.672c.53ef.80fd.591a.6b21.8fd0.884c.ff0c.5148.6e05.7406.4e4b.524d.7684.6b8b.7559	The script may be run multiple times, clean up the previous remnants first.
+7b2c.4e00.904d.626b.63cf.ff0c.9a8c.8bc1.8981.5b89.88c5.7684.7cfb.7edf.548c.7248.672c	The first scan to verify the system and version to be installed
+4e00.5207.5c31.7eea.ff0c.6b63.5f0f.4e0b.8f7d.5185.6838.548c.6dfb.52a0.5f15.5bfc.9879	Everything is ready, officially download the kernel and add boot items
+6709.65f6.7f51.7edc.95ee.9898.4e0b.8f7d.5931.8d25.ff0c.5bfc.81f4.811a.672c.4e2d.65ad	Sometimes the download fails due to network problems, causing the script to interrupt
+8981.5148.8bbe.7f6e.8bed.8a00.ff0c.518d.5b89.88c5.5185.6838.ff0c.4e0d.7136.51fa.73b0	You need to set the language first and then install the kernel, otherwise it will appear
+4e00.6b21.6027.5b89.88c5.6240.6709.5305.ff0c.53ef.51cf.5c11.8f6f.4ef6.5305.91cd.590d	Install all packages at once to reduce package duplication
+5220.9664.81ea.5df1.521b.5efa.7684.ff0c.907f.514d.540e.7eed.6743.9650.4e0d.51c6.786e	Delete the ones you created to avoid inaccurate subsequent permissions
+4f1a.81ea.52a8.5199.5165.5230.786c.4ef6.65f6.949f.ff0c.56e0.6b64.8fd9.91cc.8df3.8fc7	It will be automatically written to the hardware clock, so skip it here.
+5982.679c.65e0.6cd5.4e0a.7f51.ff0c.5e76.4e14.81ea.52a8.83b7.53d6.7684.20.63a9.7801	If you cannot access the Internet and automatically obtain the mask
+63a9.7801.ff0c.6240.4ee5.53ef.4ee5.7528.6765.5224.65ad.63a9.7801.662f.5426.4e0d.540c	mask, so it can be used to determine whether the masks are different
+5bc6.7801.ff0c.4f46.662f.751f.6210.5bc6.7801.9700.8981.4e0d.540c.7684.5de5.5177	Passwords, but generating passwords requires different tools
+4f46.65e0.6cd5.8054.7f51.800c.5207.6362.6210.9759.6001.ff09.76f4.63a5.8fd4.56de	But unable to connect to the Internet and switch to static) directly return
+5220.9664.672c.811a.672c.ff0c.4e0d.7136.4f1a.88ab.590d.5236.5230.65b0.7cfb.7edf	Delete this script, otherwise it will be copied to the new system
+8bbe.7f6e.5bc6.7801.ff0c.4e0d.586b.5199.5219.4f7f.7528.968f.673a.5bc6.7801	Set a password. If not filled in, a random password will be used.
+89e3.9664.9501.5b9a.ff0c.5141.8bb8.7528.6237.767b.5f55.5904.7406.6545.969c	Unlock and allow users to log in to handle failures
+5219.4f1a.540c.65f6.663e.793a.5df2.5b89.88c5.7684.548c.6700.65b0.7248.7684	will display both the installed version and the latest version
+91cc.786e.8ba4.8fc7.4e00.904d.ff0c.4f46.662f.903b.8f91.6247.533a.5927.4e8e	already confirmed, but the logical sector size exceeds
+8fd9.91cc.7684.5e94.8be5.4f1a.6839.636e.903b.8f91.6247.533a.6765.5224.65ad	This should be judged based on logical sectors.
+6838.6570.ff0c.6bcf.4e2a.7ebf.7a0b.7684.5185.5b58.ff0c.53d6.6700.5c0f.503c	Number of cores, memory per thread, take the minimum value
+6709.7684.7248.672c.4f1a.53ea.4ece.7b2c.4e00.79cd.914d.7f6e.4e2d.8bfb.53d6	Some versions will only read from the first configuration
+6709.4e9b.53d1.884c.7248.81ea.5e26.4e86.67d0.4e9b.914d.7f6e.ff0c.4f8b.5982	Some distributions come with certain configurations, such as
+5206.4e24.884c.5199.ff0c.4e0d.7136.9047.5230.9519.8bef.4e0d.4f1a.7ec8.6b62	Write it in two lines, otherwise it will not terminate when an error occurs.
+5141.8bb8.540c.6b65.5931.8d25.ff0c.56e0.4e3a.4e0d.662f.5173.952e.6b65.9aa4	Allow synchronization to fail because it is not a critical step
+7f51.5173.20.4e0d.662f.91cd.88c5.524d.7684.ff0c.5219.6539.6210.9759.6001	If the gateway is not the one before reinstallation, change it to static
+4e0d.540c.7684.60c5.51b5.5728.524d.9762.5df2.7ecf.6539.6210.9759.6001.4e86	Different situations have been changed to static before.
+5224.65ad.ff0c.56e0.4e3a.5b83.5224.65ad.7684.662f.540c.4e00.4e2a.7f51.5361	Judgment, because it judges the same network card
+6302.8f7d.5728.5185.5b58.7684.8bdd.ff0c.53ef.80fd.4e0d.591f.7a7a.95f4	If mounted in memory, there may not be enough space.
+4f46.662f.4e0d.4f1a.4e2d.65ad.811a.672c.ff0c.56e0.6b64.8981.624b.52a8	But it won’t interrupt the script, so manually
+6240.4ee5.7efc.5408.4e24.4e2a.547d.4ee4.7684.7ed3.679c.6765.5224.65ad	So we can judge based on the results of the two commands.
+4e5f.662f.6211.4eec.60f3.8981.7684.ff0c.4f46.591a.6570.4e0d.652f.6301	This is also what we want, but most people don’t support it.
+67e5.627e.ff0c.56e0.4e3a.6781.7aef.60c5.51b5.4e0b.53ef.80fd.53ea.7528	search, because in extreme cases you may just use
+65e0.8bba.662f.5426.627e.5230.7ed3.679c.ff0c.8fd4.56de.503c.90fd.662f	Regardless of whether the result is found, the return value is
+7528.6237.8f93.5165.7684.7f51.5740.8981.52a0.5f15.53f7.ff0c.5426.5219	The URL entered by the user must be enclosed in quotation marks, otherwise
+81ea.52a8.5b89.88c5.5931.8d25.540e.ff0c.53ef.80fd.624b.52a8.5b89.88c5	After automatic installation fails, manual installation may be required.
+521b.5efa.6761.76ee.ff0c.5148.5224.65ad.662f.5426.5df2.7ecf.5b58.5728	Create an entry, first check whether it already exists
+4f1a.81ea.52a8.9009.62e9.56fa.4ef6.ff0c.4f46.4e0d.5305.62ec.5fae.7801	Firmware is automatically selected, but microcode is not included
+548c.76ee.6807.7cfb.7edf.7684.7f51.5361.987a.5e8f.53ef.80fd.4e0d.540c	The order of network cards may be different from that of the target system.
+4e0d.80fd.4e3a.7a7a.ff0c.5426.5219.4f1a.63d0.793a.751f.6210.6240.6709	It cannot be empty, otherwise it will prompt to generate all
+68c0.6d4b.662f.5426.6709.7f51.7edc.662f.901a.8fc7.68c0.6d4b.8fd9.4e9b	Detecting whether there is a network is by detecting these
+53ef.80fd.4e0d.662f.5f15.5bfc.76d8.ff0c.4ee5.540e.518d.4fee.6b63	It may not be the boot disk, I will correct it later.
+624d.662f.6211.4eec.60f3.8981.7684.ff0c.53ef.80fd.4e0d.652f.6301	That’s what we want, it may not be supported
+68c0.6d4b.4e3b.786c.76d8.662f.5426.6a2a.8de8.591a.4e2a.78c1.76d8	Detect whether the primary hard drive spans multiple disks
+9635.5217.ff0c.5bfc.81f4.65e0.6cd5.8bc6.522b.6587.4ef6.7cfb.7edf	array, preventing filesystem recognition
+4e2d.662f.7279.6b8a.5b57.7b26.ff0c.6240.4ee5.8981.52a0.5f15.53f7	are special characters, so you need to add quotation marks
+4e0d.7528.5904.7406.6ce8.91ca.ff0c.53ef.4ee5.652f.6301.5199.5165	No need to process comments, can support writing
+5148.5220.9664.4e4b.524d.7684.542f.52a8.9879.ff0c.518d.8bbe.7f6e	Delete the previous startup items first, and then set
+6210.529f.540e.4f1a.63d0.524d.5173.95ed.7ba1.9053.ff0c.5bfc.81f4	After success, the pipeline will be closed early, resulting in
+8fd9.662f.9884.671f.884c.4e3a.ff0c.56e0.6b64.9700.8981.6392.9664	This is expected behavior and therefore needs to be excluded
+5982.679c.662f.9759.6001.ff08.5305.62ec.81ea.52a8.83b7.53d6.5230	If it is static (including automatically obtained
+662f.6253.5f00.7684.ff0c.4f46.5b9e.6d4b.65e0.6cd5.83b7.53d6.5230	It is open, but it cannot be obtained by actual measurement.
+5b89.88c5.65f6.4f1a.81ea.52a8.68c0.6d4b.5b89.88c5.9700.8981.7684	During installation, it will automatically detect what is needed for installation.
+5b89.88c5.5230.786c.76d8.540e.624d.5b89.88c5.5404.79cd.5e94.7528	Install various applications after installing them to the hard disk.
+5982.679c.4e0d.5728.5355.72ec.7684.6587.4ef6.5939.ff0c.5219.7528	If not in a separate folder, use
+4e0a.6d4b.8bd5.9ed8.8ba4.7528.6237.52a0.5165.4e86.54ea.4e9b.7ec4	Test which groups the default user has joined
+53ef.80fd.4f1a.8f93.51fa.591a.884c.7ed3.679c.ff0c.56e0.6b64.7528	Multiple lines of results may be output, so use
+91cd.70b9.ff1a.8981.5728.5220.9664.811a.672c.4e4b.524d.590d.5236	Important: copy before deleting the script
+79d2.5c31.591f.4e86.ff0c.56e0.4e3a.4e4b.524d.5c1d.8bd5.83b7.53d6	seconds is enough because before trying to get
+5982.679c.8054.7f51.4e86.ff0c.4f46.6ca1.83b7.53d6.5230.9ed8.8ba4	If you are connected to the Internet but do not get the default
+539f.8ba1.5212.662f.5220.9664.65e0.6cd5.4e0a.7f51.7684.7f51.5361	The original plan was to delete the network card that cannot access the Internet.
+6240.4ee5.7528.662f.5426.6709.8f93.51fa.4f5c.4e3a.5224.65ad	So use whether there is output as a judgment
+56e0.4e3a.53ef.80fd.88c5.4e86.591a.79cd.5305.7ba1.7406.5668	Because there may be multiple package managers installed
+8bbe.7f6e.7528.6237.540d.ff0c.4e0d.586b.5199.5219.4f7f.7528	Set username, use if left blank
+6709.8bb0.5f55.ff0c.4e5f.4f1a.66b4.9732.660e.6587.5bc6.7801	If there is a record, the clear text password will also be exposed.
+4e5f.4f1a.66b4.9732.660e.6587.5bc6.7801.ff08.5df2.5904.7406	Also exposes clear text passwords (processed
+7684.20.20.20.20.20.20.20.9700.8981.7f16.8bd1	The need to compile
+65f6.ff0c.56fa.4ef6.8d70.7684.662f.201c.5feb.901f.8def.5f84	, the firmware takes the ”fast path”
+901a.8fc7.9ed8.8ba4.7f51.5173.5f97.5230.9ed8.8ba4.7f51.5361	identify the default interface through the default gateway
+683c.5f0f.7684.5206.533a.5373.53ef.6dfb.52a0.5230.5f15.5bfc	formatted partition can be added to the boot
+7a7a.884c.ff0c.8f6c.6210.6570.7ec4.ff0c.518d.6dfb.52a0.5230	Empty lines, converted into arrays, then added to
+653e.6700.540e.ff0c.9632.6b62.524d.4e00.6761.8fd4.56de.975e	Put it last to prevent the previous item from returning non-
+56e0.6b64.5f3a.5236.4e0d.663e.793a.4e0a.9762.7684.63d0.793a	Therefore, it is forced not to display the above prompt
+5224.65ad.66f4.51c6.786e.ff0c.6709.8bbe.5907.65f6.624d.6709	Judgment is more accurate only when equipment is available
+5730.5740.ff08.5b50.7f51.4e0d.542b.7f51.5173.7684.5730.5740	Address (the subnet does not include the address of the gateway
+552f.4e00.8981.505a.7684.662f.5173.95ed.9690.79c1.4fdd.62a4	The only thing to do is to turn off privacy protection
+9009.5b9a.7684.5305.ff0c.65e0.8bba.662f.5426.5df2.5b89.88c5	Selected packages, whether installed or not
+5982.679c.5728.5355.72ec.7684.6587.4ef6.5939.ff0c.5219.7528	If in a separate folder, use
+7528.4e8e.6253.5370.9519.8bef.6216.8005.518d.6b21.8fd0.884c	Used to print errors or run again
+6240.4ee5.6709.6761.76ee.8868.793a.6709.52a8.6001.5730.5740	So there is an entry indicating that there is a dynamic address
+7f51.5173.65f6.ff0c.4e0d.4f1a.51fa.73b0.4e0b.8f7d.95ee.9898	There will be no download problems when using the gateway
+5982.679c.7f13.51b2.533a.6ee1.4e86.ff0c.7acb.5373.5237.65b0	If the buffer is full, flush it immediately
+53d6.6d88.4e4b.524d.7684.8c03.5ea6.ff0c.7acb.5373.5237.65b0	Cancel the previous schedule and refresh it immediately
+9519.8bef.ff0c.6216.8005.8fbe.5230.91cd.8bd5.6b21.6570	error or exhausted retries
+68c0.67e5.662f.5426.4e3a.6b63.786e.7684.7cfb.7edf.540d	Check if it is the correct system name
+6570.636e.76d8.7684.6761.76ee.5374.53ef.4ee5.751f.6548	The entries on the data disk can take effect.
+811a.672c.6709.66f4.65b0.ff0c.8bf7.91cd.65b0.4e0b.8f7d	The script has been updated, please download it again
+4e0d.662f.5f88.597d.ff0c.56e0.6b64.6539.6210.4fee.6539	Not very good, so I changed it to a modification
+7684.60c5.51b5.4e0b.ff0c.9650.5236.4e0b.8f7d.5927.5c0f	In case of limit download size
+7684.65e7.5206.533a.ff0c.56e0.6b64.624b.52a8.5220.9664	old partition, so delete it manually
+8fd9.4e2a.533a.95f4.5185.5220.9664.6240.6709.7a7a.884c	remove all blank lines in this range
+67d0.4e9b.673a.5668.53ef.80fd.4e0d.4f1a.56de.843d.5230	Some machines may not fall back to
+547d.4ee4.5b89.5168.5730.91cd.542f.5230.65b0.7cfb.7edf	Command to safely reboot to a new system
+91cd.542f.540e.5c06.65e0.6cd5.8fdb.5165.65b0.7cfb.7edf	cannot boot the new system after reboot
+5b89.88c5.4f1a.542f.7528.4ee5.4e0b.51e0.4e2a.670d.52a1	The installation will enable the following services
+9ed8.8ba4.5f00.4e86.9690.79c1.4fdd.62a4.ff0c.9020.6210	privacy protection is enabled by default, causing
+5934.90e8.6709.4f7f.7528.8bf4.660e.ff0c.56e0.6b64.7528	There are instructions for use on the head, so use
+7684.8bdd.ff0c.9501.5b9a.7528.6237.65e0.6cd5.767b.5f55	If so, the locked user will be unable to log in
+65f6.4f1a.68c0.6d4b.5230.4e0d.751f.6548.800c.62a5.9519	It will be detected that it is not effective and an error will be reported.
+8fd9.79cd.60c5.51b5.53ef.4ee5.7528.5bc6.7801.767b.5f55	password login is available in this case
+4e5f.53ef.67e5.770b.865a.62df.5316.73af.5883.ff0c.4f46	You can also view virtualized environments, but
+8bbe.7f6e.5bc6.7801.ff0c.6dfb.52a0.5f00.673a.542f.52a8	Set password and add startup
+4e0d.80fd.4e0a.7f51.ff0c.8fd9.65f6.4e5f.8981.5220.9664	If you cannot access the Internet, you must delete it at this time.
+65e0.6cd5.770b.900f.90e8.5206.955c.50cf.ff08.524d	Unable to see through part of the mirror (front
+540e.7f00.ff0c.56e0.6b64.8981.53bb.6389.3002.800c	suffix, so it needs to be removed. and
+4f1a.5f88.6162.ff0c.800c.4e14.5f88.5360.5185.5b58	It will be very slow and takes up a lot of memory.
+662f.7528.6765.751f.6210.968f.673a.5bc6.7801.7684	is used to generate random passwords
+65e7.7cfb.7edf.4e0d.652f.6301.ff0c.5148.4e0d.7ba1	The old system does not support it, so ignore it for now.
+65f6.ff0c.65e0.6cd5.8bc6.522b.7cfb.7edf.5206.533a	The system partition cannot be recognized when
+7136.540e.76f4.63a5.628a.63a7.5236.6743.4ea4.7ed9	Then directly hand over control to
+81ea.7136.65e0.6cd5.62fc.51d1.51fa.5b8c.6574.7684	Naturally, it is impossible to piece together a complete
+9664.4e3b.5730.5740.5916.7684.6240.6709.5730.5740	all addresses except the primary
+627e.51fa.4e3b.914d.7f6e.6587.4ef6.ff08.542b.6709	Find the main configuration file (containing
+7b2c.4e8c.904d.626b.63cf.ff0c.5904.7406.53c2.6570	Second pass of scan, processing parameters
+83b7.53d6.5f53.524d.7cfb.7edf.6839.76ee.5f55.5728	Get the current system root directory in
+5982.679c.7a7a.767d.5219.8bbe.7f6e.9ed8.8ba4.503c	Set default value if blank
+56e0.4e3a.6709.53ef.80fd.8fd4.56de.503c.4e0d.4e3a	Because it is possible that the return value is not
+5982.679c.5f53.524d.7f51.5361.6ca1.6709.751f.6210	If the current network card is not generated
+4e0d.7b26.5408.6761.4ef6.5219.81ea.884c.521b.5efa	If the conditions are not met, create it yourself
+4e5f.662f.76f8.540c.7684.ff0c.663e.7136.76f8.540c	Also the same, obviously the same
+975e.6ce8.91ca.72b6.6001.ff09.ff0c.5219.66ff.6362	uncommented state), replace
+5219.66ff.6362.ff0c.5305.62ec.5220.9664.6ce8.91ca	then replace, including deleting comments
+7136.800c.901a.5e38.8fd9.4e2a.503c.662f.7a7a.767d	However usually this value is blank
+65f6.95f4.5dee.592a.591a.4f1a.65e0.6cd5.540c.6b65	If the time difference is too large, synchronization will be impossible.
+53ef.80fd.6709.591a.884c.ff0c.53d6.7b2c.4e00.884c	There may be multiple lines, take the first line
+4f7f.7528.6240.6709.5185.5b58.ff0c.9ed8.8ba4.662f	Use all memory, default is
+7f51.5173.ff0c.90a3.4e48.5728.8fd9.91cc.8bbe.7f6e	Gateway, then set it here
+5730.5740.ff0c.4e5f.5c31.662f.4e0d.53ef.7528.7684	Address, that is, unavailable
+6a21.677f.4e0a.7684.4e5f.662f.ff0c.800c.5176.5b83	The same is true for the template, and other
+83b7.53d6.5230.7f51.5173.ff0c.56e0.6b64.52a0.4e0a	Get the gateway, so add
+7532.9aa8.6587.4e91.7ba1.7406.9762.677f.6dfb.52a0	Oracle Cloud Management Panel Added
+68c0.67e5.72b6.6001.53d8.5316.ff08.4f18.5148.7ea7	Check status changes (priority
+9ed8.8ba4.7684.914d.7f6e.4e0d.4f1a.751f.6210	the default configuration does not generate
+7a0b.5e8f.8f93.51fa.82f1.6587.ff0c.9632.6b62	The program outputs English to prevent
+8bb0.5f55.65e5.5fd7.ff0c.8fc7.6ee4.542b.6709	Logging, filtering contains
+5982.679c.8981.68c0.67e5.6587.4ef6.7c7b.578b	If you want to check the file type
+5728.5176.4ed6.7cfb.7edf.4e2d.663e.793a.4e3a	Appears as
+7248.672c.5f00.5934.8f93.51fa.6709.4e95.53f7	There is a pound sign at the beginning of the version output.
+96c6.4e2d.6d4b.8bd5.4e91.955c.50cf.683c.5f0f	centralized cloud-image format tests
+5305.62ec.811a.672c.91cc.9762.7684.65b9.6cd5	Including methods in scripts
+4e0d.7528.68c0.67e5.5185.5b58.7684.60c5.51b5	No need to check memory status
+7528.4e8e.515c.5e95.ff0c.4e0d.592a.51c6.786e	Used to give the bottom line, not very accurate
+5404.53d1.884c.7248.4e0d.4e00.5b9a.81ea.5e26	Each distribution may not come with its own
+518d.7528.7b2c.4e8c.6761.547d.4ee4.5f97.5230	Then use the second command to get
+7684.6587.4ef6.7cfb.7edf.ff0c.4e5f.5c11.4e86	The file system is also missing
+8ba9.5185.6838.8fd4.56de.6b63.786e.7684.6e90	Have the kernel return the correct source
+5206.533a.ff0c.5e76.8f93.51fa.6839.76ee.5f55	Partition and output the root directory
+4e5f.5c31.662f.8bf4.6709.53ef.80fd.6ca1.6709	That is to say, it is possible that there is not
+56e0.4e3a.4e0d.7528.5173.5fc3.662f.5426.4e3a	Because there is no need to care whether it is
+5f15.5bfc.ff0c.56e0.6b64.4e0d.4e00.5b9a.6709	guidance, so there may not necessarily be
+6307.5b9a.6700.7ec8.5b89.88c5.7cfb.7edf.7684	Specify the final installation system
+518d.6b21.8fd0.884c.65f6.ff0c.6709.53ef.80fd	When running again, it is possible
+56e0.6b64.4e0d.9700.8981.91cd.65b0.751f.6210	So no need to regenerate
+4f1a.4e22.5931.7cfb.7edf.542f.52a8.6761.76ee	System startup entries will be lost
+4e0d.5b58.5728.7684.8def.5f84.4f1a.62a5.9519	An error will be reported if the path does not exist.
+542f.52a8.ff0c.518d.52a0.8f7d.786c.76d8.7684	Start, then load the hard drive
+9501.5b9a.8d26.6237.540e.65e0.6cd5.767b.5f55	locked accounts cannot log in
+662f.5f02.6b65.7684.ff0c.8981.7b49.4e00.4e0b	It’s asynchronous, please wait.
+624d.63a8.9001.ff0c.56e0.6b64.8981.8f6c.6362	Just push it, so it needs to be converted
+65f6.4e0d.80fd.6392.9664.4e0d.5b58.5728.7684	cannot exclude non-existent
+4e0b.8f7d.4e0d.5b8c.6574.5bfc.81f4.62a5.9519	Incomplete download leads to error
+4e0b.8f7d.65f6.624b.52a8.4e2d.6b62.811a.672c	Manually abort script while downloading
+4e0d.7b49.4e8e.6709.7f51.5173.ff0c.4f8b.5982	It does not mean that there is a gateway, for example
+56e0.4e3a.8fd9.4f1a.5bfc.81f4.6b7b.5faa.73af	Because this will lead to an infinite loop
+7532.9aa8.6587.5373.4f7f.6ca1.6709.6dfb.52a0	Oracle even without adding
+90e8.5206.7cfb.7edf.5f00.673a.9700.8981.7b49	some systems must wait during startup
+5230.6700.540e.7684.8bdd.ff0c.4f1a.8fdb.5165	In the end, you will enter
+8b66.544a.ff1a.672c.673a.76ee.524d.4f7f.7528	Warning: This machine is currently using
+5f15.5bfc.ff0c.4f46.4e3b.786c.76d8.6ca1.6709	Boots, but the primary hard drive does not
+4e0d.591f.4e25.8c28.ff0c.8c28.614e.4f7f.7528	Not rigorous enough, use with caution
+91cd.7f6e.4e3a.5b98.65b9.4ed3.5e93.914d.7f6e	reset to official repository configuration
+56fd.5185.673a.53ef.80fd.65e0.6cd5.8bbf.95ee	Domestic aircraft may not be accessible
+8df3.8fc7.4e86.6dfb.52a0.5f15.5bfc.9879.5230	Skipped adding boot entry to
+65b9.4fbf.7528.811a.672c.518d.6b21.91cd.88c5	Convenient to reinstall using scripts
+5b89.88c5.56fa.4ef6.5fae.7801.4f1a.89e6.53d1	Installing firmware microcode will trigger
+5f00.5934.7684.884c.ff0c.5c06.6700.540e.7684	The line that starts with the last
+9996.6b21.542f.52a8.4fee.6b63.7f51.5361.540d	repair interface names on first boot
+5219.5220.9664.ff0c.907f.514d.4f4e.7248.672c	Then delete it to avoid low version
+4e0d.4f1a.81ea.52a8.521b.5efa.8be5.6587.4ef6	The file will not be automatically created
+4e0d.652f.6301.4e00.884c.547d.4ee4.540c.65f6	One line of commands is not supported at the same time
+9996.6b21.5f00.673a.4f1a.505c.5728.8bbe.7f6e	first boot pauses for configuration of
+53ea.8981.6709.5c31.663e.5f0f.8bbe.7f6e.4e3a	Whenever possible, set it explicitly to
+56e0.6b64.5148.4e0d.7528.8fd9.4e2a.65b9.6cd5	So don’t use this method for now
+8bfb.53d6.9ed8.8ba4.8981.6dfb.52a0.7684.7ec4	Read the default group to be added
+8def.5f84.76f8.540c.5219.4e0d.7528.590d.5236	If the paths are the same, there is no need to copy them.
+81ea.52a8.914d.7f6e.5730.5740.ff0c.4f9d.8d56	Automatically configure the address, depending on
+5730.5740.5c31.8df3.8fc7.ff0c.4e0d.7ba1.662f	The address is skipped, no matter it is
+8bb0.5f55.662f.5426.6709.52a8.6001.5730.5740	Record whether there is a dynamic address
+8981.5220.9664.4e0d.8054.7f51.534f.8bae.7684	To delete the non-networking protocol
+65e0.6cd5.4e0a.7f51.7684.7f51.5361.901a.8fc7	The network card that cannot access the Internet passes through
+6709.7684.670d.52a1.5668.4e0d.652f.6301	Some servers do not support it
+5220.9664.65e0.610f.4e49.7684.5355.8bcd	Remove meaningless words
+65f6.7ed3.679c.4e3a.7a7a.ff0c.88c5.4e86	When the result is empty, it is installed.
+8d26.53f7.5305.542b.975e.6cd5.5b57.7b26	Account contains illegal characters
+53ef.4ee5.4e0d.5728.4e3b.786c.76d8.4e0a	It doesn’t have to be on the main hard drive
+624b.52a8.9009.62e9.6570.636e.76d8.7684	Manually select the data disk
+83b7.53d6.6240.6709.5168.5c40.5730.5740	Get all global addresses
+8fd9.91cc.7528.4e86.7ba1.9053.5bfc.81f4	Pipes are used here to cause
+539f.7cfb.7edf.53ef.80fd.4e0d.662f.7528	The original system may not be used
+811a.672c.88ab.8c03.7528.7684.987a.5e8f	The order in which scripts are called
+4f5c.7528.4e0d.4e00.6837.ff0c.5f88.5751	The effect is different, it’s a trap
+663e.793a.7cbe.7b80.524d.7684.5927.5c0f	Show size before reduction
+663e.793a.7cbe.7b80.540e.7684.5927.5c0f	Show reduced size
+56e0.4e3a.6709.4e9b.673a.5b50.4f8b.5982	Because some machines such as
+6b63.786e.7684.65b9.6cd5.662f.4fee.6539	The correct way is to modify
+7b2c.4e00.904d.626b.63cf.5df2.5904.7406	First scan processed
+4e91.955c.50cf.ff0c.9700.8981.6dfb.52a0	Cloud image needs to be added
+4ee5.4e0b.8bed.53e5.7ed3.679c.4e0d.540c	The following statements have different results
+597d.50cf.9ed8.8ba4.6c38.4e0d.8d85.65f6	It seems to never time out by default
+6709.5206.533a.6302.8f7d.4e2d.4f1a.62a5	It will report if there is a partition being mounted.
+4f46.65e0.6cd5.5199.5165.ff1b.7528.4e8e	but cannot be written to; used for
+5148.8bfb.53d6.4e4b.524d.4fdd.5b58.7684	Read previously saved
+8fd9.79cd.60c5.51b5.9700.8981.7981.7528	This situation needs to be disabled
+4ece.7b2c.4e00.884c.76f4.5230.627e.5230	from the first line until found
+56e0.6b64.6dfb.52a0.5230.6700.524d.9762	So add it to the front
+597d.50cf.6ca1.5fc5.8981.5148.5224.65ad	It seems that there is no need to judge first
+56e0.6b64.624b.52a8.5206.533a.5b89.88c5	So manual partition installation
+9632.6b62.90e8.5206.673a.5668.4e0d.4f1a	handle machines that cannot
+5982.679c.6ca1.6302.8f7d.4f1a.62a5.9519	If it is not mounted, an error will be reported.
+548c.540e.53f0.9762.677f.4e0d.4e00.81f4	Inconsistent with the background panel
+5220.9664.6700.540e.7684.82e5.5e72.4e2a	Delete the last few
+6709.7684.8bdd.5c31.4e0d.4f1a.5bfc.5165	If there is, it will not be imported.
+6709.7684.4ece.7b2c.4e8c.79cd.8bfb.53d6	Some read from the second type
+5b9e.6d4b.6ca1.7528.ff0c.751f.6210.7684	The actual test is useless, it is generated
+4ee5.6587.4ef6.5939.8fdb.884c.62c6.5206	Split into folders
+4f1a.81ea.52a8.5b89.88c5.9700.8981.7684	Will automatically install the required
+9501.5b9a.7528.6237.65e0.6cd5.767b.5f55	locked users cannot log in
+5176.4ed6.7cfb.7edf.9ed8.8ba4.5f00.542f	Enabled by default on other systems
+5bc6.7801.754c.9762.ff0c.4e14.963b.585e	Password interface and blocked
+56e0.6b64.8fd9.91cc.624b.52a8.6e05.7a7a	So clear it manually here
+662f.5426.9700.8981.663e.5f0f.8bbe.7f6e	Does it need to be set explicitly?
+53ef.8bbe.7f6e.6210.4e0d.540c.7684.503c	Can be set to different values
+5982.679c.6ca1.6709.663e.5f0f.8bbe.7f6e	If not explicitly set
+540e.4e5f.4e0d.80fd.5220.9664.8fd9.91cc	This cannot be deleted later
+591a.6570.53d1.884c.7248.90fd.4f1a.5728	Most distributions will have
+4f46.67d0.4e9b.53d1.884c.7248.4f1a.5728	But some distributions will
+4f46.68c0.6d4b.7f51.7edc.65f6.53ef.80fd	But when detecting the network, it is possible
+811a.672c.6dfb.52a0.65e7.7cfb.7edf.7684	Script to add old system
+7531.4e8e.8fd8.6ca1.8bbe.7f6e.9759.6001	Since I haven’t set up static yet
+5220.9664.4e86.4e0d.80fd.4e0a.7f51.7684	Delete those that cannot access the Internet
+4f46.5b9e.9645.4e0a.65e0.6cd5.533a.5206	But in fact it is impossible to distinguish
+56e0.6b64.8fd9.91cc.76f4.63a5.6dfb.52a0	So add it directly here
+6279.91cf.66f4.65b0.6587.672c.5185.5bb9	Update text content in batches
+6dfb.52a0.6d88.606f.5230.7f13.51b2.533a	Add message to buffer
+4e0d.5230.60f3.8981.7684.5185.5bb9	Can’t find what you want
+5904.7406.90e8.5206.7528.6237.7528	Handle some users
+5bfc.81f4.73af.5883.53d8.91cf.6ca1	As a result, the environment variables are not
+4f1a.4e0b.8f7d.6574.4e2a.6587.4ef6	will download the entire file
+4e2a.7ba1.9053.7684.8fd4.56de.503c	The return value of a pipe
+5982.679c.8981.8bbe.7f6e.53d8.91cf	If you want to set a variable
+5220.9664.5f00.5934.7684.7a7a.683c	Remove leading spaces
+4f4d.5bc6.7801.ff0c.5f00.542f.4e86	password, turned on
+8fd9.4e24.4e2a.5305.6709.51b2.7a81	There is a conflict between these two packages
+4fdd.5b58.5bc6.7801.ff0c.539f.56e0	Save password, reason
+4ee5.4e0b.7cfb.7edf.5747.652f.6301	The following systems are supported
+5728.5176.5b83.53d1.884c.7248.7684	in other distributions
+4e0b.7528.672c.811a.672c.5b89.88c5	Use this script to install
+5b83.53ea.521d.59cb.5316.5b58.653e	It only initializes and stores
+591a.4e2a.9ed8.8ba4.8def.7531.4e0b	Under multiple default routes
+8868.793a.627e.5230.7b2c.4e00.4e2a	Indicates finding the first
+5224.65ad.662f.5426.6709.7f51.7edc	Determine if there is a network
+662f.7cbe.786e.5339.914d.8def.5f84	is an exact matching path
+91cc.9762.6ca1.7528.7684.6587.4ef6	unused files inside
+56e0.6b64.4e5f.5220.9664.5b83.4eec	So delete them too
+5206.533a.ff0c.4e5f.53ef.80fd.5728	Partition, may also be in
+6709.7684.673a.5668.5f00.542f.4e86	Some machines are turned on
+4f8b.5982.817e.8baf.4e91.8f7b.91cf	For example, Tencent Cloud Lightweight
+653e.5230.6b63.786e.7684.4f4d.7f6e	Put it in the right place
+628a.5185.6838.6587.4ef6.653e.5728	Put the kernel file in
+8bbe.7f6e.91cd.542f.5f15.5bfc.9879	Set restart boot items
+5426.5219.8981.8f93.5165.5bc6.7801	Otherwise, enter password
+4ee5.6e05.9664.8be5.5f15.5bfc.9879	to clear the boot entry
+91cd.542f.540e.5f00.59cb.91cd.88c5	installation starts after reboot
+590d.5236.5f53.524d.7cfb.7edf.7684	Copy the current system
+663e.793a.7684.4fe1.606f.6700.5168	Display the most complete information
+8fd8.4f1a.5728.540e.53f0.4e0b.8f7d	It will also download in the background
+5982.679c.672c.673a.4e0d.652f.6301	If the machine does not support
+8981.7528.ff0c.4e0d.8981.5220.9664	Use it, don’t delete it
+524d.5148.8bb0.5f55.7528.5230.7684	Record what is used before
+65f6.81ea.52a8.5b89.88c5.7684.5305	Packages automatically installed when
+65e0.6cd5.77e5.9053.662f.5426.662f	There is no way to know whether it is
+4e3a.4e86.4e8c.6b21.8fd0.884c.65f6	For the second runtime
+8981.5b89.88c5.5206.533a.5de5.5177	To install partitioning tools
+6302.8f7d.4f2a.6587.4ef6.7cfb.7edf	Mount pseudo file system
+4e0b.8f7d.4ed3.5e93.ff0c.9009.62e9	Download the repository and select
+6709.4e24.4e2a.89e3.51b3.65b9.6cd5	There are two solutions
+65e0.6cd5.521b.5efa.8f6f.94fe.63a5	Unable to create soft link
+9632.6b62.6587.4ef6.672a.521b.5efa	prevent a missing file
+56e0.6b64.5199.4e24.79cd.914d.7f6e	So write two configurations
+574f.8f6f.8fde.63a5.ff0c.8fd4.56de	Bad soft connection, return
+56e0.4e3a.81ea.5df1.8986.76d6.4e86	Because I covered it
+7a7a.5bc6.7801.ff0c.4e0d.9501.5b9a	Empty password, no lock
+53ea.68c0.6d4b.914d.7f6e.6587.4ef6	Only detect configuration files
+4f1a.68c0.6d4b.914d.7f6e.6587.4ef6	Configuration files will be detected
+4e3a.7a7a.65f6.ff0c.53ea.9a8c.8bc1	When empty, only verify
+65e0.8bba.662f.5426.5df2.6ce8.91ca	Whether it is annotated or not
+7cfb.7edf.53ef.80fd.662f.652f.6301	The system may support
+7248.672c.53f7.20.8f6c.6362.4e3a	version number converted to
+6ce8.610f.4f7f.7528.65b9.6cd5.662f	Note that the usage method is
+91cd.65b0.6302.8f7d.4e3a.8bfb.5199	remount read-write
+5e26.53c2.6570.8fd0.884c.90e8.5206	Run section with parameters
+65e0.53c2.6570.8fd0.884c.90e8.5206	Run section without parameters
+5e76.9632.6b62.91cd.590d.8fd0.884c	and prevent repeated runs
+8bf4.8fd9.79cd.6027.80fd.6700.9ad8	said to provide the best performance
+7684.7aef.53e3.662f.5426.5f00.653e	Is the port open?
+5730.5740.ff08.9017.53f7.5206.9694	Addresses (comma separated
+5730.5740.540e.ff0c.989d.5916.7684	After the address, additional
+83b7.5f97.7684.662f.989d.5916.7684	What you get is extra
+4e5f.7528.4e86.4e00.6bb5.65f6.95f4	It also took a while
+5982.679c.81ea.52a8.83b7.53d6.7684	If automatically obtained
+4e0d.5224.65ad.662f.5426.8054.7f51	Does not determine whether the network is connected
+6700.5927.7f13.51b2.6d88.606f.6570	Maximum number of buffered messages
+6a21.5f0f.ff0c.4f9d.7136.6709	mode, there is still
+597d.50cf.65e0.6cd5.8bc6.522b	Can’t seem to recognize
+5b98.65b9.6e90.7684.8df3.8f6c	Jump to official source
+6709.5f88.591a.79cd.5199.6cd5	There are many ways to write
+53ef.80fd.8fd8.6709.5176.4ed6	There may be others
+4e0b.9762.4e24.79cd.90fd.662f	Both of the following are
+53ea.80fd.770b.900f.4e00.5c42	Can only see through one layer
+5148.68c0.67e5.539f.6765.7684	Check the original first
+4e0d.4f1a.81ea.52a8.5b89.88c5	Will not install automatically
+56e0.6b64.7ed3.679c.6709.8bef	Therefore the result is wrong
+8fd4.56de.503c.59cb.7ec8.662f	The return value is always
+7279.6b8a.5b57.7b26.5217.8868	Special character list
+6709.7684.673a.5668.8fd0.884c	Some machines are running
+5047.5982.7528.6237.8fd0.884c	If the user runs
+53ef.80fd.7cfb.7edf.88c5.4e86	Maybe the system is installed
+4e0a.8fd0.884c.4f1a.51fa.9519	An error will occur when running on
+6587.4ef6.624d.80fd.542f.52a8	file can be started
+65f6.5374.53ef.4ee5.8bc6.522b	can be identified
+8bc6.522b.6240.6709.786c.76d8	Identify all hard drives
+683c.5f0f.662f.5426.6b63.786e	Is the format correct?
+547d.4ee4.4f1a.6709.4e24.4e2a	There will be two commands
+5206.533a.ff0c.53ea.8981.662f	partition, as long as it is
+65e0.6cd5.6b63.786e.8bc6.522b	Unable to correctly identify
+8fd8.662f.5176.4ed6.7cfb.7edf	Or other systems
+4f46.76ee.524d.4e0d.9700.8981	But not needed at the moment
+540e.671f.53ef.80fd.4f1a.5c06	Later it may be
+6709.6ca1.6709.53ef.80fd.5728	Is it possible in
+6ca1.7528.5230.539f.673a.7684	Didn’t use the original machine
+65f6.ff0c.5220.9664.5916.90e8	when, delete the external
+5982.679c.7528.672c.673a.7684	If you use the local
+5b89.88c5.5fc5.5907.7ec4.4ef6	Install prerequisites
+8bc6.522b.6587.4ef6.7c7b.578b	Identify file types
+8f6c.4e3a.7edd.5bf9.8def.5f84	Convert to absolute path
+68c0.6d4b.503c.662f.5426.4e3a	Check whether the value is
+65f6.518d.5904.7406.6ce8.91ca	Comments will be processed later
+4e2d.7684.7edd.5bf9.8def.5f84	absolute path in
+6216.8005.73b0.5728.8fd0.884c	Or run now
+7528.4e0d.7740.ff0c.56e0.4e3a	No need, because
+56e0.6b64.4e0d.4f1a.9501.5b9a	So it won’t lock
+56e0.6b64.9700.8981.91cd.8bd5	So need to try again
+6ca1.6709.91cd.8bd5.529f.80fd	No retry function
+81ea.5e26.91cd.8bd5.529f.80fd	Comes with retry function
+56e0.6b64.8981.5148.505c.6b62	So stop it first
+53ef.7528.4ee5.4e0b.5de5.5177	The following tools are available
+91cc.9762.ff0c.5360.7528.5927	inside, consuming significant space
+540e.8981.6062.590d.9ed8.8ba4	To restore the default
+56e0.6b64.65e0.9700.5224.65ad	So no need to judge
+56e0.6b64.540c.65f6.7f13.5b58	So cache both
+663e.793a.7f51.7edc.914d.7f6e	Show network configuration
+4e0d.7b49.4e8e.662f.9759.6001	Not equal to static
+9632.6b62.90e8.5206.673a.5668	handle machines that
+7f51.5173.65e0.6cd5.4e0a.7f51	Gateway cannot access the Internet
+6807.5fd7.4e5f.662f.5f00.7684	The sign is also on
+6216.4e4b.540e.624d.652f.6301	Or support it later
+65f6.ff0c.53ef.80fd.6f0f.62a5	when, it may be missed
+5982.679c.672c.673a.652f.6301	If the machine supports
+81ea.52a8.5206.533a.4f1a.6709	Automatic partitioning will have
+8fd9.91cc.5f3a.5236.4f7f.7528	It is mandatory to use here
+5982.679c.6ca1.6709.6302.8f7d	If not mounted
+670d.52a1.4e0d.4f1a.8fd0.884c	Service will not run
+5173.95ed.9690.79c1.4fdd.62a4	Turn off privacy protection
+5b89.88c5.5176.4ed6.90e8.4ef6	Install other parts
+8fd9.6837.5c31.4e0d.7528.5728	This way you don’t have to
+9700.8981.624b.52a8.5b89.88c5	requires manual installation
+4e0b.6267.884c.4f1a.63d0.793a	The next execution will prompt
+4e0d.4f1a.81ea.52a8.521b.5efa	will not be created automatically
+68c0.67e5.5206.533a.6570.636e	Check partition data
+9632.6b62.7f51.7edc.95ee.9898	prevent network failures
+518d.9009.62e9.6700.77ed.7684	Then choose the shortest
+4f1a.5224.65ad.662f.5426.6709	will determine whether there is
+4e5f.5c31.4e0d.4f1a.5bfc.5165	It will not be imported
+968f.673a.6570.751f.6210.5668	random number generator
+6ca1.6302.8f7d.5219.65e0.6548	It will be invalid if it is not mounted.
+5982.679c.65e5.540e.6dfb.52a0	If added later
+9a8c.8bc1.662f.5426.6210.529f	verify success
+800c.4e14.8981.5148.8bbe.7f6e	And you need to set it first
+7528.6237.4f20.8fdb.6765.7684	Passed in by user
+6dfb.52a0.7528.6237.5230.7ec4	Add user to group
+6dfb.52a0.5355.4e2a.7528.6237	Add a single user
+7684.884c.ff0c.5e76.5220.9664	line and delete
+6302.8f7d.7cfb.7edf.5206.533a	Mount system partition
+7528.4e8e.67e5.627e.9a71.52a8	Used to find drivers
+4e5f.6709.53ef.80fd.6ca1.6709	Maybe not
+53ef.4ee5.9632.6b62.8bbf.95ee	can prevent access
+6b63.5f0f.8fd0.884c.91cd.88c5	Officially run reinstallation
+81ea.52a8.914d.7f6e.7f51.5173	Automatically configure gateway
+4e0d.662f.65e7.7cfb.7edf.7684	Not from the old system
+5730.5740.548c.989d.5916.7684	address and extra
+56e0.6b64.6682.65f6.5173.95ed	Therefore it is temporarily closed
+4e0d.662f.91cd.88c5.524d.7684	Not before reinstallation
+65f6.ff0c.4e00.5e76.5220.9664	when, delete them together
+662f.5426.8fde.63a5.8054.7f51	Whether connected to the Internet
+6709.53ef.80fd.662f.9759.6001	It may be static
+5730.5740.7136.540e.53d6.6d88	address then cancel
+5219.6dfb.52a0.6211.4eec.7684	then add our
+5237.65b0.7f13.51b2.533a.5230	Flush buffer to
+56e0.6b64.9700.8981.7528	Therefore it is necessary to use
+9000.51fa.7801.4e5f.4e3a	exit status is also
+9650.5236.4e86.5927.5c0f	limits the size
+9650.5236.4e86.7a7a.95f4	limits the space
+6709.76f8.540c.65b9.6cd5	There is the same method
+4e4b.524d.8fd4.56de.503c	Return value before
+4e91.955c.50cf.4e0d.5e26	Cloud mirror does not come with
+9ed8.8ba4.7f16.8bd1.7684	compiled by default
+662f.7528.672c.673a.7684	It’s using this machine
+6709.540c.540d.65b9.6cd5	There is a method with the same name
+79d2.ff0c.5173.95ed.4e86	seconds, closed
+5219.957f.671f.963b.585e	long-term blockage
+662f.72ec.7acb.7684.5305	It is an independent package
+8bb0.5f55.4e3b.786c.76d8	Record master hard drive
+56e0.6b64.53ea.67e5.627e	So only look for
+540e.671f.5e94.8be5.5c06	Later it should be
+7684.90a3.5757.786c.76d8	the hard drive
+5b8c.5168.4e0d.663e.793a	Don’t show at all
+5206.533a.6302.8f7d.5728	The partition is mounted on
+5c31.7acb.5373.9000.51fa	Just exit immediately
+53ea.53d6.7b2c.4e00.4e2a	Only take the first one
+4f1a.81ea.52a8.5ffd.7565	will be ignored automatically
+91cc.9762.7684.6587.4ef6	files inside
+8bc6.522b.662f.5b89.88c5	Identification is installation
+56e0.6b64.7528.4e0d.5230	Therefore not used
+5185.6838.9700.6dfb.52a0	Kernel needs to be added
+4f46.540c.6837.8fd0.884c	But the same runs
+4e0d.540c.7248.672c.7684	different versions
+5220.9664.4e4b.524d.7684	delete previous
+6709.53ef.80fd.6ca1.6709	Maybe not
+5219.4e0d.4f1a.751f.6210	will not be generated
+914d.7f6e.6587.4ef6.4e2d	in the configuration file
+5f15.5bfc.7684.60c5.51b5	boot situation
+7684.7edd.5bf9.8def.5f84	the absolute path of
+6240.5728.7684.76ee.5f55	directory
+8f93.51fa.53ef.80fd.662f	The output might be
+590d.5236.6587.4ef6.5230	Copy files to
+8981.624b.52a8.52a0.8f7d	To load manually
+91cd.542f.540e.8fdb.5165	reboot into
+4ee5.53d6.6d88.91cd.88c5	to cancel reinstallation
+5728.6ca1.6709.8bbe.7f6e	In no setting
+7684.4f9d.8d56.5199.5165	dependency writing
+987a.5e8f.4e0d.80fd.9519	ordering must be preserved
+7684.65f6.5019.521a.597d	It’s just the right time
+5728.521b.5efa.94fe.63a5	Creating a link
+5373.4f7f.505c.6b62.4e86	even if it stops
+6709.65f6.4e5f.4f1a.62a5	Sometimes I will report
+5185.5b58.624d.5b89.88c5	Memory is installed
+9a71.52a8.ff0c.4f8b.5982	drivers, for example
+800c.4e2d.65ad.811a.672c	and interrupt script
+53ef.80fd.662f.6ca1.6709	Maybe not
+53ef.80fd.6709.51e0.4e2a	There may be several
+4f60.53ef.4ee5.8fd0.884c	You can run
+4f46.5982.679c.6ca1.6709	but if not
+5219.65e0.6cd5.68c0.6d4b	cannot be detected
+5217.8868.800c.62a5.9519	list and report an error
+5b89.88c5.5230.786c.76d8	Install to hard drive
+79fb.52a8.4e91.7535.8111	Mobile cloud computer
+9ed8.8ba4.6dfb.52a0.5230	add by default to
+6216.4ee5.4e0a.ff0c.975e	or above, not
+6ce8.610f.4e0b.8f7d.7684	Pay attention to downloading
+6b64.65f6.4e0d.80fd.7528	Not available at this time
+7b26.5408.6761.4ef6.5219	If conditions are met
+65f6.4e0d.4f1a.62a5.9519	No error will be reported when
+65f6.4f1a.62a5.9519.8bf4	Sometimes an error will be reported saying
+5934.5c3e.6709.7a7a.683c	There are spaces at the beginning and end
+4f1a.81ea.52a8.6302.8f7d	will be automatically mounted
+672c.8eab.5173.95ed.4e86	itself closed
+4e0d.662f.4e2a.95ee.9898	not a problem
+5982.679c.4e0d.9700.8981	if not needed
+9501.5b9a.7528.6237.540e	after locking the user
+5176.5b83.7528.6237.7528	For other users
+80fd.5426.5207.6362.5230	Can I switch to
+9ed8.8ba4.4e0d.5f00.542f	not enabled by default
+662f.901a.8fc7.5b89.88c5	is installed by
+4e0d.9700.8981.8bbe.7f6e	No settings required
+4e5f.65e0.6cd5.8bc6.522b	also cannot be recognized
+65f6.53ef.4ee5.8fd9.6837	It can be like this
+5bc6.7801.5e76.9501.5b9a	Password and lock
+8bbe.7f6e.4e86.8bfb.53d6	Read is set
+8bf4.660e.662f.65e7.7248	Description is an old version
+624d.9700.8981.8bbe.7f6e	Only need to set
+68c0.6d4b.6709.6ca1.6709	Check if there is
+6682.65f6.7528.4e0d.7740	Not needed for now
+5907.4efd.5206.533a.8868	Backup partition table
+8981.7528.6700.65b0.7248	Use the latest version
+8fd0.884c.7ed3.679c.4e3a	The running result is
+666e.901a.53d1.884c.7248	Normal distribution
+53d6.81ea.817e.8baf.4e91	Taken from Tencent Cloud
+91cd.65b0.4e0b.8f7d.5e76	redownload and
+8fd0.884c.65b0.811a.672c	Run new script
+5e76.66f4.6539.7aef.53e3	and change the port
+627e.5230.4e3b.7f51.5361	Find the primary network card
+6dfb.52a0.989d.5916.7684	add extra
+5728.817e.8baf.4e91.4e0a	On Tencent Cloud
+4e0d.6bd4.8f83.63a9.7801	Don’t compare masks
+7f51.5173.ff0c.56e0.4e3a	gateway because
+4f9d.7136.4f1a.5206.914d	will still be allocated
+5730.5740.4f46.6ca1.6709	address but no
+7f51.5173.7684.60c5.51b5	Gateway situation
+5728.4e0d.540c.7f51.5361	on different network cards
+540e.518d.6b21.901a.8fc7	Pass again after
+7f13.51b2.533a.76f8.5173	Buffer related
+6e05.7a7a.7f13.51b2.533a	Clear buffer
+9ed8.8ba4.6ca1.6709	absent by default
+7528.4e8e.5224.65ad	used to judge
+662f.5426.517c.5bb9	Is it compatible
+4e34.65f6.76ee.5f55	temporary directory
+5982.679c.4e0d.662f	if not
+56e0.6b64.624b.52a8	So manually
+7528.4e8e.53bb.9664	for removal
+5730.5740.ff0c.6709	address, yes
+867d.7136.8fd4.56de	Although return
+5176.4ed6.9519.8bef	Other errors
+53ef.80fd.4f1a.5c06	may be
+4e2d.663e.793a.4e3a	shown as
+6240.4ee5.4e0d.7528	So no need
+8fd8.8981.6ce8.610f	Also note
+5373.4f7f.88c5.4e86	Even if installed
+540e.7ed3.679c.4e3a	The final result is
+67e5.627e.65b9.6cd5	Find method
+7b2c.4e00.680f.6709	The first column has
+65e0.6cd5.663e.793a	Unable to display
+5206.533a.8868.7684	partition table
+4e0d.80fd.5ffd.7565	cannot be ignored
+663e.793a.7684.662f	Shown is
+8d26.53f7.4e3a.7a7a	Account is empty
+660e.6587.5bc6.7801	clear text password
+4f20.5165.5bc6.7801	Pass in password
+7ea2.5e3d.628a.5b83	red hat put it
+8de8.786c.76d8.8f6f	Cross hard disk soft
+5230.6b64.786c.76d8	Go to this hard drive
+4e5f.4e0d.751f.6548	Doesn’t work either
+624b.52a8.9009.62e9	Manual selection
+5f15.5bfc.6587.4ef6	boot file
+8fd8.6ca1.201c.9192	Not ”awakened” yet
+53ef.4ee5.5f3a.5236	can be forced
+5355.7f51.5361.591a	Multiple network cards
+53ea.663e.793a.6709	Only show that there are
+6839.636e.6587.6863	According to the documentation
+7279.6b8a.5904.7406	special handling
+56e0.6b64.5148.8981	So first
+548c.4e4b.524d.7684	and previous
+5141.8bb8.8bbe.7f6e	Allow setting
+7f51.7edc.914d.7f6e	Network configuration
+4e34.65f6.4fee.590d	temporary fix
+91cd.65b0.6253.5305	repackage
+90fd.4f1a.62a5.9519	will report errors
+4fdd.5b58.914d.7f6e	Save configuration
+6ce8.610f.8981.7528	Pay attention to use
+91cd.65b0.751f.6210	regenerate
+624b.52a8.6267.884c	Manual execution
+4f46.662f.4fee.6539	But modify
+624b.52a8.542f.7528	Manually enable
+4f7f.7528.5916.90e8	Use external
+91cd.65b0.521b.5efa	recreate
+811a.672c.5165.53e3	Script entry
+6574.7406.53c2.6570	Arrange parameters
+89e3.6790.53c2.6570	Parse parameters
+89c6.4e3a.8def.5f84	Treat as path
+68c0.67e5.5185.5b58	Check memory
+6682.65f6.4e0d.7528	Not used for the time being
+9700.8981.4f7f.7528	requires using
+4e0d.8d77.4f5c.7528	doesn’t work
+5de5.4f5c.76ee.5f55	working directory
+4ece.5149.9a71.7684	from optical drive
+539f.7cfb.7edf.4e3a	The original system was
+4e0a.4f1a.82b1.5c4f	Shanghui Huaping
+9ed8.8ba4.4f7f.7528	use by default
+4e0d.4f1a.89e6.53d1	will not trigger
+4e0d.4f1a.5220.9664	will not be deleted
+8fd8.8981.5220.9664	Also delete
+56e0.6b64.6dfb.52a0	So add
+65f6.4f1a.63d0.793a	will prompt
+6700.540e.4e00.4e2a	the last one
+56e0.6b64.627e.5230	So find
+540e.8981.4fdd.5b58	to save later
+907f.514d.6709.65f6	avoid sometimes
+8fdb.7a0b.9a7b.7559	Process resident
+4ee5.4e0b.60c5.51b5	The following situations
+81ea.52a8.5b89.88c5	Automatic installation
+4e0d.662f.6240.6709	not all
+4e0d.4f1a.68c0.6d4b	Will not detect
+4e5f.4f1a.521b.5efa	will also create
+6216.8005.52a0.4e0a	Or add
+4e0d.8981.5224.65ad	don’t judge
+542f.52a8.9879.6709	The startup items are
+8fd9.662f.6807.8bb0	this is a marker
+5148.8865.4e00.4e2a	Make up one first
+4f46.9700.8bbe.7f6e	But need to set
+6240.4ee5.5220.9664	so delete
+73af.5883.9664.5916	Except environment
+9700.8981.6dfb.52a0	must add
+907f.514d.5360.7528	avoid occupying
+65e0.6cd5.83b7.53d6	Unable to obtain
+7efc.5408.4f7f.7528	Comprehensive use
+65e0.9700.6539.52a8	No changes required
+81ea.52a8.6839.636e	automatically based on
+8bbe.7f6e.516c.94a5	Set public key
+8bbe.7f6e.7ebf.7a0b	Set up threads
+65e0.9700.6267.884c	No need to execute
+6dfb.52a0.670d.52a1	Add service
+5373.4f7f.5f00.4e86	Even if it is open
+5b89.88c5.7cfb.7edf	Install system
+89e3.538b.7cfb.7edf	Decompression system
+4e0b.8f7d.516c.94a5	Download public key
+65f6.ff0c.6ca1.6709	when, no
+6302.8f7d.5206.533a	Mount partition
+65e0.6cd5.8bbe.7f6e	Unable to set
+67e5.770b.6587.4ef6	View files
+662f.56fa.5b9a.7684	is fixed
+80fd.5426.767b.5f55	Can I log in?
+5176.5b83.7cfb.7edf	Other systems
+5220.9664.5bc6.7801	delete password
+9501.5b9a.7528.6237	lock the user
+6dfb.52a0.516c.94a5	Add public key
+4f1a.663e.793a.6210	will be displayed as
+662f.5426.5b58.5728	exists
+5219.5199.5165.5230	then write to
+5426.5219.8ffd.52a0	Otherwise append
+4e0d.4f1a.751f.6548	will not take effect
+7684.65e7.7248.672c	old version of
+56e0.6b64.5373.4f7f	So even if
+91cc.8bbe.7f6e.6210	set to
+6dfb.52a0.7528.6237	Add user
+63a8.8350.4f7f.7528	Recommended
+7ec4.ff0c.53ea.6709	group, only
+540e.4e5f.6ca1.6709	Not even after
+518d.627e.5230.6709	Find again
+5b9e.9645.4e0a.662f	actually
+53ea.53c2.8003.4e86	Just for reference
+590d.5236.811a.672c	copy script
+63d0.53d6.53d8.91cf	Extract variables
+540c.6b65.65f6.95f4	sync time
+53ef.4ee5.9632.6b62	can prevent
+4e14.4e0d.53ef.7528	and unavailable
+662f.5426.53ef.8fbe	Is it reachable?
+65e0.6cd5.8fde.63a5	Unable to connect
+56e0.4e3a.4f1a.5728	Because it will be there
+8fd9.91cc.7b49.5f85	Wait here
+5047.8bbe.63a9.7801	Assumption mask
+8f6f.4ef6.90fd.662f	Software is
+5730.5740.ff0c.4f46	address, but
+800c.4e0d.7528.4f1a	Instead of knowing
+80fd.4e0a.7f51.4f46	Can access the Internet but
+9632.6b62.5220.9664	prevent deletion of
+4e0d.7528.5224.65ad	No need to judge
+56e0.4e3a.6ca1.6709	Because there is no
+5730.5740.4f46.6709	Address but there is
+81ea.52a8.6eda.52a8	autoscroll
+8c03.5ea6.5237.65b0	Scheduling refresh
+5207.6362.5230	switch to
+5207.6362.6210	switch to
+8fd0.884c.5728	running on
+597d.50cf.8ddf	seems to follow
+6709.51b2.7a81	There is conflict
+4e0d.652f.6301	Not supported
+4f1a.663e.793a	will be displayed
+7ed3.679c.4ee5	The result ends with
+8868.793a.6709	means there is
+6240.4ee5.7528	So use
+8868.793a.7b2c	Indicates the first
+8fd9.91cc.7684	Here’s
+8bc6.522b.6210	recognized as
+4e0d.9760.8c31	Unreliable
+662f.4e0d.662f	Yes or no
+4f46.8fd4.56de	but returns
+4e0d.5b89.5168	not safe
+8981.4f7f.7528	To use
+4e0d.6307.5b9a	Not specified
+91cd.88c5.524d	before installation
+91cd.88c5.540e	after installation
+4e0d.80fd.4e3a	cannot be
+8d26.53f7.4e3a	The account number is
+6709.4e09.4e2a	There are three
+4e0d.8981.7528	Don’t use
+5728.91cc.9762	inside
+517c.5bb9.6027	compatibility
+4e0b.6d4b.8bd5	Next test
+8de8.786c.76d8	Across hard drives
+7406.8bba.4e0a	Theoretically
+4f46.662f.4ece	But from
+53ef.4ee5.7528	available
+4e0d.663e.793a	Don’t show
+56e0.6b64.7528	Therefore use
+4e91.955c.50cf	Cloud mirror
+4e14.4f7f.7528	and use
+6587.4ef6.7684	Documentary
+91cc.9762.7684	inside
+4e0d.751f.6548	Not effective
+4f1a.5f97.5230	will get
+94fe.63a5.6709	links contain
+4e0d.7cbe.7b80	Not streamlined
+6587.4ef6.5939	folder
+5206.533a.4e0b	Under partition
+5206.533a.7684	partitioned
+542f.52a8.9879	Startup items
+9898.5916.8bdd	aside
+53ef.80fd.5728	may be in
+6302.8f7d.5230	mount to
+7528.6237.540d	username
+8981.7981.7528	to disable
+4e0b.65e0.6548	Invalid next
+5c06.5185.6838	will kernel
+5355.72ec.7684	alone
+800c.62a5.9519	And report an error
+4f1a.89e6.53d1	will trigger
+81ea.5e26.7684	Comes with it
+53ea.4e0b.8f7d	download only
+518d.5220.9664	Delete again
+4e0d.6dfb.52a0	Do not add
+4f1a.62a5.9519	Will report an error
+6ca1.6302.8f7d	Not mounted
+5206.533a.8868	partition table
+5360.7528.5c0f	Small footprint
+5230.53d8.91cf	to variable
+5b89.88c5.540e	After installation
+4f1a.63d0.793a	Will prompt
+963f.91cc.4e91	Alibaba Cloud
+90fd.9700.8981	all require
+73af.5883.4e0b	environment
+4e0d.8003.8651	Don’t consider
+83b7.53d6.7684	obtained
+6709.53ef.80fd	possible
+989d.5916.7684	additional
+7684.60c5.51b5	situation
+673a.5668.7528	For machines
+5b9e.4f8b.7684	instance
+9ed8.8ba4.662f	default is
+4f46.4e0d.52a0	But don’t add
+56fa.5b9a.4e3a	fixed to
+53ef.80fd.662f	may be
+8981.5b89.88c5	To install
+4e5f.9700.8981	Also needed
+672a.4fee.6539	Unmodified
+7b49.65b9.6cd5	etc.
+91cc.8fd0.884c	run within
+65f6.ff0c.6709	sometimes, there is
+4f1a.5347.7ea7	Will be upgraded
+8981.8bbe.7f6e	To set
+8981.6ce8.610f	Pay attention to
+7684.8bdd.4f1a	If it would
+521d.59cb.5316	initialization
+6302.8f7d.5728	mounted on
+53ef.4e0d.5199	Don’t write it
+4f1a.7528.5230	will be used
+7b49.5de5.5177	and other tools
+5305.91cc.9762	Inside the bag
+4e0d.517c.5bb9	Not compatible
+9700.8981.6709	must have
+6dfb.52a0.4e86	added
+4e0d.5f00.542f	Not open
+540e.53ef.4ee5	Later you can
+6761.76ee.4e3a	The entry is
+5b58.5728.6b64	exists this
+800c.4e0d.662f	instead of
+548c.4ee5.4e0b	and below
+56e0.6b64.5148	So first
+540e.8bbe.7f6e	post settings
+4f1a.751f.6210	will generate
+91cc.8bbe.7f6e	set within
+6dfb.52a0.5230	add to
+901a.5e38.7528	Usually used
+9002.7528.4e8e	Applicable to
+540e.4fee.590d	Post-repair
+663e.793a.4e3a	displayed as
+6ca1.53c2.8003	No reference
+7248.672c.53f7	version number
+91cd.542f.65f6	during reboot
+4e0d.5f00.653e	Not open
+5730.5740.5728	The address is at
+7b2c.4e00.4f4d	first place
+91cc.5224.65ad	check within
+53ea.6bd4.8f83	Compare only
+4f4d.63a9.7801	bit mask
+4f46.80fd.4ece	But can
+6ca1.7f51.7edc	No internet
+53ea.4f1a.7528	Only use
+4e0d.80fd.7528	The ____ does not work
+4f20.53c2.7ed9	Pass parameters to
+56e0.6b64	therefore
+4e0d.7528	Need not
+56e0.4e3a	because
+5f3a.5236	force
+76ee.5f55	Table of contents
+7684.884c	of rows
+663e.793a	show
+6dfb.52a0	Add to
+4e0d.7136	otherwise
+6ca1.6709	No
+7ed3.679c	result
+7ed3.5c3e	ending
+5730.5740	address
+9ed8.8ba4	default
+9650.5236	limitation
+8fc7.6ee4	filter
+9519.8bef	error
+5224.65ad	judge
+4e0a.7684	on
+5220.9664	delete
+6709.4e9b	some
+4f8b.5982	For example
+53ea.6709	only
+9690.85cf	hide
+63d0.9192	remind
+6216.8005	or
+4f7f.7528	use
+672a.88c5	Not installed
+5b89.88c5	Install
+53ef.7528	Available
+65e0.6548	invalid
+901a.8fc7	pass
+7cfb.7edf	system
+540d.79f0	name
+81ea.5e26	Bring your own
+4ed3.5e93	storehouse
+65b9.6cd5	method
+547d.4ee4	Order
+4ea7.751f	produce
+4e5f.8981	Also want
+91cc.7684	inside
+7a7a.767d	blank
+5230.4e86	arrive
+8fd8.6709	besides
+5206.533a	Partition
+6ce8.610f	Notice
+7684.5751	pit
+8f93.51fa	output
+5b9e.6d4b	Actual measurement
+4f46.662f	but
+4ece.8f6f	from soft
+8fdb.5165	Enter
+653e.5230	put in
+627e.51fa	find out
+83b7.53d6	get
+68c0.67e5	examine
+6307.5b9a	Specify
+907f.514d	avoid
+5e72.6270	interference
+4e0d.4ece	Disobey
+6761.76ee	entry
+5bfb.627e	looking for
+8868.793a	express
+4ee3.8868	represent
+53ea.8981	if only
+5b58.5728	exist
+7a7a.683c	space
+8f6c.6362	Convert
+6392.9664	exclude
+9700.8981	requires
+6a21.5757	module
+4e0b.8f7d	download
+7f51.5173	gateway
+6839.636e	according to
+89e3.538b	Unzip
+91cd.5efa	rebuild
+9a71.52a8	driver
+5c11.4e86	less
+90e8.5206	part
+751f.6210	generate
+624d.6709	only have
+5982.679c	if
+6e05.9664	Clear
+9000.51fa	quit
+5904.7406	deal with
+683c.5f0f	Format
+4fdd.5b58	save
+5bc6.7801	password
+5185.6838	Kernel
+8def.5f84	path
+627e.5230	turn up
+8bbe.7f6e	set up
+914d.7f6e	configuration
+666e.901a	ordinary
+539f.7248	Original
+670d.52a1	Serve
+9047.5230	when encountering
+662f.4e3b	It’s the Lord
+9632.6b62	prevent
+4e3a.7a7a	is empty
+63d0.53d6	extract
+533a.5206	distinguish
+539f.56e0	reason
+68c0.6d4b	Detection
+8d85.65f6	time out
+5f15.5bfc	guide
+5934.90e8	head
+5c5e.4e8e	belong
+9009.9879	Options
+7981.7528	Disable
+6539.6210	Change to
+5185.5b58	Memory
+7f51.7edc	network
+65b9.6848	plan
+652f.6301	support
+4fee.6539	Revise
+4e0d.662f	no
+516c.94a5	public key
+5305.542b	Include
+7528.4e8e	used for
+7b5b.9009	filter
+5bfc.5165	import
+6b64.65f6	at this time
+5426.5219	otherwise
+63a8.8350	recommend
+800c.4e14	and
+65e7.7248	Old version
+62a5.9519	Report an error
+6a21.677f	template
+5219.7528	Then use
+5f00.542f	turn on
+4e0b.7684	down
+65e0.6cd5	Unable
+89e3.51b3	solve
+5199.5165	write
+5305.62ec	include
+8fd9.4e2a	this
+4f1a.4ece	will follow
+65b0.7248	new version
+6302.8f7d	mount
+731c.6d4b	guess
+5907.7528	spare
+955c.50cf	image
+5141.8bb8	allow
+51fa.9519	Error
+63a5.6536	take over
+5bfc.81f4	lead to
+5931.8d25	fail
+63a2.6d4b	detection
+4ee5.9632	Just in case
+7b49.5f85	wait
+4f1a.7528	Will use
+5047.8bbe	hypothesis
+83b7.5f97	get
+6beb.79d2	millisecond
+7528	use
+518d	Again
+548c	and
+7684	of
+662f	yes
+6709	have
+4e3a	for
+4ec5	only
+5728	exist
+8f6f	soft
+65f6	hour
+4e0a	superior
+4ece	from
+8bf4	explain
+5f53	when
+4e86	Got it
+6216	or
+5219	but
+6b21	Second-rate
+5c06	Will
+5230	arrive
+7eaf	pure
+62a5	newspaper
+5305	Bag
+5751	pit
+4e14	and
+6284	copy
+7b49	wait
+90fd	all
+4f46	but
+7ec4	Group
+5e26	bring

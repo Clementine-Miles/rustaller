@@ -47,7 +47,7 @@ fn definition(text: &str, name: &str) -> String {
             end = offset;
             break;
         }
-        if line.starts_with("# 脚本入口") {
+        if line.starts_with("# Script entry") {
             end = offset;
             break;
         }
@@ -71,7 +71,17 @@ fn upstream(file: &str) -> String {
         .output()
         .unwrap();
     assert!(out.status.success(), "upstream baseline must remain in Git");
-    String::from_utf8(out.stdout).unwrap()
+    normalize_english(&String::from_utf8(out.stdout).unwrap())
+}
+// Normalize only the explicitly translated text; executable bytes still compare exactly.
+fn normalize_english(text: &str) -> String {
+    let mut result = text.to_owned();
+    for row in include_str!("english-text.tsv").lines() {
+        let (encoded, english) = row.split_once('\t').expect("translation fixture");
+        let original: String = encoded.split('.').map(|part| char::from_u32(u32::from_str_radix(part, 16).expect("code point")).expect("Unicode scalar")).collect();
+        result = result.replace(&original, english);
+    }
+    result
 }
 fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
@@ -982,7 +992,7 @@ mod tests {
         );
         assert_eq!(ok(out), "x86_64:amd64");
         let text = source("reinstall.sh");
-        let main = &text[text.rfind("# 脚本入口").unwrap()..];
+        let main = &text[text.rfind("# Script entry").unwrap()..];
         assert!(main.find("init_basearch").unwrap() < main.find("verify_os_args\n").unwrap());
         assert!(
             main.find("init_basearch").unwrap() < main.find("remove_exist_reinstall\n").unwrap()
@@ -1018,7 +1028,7 @@ mod tests {
             );
         }
         let text = source("reinstall.sh");
-        let main = &text[text.rfind("# 脚本入口").unwrap()..];
+        let main = &text[text.rfind("# Script entry").unwrap()..];
         assert!(main.find("reset_and_exit\n").unwrap() < main.find("set_boot_targets").unwrap());
         assert!(
             main.find("boot_local_iso_and_exit\n").unwrap()
@@ -1068,7 +1078,7 @@ mod tests {
         assert!(trans.find("check_install_ram").unwrap() < trans.find("clear_previous").unwrap());
         assert!(trans.find("check_install_ram").unwrap() < trans.find("create_part").unwrap());
         let host_main = source("reinstall.sh");
-        let host_main = &host_main[host_main.rfind("# 脚本入口").unwrap()..];
+        let host_main = &host_main[host_main.rfind("# Script entry").unwrap()..];
         assert!(
             host_main.find("check_ram\n").unwrap()
                 < host_main.find("remove_exist_reinstall\n").unwrap()
@@ -1266,7 +1276,7 @@ mod tests {
         assert!(!protected.status.success());
         assert!(iso.exists());
         let main = source("reinstall.sh");
-        let entry = &main[main.find("# 脚本入口").unwrap()..];
+        let entry = &main[main.find("# Script entry").unwrap()..];
         assert!(
             entry.find("    protect_iso_source\n").unwrap()
                 < entry.find("mkdir_clear \"$tmp\"").unwrap()
@@ -1388,7 +1398,7 @@ mod tests {
     #[test]
     fn preliminary_option_scan_does_not_reinterpret_option_values() {
         let text = source("reinstall.sh");
-        let start = text.find("# 第一遍扫描，验证要安装的系统和版本").unwrap();
+        let start = text.find("# The first scan to verify the system and version to be installed").unwrap();
         let end = text.find("# Protect the already-downloaded ISO").unwrap();
         let code = &text[start..end];
         let setup = "init_basearch(){ :; }; init_confhome(){ :; }; verify_os_name(){ distro=$1; }; to_lower(){ tr '[:upper:]' '[:lower:]'; }; ORIGINAL_OPTS=\"'--password' '--iso' '--username' '--debug' '--no-cloud-kernel' '--hold' '2' '--' 'arch'\";";

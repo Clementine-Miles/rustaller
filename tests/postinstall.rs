@@ -139,7 +139,7 @@ fn hostnames_and_timezone_paths_reject_injection_and_traversal() {
         "host\nname",
         "$(id)",
         "../etc",
-        "中文",
+        "\u{4e2d}\u{6587}",
     ] {
         let config = PostInstallConfig {
             hostname: Some(value.into()),

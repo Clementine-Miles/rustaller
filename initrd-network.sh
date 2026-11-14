@@ -2,8 +2,8 @@
 # shellcheck shell=dash
 # Alpine Live initrd networking helper
 
-# accept_ra 接收 RA + 自动配置网关
-# autoconf  自动配置地址，依赖 accept_ra
+# accept_ra take over RA + Automatically configure gateway
+# autoconf  Automatically configure the address, depending on accept_ra
 
 mac_addr=$1
 ipv4_addr=$2
@@ -16,19 +16,19 @@ DHCP_TIMEOUT=15
 DNS_FILE_TIMEOUT=5
 TEST_TIMEOUT=10
 
-# 检测是否有网络是通过检测这些 DNS endpoint 的端口是否开放
-# 改成 generate_204？但检测网络时可能 resolv.conf 为空
+# Detecting whether there is a network is by detecting these DNS endpoint Is the port open?
+# Change to generate_204？But when detecting the network, it is possible resolv.conf is empty
 # HTTP 80
 # HTTPS/DOH 443
 # DOT 853
 ipv4_dns1='1.1.1.1'
-ipv4_dns2='8.8.8.8' # 不开放 80
+ipv4_dns2='8.8.8.8' # Not open 80
 ipv6_dns1='2606:4700:4700::1111'
-ipv6_dns2='2001:4860:4860::8888' # 不开放 80
+ipv6_dns2='2001:4860:4860::8888' # Not open 80
 
-# 找到主网卡
+# Find the primary network card
 get_ethx() {
-    # 过滤 azure vf (带 master ethx)
+    # filter azure vf (bring master ethx)
     # 2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP qlen 1000\    link/ether 60:45:bd:21:8a:51 brd ff:ff:ff:ff:ff:ff
     # 3: eth1: <BROADCAST,MULTICAST,UP,LOWER_UP800> mtu 1500 qdisc mq master eth0 state UP qlen 1000\    link/ether 60:45:bd:21:8a:51 brd ff:ff:ff
     ip -o link | grep -i "$mac_addr" | grep -v master | cut -d' ' -f2 | cut -d: -f1 | grep .
@@ -101,7 +101,7 @@ add_missing_ipv4_config() {
         fi
 
         if ! is_have_ipv4_gateway; then
-            # 如果 dhcp 无法设置onlink网关，那么在这里设置
+            # if dhcp Unable to setonlinkGateway, then set it here
             if true; then
                 ip -4 route add "$ipv4_gateway" dev "$ethx"
                 ip -4 route add default via "$ipv4_gateway" dev "$ethx"
@@ -119,7 +119,7 @@ add_missing_ipv6_config() {
         fi
 
         if ! is_have_ipv6_gateway; then
-            # 如果 dhcp 无法设置onlink网关，那么在这里设置
+            # if dhcp Unable to setonlinkGateway, then set it here
             if true; then
                 ip -6 route add "$ipv6_gateway" dev "$ethx"
                 ip -6 route add default via "$ipv6_gateway" dev "$ethx"
@@ -128,12 +128,12 @@ add_missing_ipv6_config() {
             fi
         fi
 
-        # 添加额外的 IPv6 地址（逗号分隔）
-        # 在腾讯云上，dhcpv6 获取的 IPv6 不是旧系统的 IPv6，且不可用
-        # 脚本添加旧系统的 IPv6 地址和额外的 IPv6 地址后，额外的 IPv6 地址在 ip -6 addr 第一位
-        # get_first_ipv6_addr 获得的是额外的 IPv6 地址，也就是不可用的 IPv6 地址
-        # 导致 ipv6 test_internet 失败
-        # 因此暂时关闭 ipv6_extra_addrs
+        # add extra IPv6 Addresses (comma separated）
+        # On Tencent Cloud，dhcpv6 obtained IPv6 Not from the old system IPv6，and unavailable
+        # Script to add old system IPv6 address and extra IPv6 After the address, additional IPv6 The address is at ip -6 addr first place
+        # get_first_ipv6_addr What you get is extra IPv6 Address, that is, unavailable IPv6 address
+        # lead to ipv6 test_internet fail
+        # Therefore it is temporarily closed ipv6_extra_addrs
     fi
 }
 
@@ -145,7 +145,7 @@ is_need_test_ipv6() {
     is_have_ipv6 && ! $ipv6_has_internet
 }
 
-# nc 探测 TCP 443 是否可达
+# nc detection TCP 443 Is it reachable?
 
 test_connect() {
     src=$1
@@ -180,7 +180,7 @@ test_internet() {
 flush_ipv4_config() {
     ip -4 addr flush scope global dev "$ethx"
     ip -4 route flush dev "$ethx"
-    # DHCP 获取的 IP 不是重装前的 IP 时，一并删除 DHCP 获取的 DNS，以防 DNS 无效
+    # DHCP obtained IP Not before reinstallation IP when, delete them together DHCP obtained DNS，Just in case DNS invalid
     sed -i "/\./d" /etc/resolv.conf
 }
 
@@ -197,7 +197,7 @@ flush_ipv6_config() {
     fi
     ip -6 addr flush scope global dev "$ethx"
     ip -6 route flush dev "$ethx"
-    # DHCP 获取的 IP 不是重装前的 IP 时，一并删除 DHCP 获取的 DNS，以防 DNS 无效
+    # DHCP obtained IP Not before reinstallation IP when, delete them together DHCP obtained DNS，Just in case DNS invalid
     sed -i "/:/d" /etc/resolv.conf
 }
 
@@ -215,10 +215,10 @@ fi
 
 echo "Configuring $ethx ($mac_addr)..."
 
-# 不开启 lo 则 frp 无法连接 127.0.0.1 22
+# Not open lo but frp Unable to connect 127.0.0.1 22
 ip link set dev lo up
 
-# 开启 ethx
+# turn on ethx
 ip link set dev "$ethx" up
 sleep 1
 
@@ -247,26 +247,26 @@ dhcpcd)
     ;;
 esac
 
-# 等待slaac
-# 有ipv6地址就跳过，不管是slaac或者dhcpv6
-# 因为会在trans里判断
-# 这里等待5秒就够了，因为之前尝试获取dhcp6也用了一段时间
+# waitslaac
+# haveipv6The address is skipped, no matter it isslaacordhcpv6
+# Because it will be theretranscheck within
+# Wait here5seconds is enough because before trying to getdhcp6It also took a while
 for i in $(seq 5 -1 0); do
     is_have_ipv6 && break
     echo "waiting slaac for ${i}s"
     sleep 1
 done
 
-# 记录是否有动态地址
-# 由于还没设置静态ip，所以有条目表示有动态地址
+# Record whether there is a dynamic address
+# Since I haven’t set up static yetip，So there is an entry indicating that there is a dynamic address
 is_have_ipv4_addr && dhcpv4=true || dhcpv4=false
 is_have_ipv6_addr && dhcpv6_or_slaac=true || dhcpv6_or_slaac=false
 is_have_ipv6_gateway && ra_has_gateway=true || ra_has_gateway=false
 
-# 如果自动获取的 IP 不是重装前的，则改成静态，使用之前的 IP
-# 只比较 IP，不比较掩码/网关，因为
-# 1. 假设掩码/网关导致无法上网，后面也会检测到并改成静态
-# 2. openSUSE wicked dhcpv6 是 64 位掩码，aws lightsail 模板上的也是，而其它 dhcpv6 软件都是 128 位掩码
+# If automatically obtained IP If it is not the one before reinstallation, change it to static and use the previous one. IP
+# Compare only IP，Don’t compare masks/gateway because
+# 1. Assumption mask/The gateway makes it impossible to access the Internet. It will be detected later and changed to static.
+# 2. openSUSE wicked dhcpv6 yes 64 bit mask，aws lightsail The same is true for the template, and other dhcpv6 Software is 128 bit mask
 if $dhcpv4 && [ -n "$ipv4_addr" ] && [ -n "$ipv4_gateway" ] &&
     ! [ "$(echo "$ipv4_addr" | cut -d/ -f1)" = "$(get_first_ipv4_addr | cut -d/ -f1)" ]; then
     echo "IPv4 address obtained from DHCP is different from old system."
@@ -284,14 +284,14 @@ fi
 add_missing_ipv4_config
 add_missing_ipv6_config
 
-# 检查 ipv4/ipv6 是否连接联网
+# examine ipv4/ipv6 Whether connected to the Internet
 ipv4_has_internet=false
 ipv6_has_internet=false
 test_internet
 
-# 如果无法上网，并且自动获取的 掩码/网关 不是重装前的，则改成静态
-# ip_addr 包括 IP/掩码，所以可以用来判断掩码是否不同
-# IP 不同的情况在前面已经改成静态了
+# If you cannot access the Internet and automatically obtain the mask/If the gateway is not the one before reinstallation, change it to static
+# ip_addr include IP/mask, so it can be used to determine whether the masks are different
+# IP Different situations have been changed to static before.
 if ! $ipv4_has_internet &&
     $dhcpv4 && [ -n "$ipv4_addr" ] && [ -n "$ipv4_gateway" ] &&
     ! { [ "$ipv4_addr" = "$(get_first_ipv4_addr)" ] && [ "$ipv4_gateway" = "$(get_first_ipv4_gateway)" ]; }; then
@@ -301,7 +301,7 @@ if ! $ipv4_has_internet &&
     add_missing_ipv4_config
     test_internet
 fi
-# 有可能是静态 IPv6 但能从 RA 获取到网关，因此加上 || $ra_has_gateway
+# It may be static IPv6 But can RA Get the gateway, so add || $ra_has_gateway
 if ! $ipv6_has_internet &&
     { $dhcpv6_or_slaac || $ra_has_gateway; } &&
     [ -n "$ipv6_addr" ] && [ -n "$ipv6_gateway" ] &&
@@ -314,14 +314,14 @@ if ! $ipv6_has_internet &&
     test_internet
 fi
 
-# 要删除不联网协议的ip，因为
-# 1 甲骨文云管理面板添加ipv6地址然后取消
-#   依然会分配ipv6地址，但ipv6没网络
-#   此时alpine只会用ipv6下载apk，而不用会ipv4下载
-# 2 有ipv4地址但没有ipv4网关的情况(vultr $2.5 ipv6 only)，aria2会用ipv4下载
+# To delete the non-networking protocolip，because
+# 1 Oracle Cloud Management Panel Addedipv6address then cancel
+#   will still be allocatedipv6address, butipv6No internet
+#   at this timealpineOnly useipv6downloadapk，Instead of knowingipv4download
+# 2 haveipv4address but noipv4Gateway situation(vultr $2.5 ipv6 only)，aria2Will useipv4download
 
-# 假设 ipv4 ipv6 在不同网卡，ipv4 能上网但 ipv6 不能上网，这时也要删除 ipv6
-# 不能用 ipv4_has_internet && ! ipv6_has_internet 判断，因为它判断的是同一个网卡
+# hypothesis ipv4 ipv6 on different network cards，ipv4 Can access the Internet but ipv6 If you cannot access the Internet, you must delete it at this time. ipv6
+# The ____ does not work ipv4_has_internet && ! ipv6_has_internet Judgment, because it judges the same network card
 if ! $ipv4_has_internet; then
     if $dhcpv4; then
         should_disable_dhcpv4=true
@@ -329,8 +329,8 @@ if ! $ipv4_has_internet; then
     flush_ipv4_config
 fi
 if ! $ipv6_has_internet; then
-    # 防止删除 IPv6 后再次通过 SLAAC 获得
-    # 不用判断 || $ra_has_gateway ，因为没有 IPv6 地址但有 IPv6 网关时，不会出现下载问题
+    # prevent deletion of IPv6 Pass again after SLAAC get
+    # No need to judge || $ra_has_gateway ，Because there is no IPv6 Address but there is IPv6 There will be no download problems when using the gateway
     if $dhcpv6_or_slaac; then
         should_disable_accept_ra=true
         should_disable_autoconf=true
@@ -338,12 +338,12 @@ if ! $ipv6_has_internet; then
     flush_ipv6_config
 fi
 
-# 如果联网了，但没获取到默认 DNS，则添加我们的 DNS
+# If you are connected to the Internet but do not get the default DNS，then add our DNS
 
-# 有一种情况是，多网卡，且能上网的网卡先完成了这个脚本，不能上网的网卡后完成
-# 无法上网的网卡通过 flush_ipv4_config 删除了不能上网的 IP 和 dns
-# （原计划是删除无法上网的网卡 dhcp4 获取的 dns，但实际上无法区分）
-# 因此这里直接添加 dns，不判断是否联网
+# There is a situation where there are multiple network cards, and the network card that can access the Internet completes the script first, and the network card that cannot access the Internet completes it later.
+# The network card that cannot access the Internet passes through flush_ipv4_config Delete those that cannot access the Internet IP and dns
+# （The original plan was to delete the network card that cannot access the Internet. dhcp4 obtained dns，But in fact it is impossible to distinguish）
+# So add it directly here dns，Does not determine whether the network is connected
 if ! is_have_ipv4_dns; then
     echo "nameserver $ipv4_dns1" >>/etc/resolv.conf
     echo "nameserver $ipv4_dns2" >>/etc/resolv.conf
@@ -353,7 +353,7 @@ if ! is_have_ipv6_dns; then
     echo "nameserver $ipv6_dns2" >>/etc/resolv.conf
 fi
 
-# 传参给 trans.start
+# Pass parameters to trans.start
 netconf="/dev/netconf/$ethx"
 mkdir -p "$netconf"
 $dhcpv4 && echo 1 >"$netconf/dhcpv4" || echo 0 >"$netconf/dhcpv4"

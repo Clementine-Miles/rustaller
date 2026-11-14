@@ -1,88 +1,88 @@
-# 构建与 GitHub 发布
+# Build with GitHub release
 
-仓库：[Clementine-Miles/rustaller](https://github.com/Clementine-Miles/rustaller)。当前为含真实清盘操作的开发预览：schema=6，XFS/ext4 根，GRUB，目标启动后激活可选 swapfile。四目标 BIOS/UEFI 完整验收见 [ACCEPTANCE.md](ACCEPTANCE.md)；Rust ISO/netboot.xyz/reset 交接仍未连接。
+storehouse：[Clementine-Miles/rustaller](https://github.com/Clementine-Miles/rustaller)。Currently a development preview with real liquidation operations：schema=6，XFS/ext4 root，GRUB，Optional activation after target launch swapfile。four goals BIOS/UEFI See complete acceptance [ACCEPTANCE.md](ACCEPTANCE.md)；Rust ISO/netboot.xyz/reset Handoff still not connected。
 
-## 结构与界面
+## Structure and interface
 
 ```text
-src/bin/rustaller.rs        CLI / 可选 TUI → 共用预检、磁盘确认与安装入口
-src/tui/                   目录/字段/导航/计划分离；安装预检与独立本机密钥生成工具
-src/host/                  主机检查、引导、ISO 组件
-src/worker/                initrd、Live 检查、首启修正、日志组件
+src/bin/rustaller.rs        CLI / Optional TUI → Shared preflight, disk confirmation and installation portals
+src/tui/                   Table of contents/Field/navigation/Plan separation; install preflight vs. standalone native key generation tool
+src/host/                  Host check and boot、ISO components
+src/worker/                initrd、Live Inspections, first boot fixes, log components
 src/targets/               Alpine / Debian / Arch / Gentoo helpers
-src/shared/                分区、挂载、清理
-xtask/src/bundle.rs        先构建无 TUI worker，再嵌入 host
-xtask/src/check.rs         Rust 编排的静态/隔离检查
-xtask/src/dist.rs          发布包、SHA-256、构建状态
-.github/workflows/         GitHub 检查与 Release 草稿流程
+src/shared/                Partition, mount, clean
+xtask/src/bundle.rs        Build none first TUI worker，Embed again host
+xtask/src/check.rs         Rust choreographed static/isolated inspection
+xtask/src/dist.rs          release package、SHA-256、Build status
+.github/workflows/         GitHub Check with Release draft process
 ```
 
-TUI 仅属于 host，共用 CLI 模型和安装回调；原生 ssh-keygen 临时恢复终端，仅公钥进入计划。菜单、草稿及凭据遮蔽见 [TUI.md](TUI.md)，模块职责见[架构](ARCHITECTURE.md)。
+TUI only belongs to host，share CLI Model and install callbacks; native ssh-keygen To temporarily restore the terminal, only the public key enters the plan. Menus, drafts and credentials masking [TUI.md](TUI.md)，See module responsibilities[Architecture](ARCHITECTURE.md)。
 
-## 历史体积
+## historical volume
 
-以下测量只对应当时源码，不代表当前包大小、内存或安装速度。2026-10-28 的 preview.7 host 为 1,999,312 字节，worker 为 893,200 字节；重构前为 2,011,600 / 901,392 字节，详见 [REFACTOR.md](REFACTOR.md)。
+The following measurements only correspond to the source code at that time and do not represent the current package size, memory or installation speed.。2026-10-28 of preview.7 host for 1,999,312 byte，worker for 893,200 Bytes; before reconstruction was 2,011,600 / 901,392 Bytes, see [REFACTOR.md](REFACTOR.md)。
 
-| 版本 | TUI host（含 worker） | CLI host（含 worker） | worker |
+| Version | TUI host（Contains worker） | CLI host（Contains worker） | worker |
 |---|---:|---:|---:|
 | 2026-10-26 preview.4 | 1,393,072 | 1,093,968 | 565,520 |
-| 2026-10-25 多级 TUI | 1,331,632 | 1,077,584 | 565,520 |
+| 2026-10-25 multi-level TUI | 1,331,632 | 1,077,584 | 565,520 |
 
-上述配置使用 Rust 1.99.1、静态 musl、LTO、单 codegen unit、`opt-level=s`、strip。历史静态检查通过不代表完整安装验收。
+The above configuration uses Rust 1.99.1、static musl、LTO、one codegen unit、`opt-level=s`、strip。Passing the historical static check does not mean complete installation acceptance。
 
-## 本地使用
+## local use
 
-在项目根目录使用 `rust-toolchain.toml` 固定的工具链和 musl target：
+Use it in the project root directory `rust-toolchain.toml` fixed toolchain and musl target：
 
 ```console
 cargo xtask bundle
 ./target/x86_64-unknown-linux-musl/release/rustaller
 ```
 
-无参数且 stdin/stdout 连接终端时打开 TUI；CLI-only 用 `cargo xtask bundle --no-tui`。草稿不执行安装，提交后须通过预检和完整磁盘确认，随后认证资源、kexec 进入 Live 并清盘安装。`REINSTALL_CONFHOME` 可预填匹配资源地址。
+no parameters and stdin/stdout opens when attached to a terminal TUI；CLI-only use `cargo xtask bundle --no-tui`。The draft does not perform installation. After submission, it must pass preflight and full disk confirmation, and then authenticate the resource.、kexec Enter Live And clean up the installation。`REINSTALL_CONFHOME` Matching resource addresses can be prefilled。
 
-完整检查：
+Complete check：
 
 ```console
 cargo xtask check
 ```
 
-需 Bash、BusyBox、OpenSSH client、ShellCheck 0.11+；可用 `TEST_BASH`、`TEST_BUSYBOX`、`TEST_SHELLCHECK` 指定工具。CI 用 `--skip-shellcheck` 后通过固定版本容器执行 ShellCheck。
+requires Bash、BusyBox、OpenSSH client、ShellCheck 0.11+；Available `TEST_BASH`、`TEST_BUSYBOX`、`TEST_SHELLCHECK` Specify tools。CI use `--skip-shellcheck` Then execute it through the fixed version container ShellCheck。
 
-本地预览打包：
+Local preview packaging：
 
 ```console
 cargo xtask dist --tag v0.1.0-preview.1 --output artifacts/github-preview --allow-dirty
 ```
 
-`--allow-dirty` 仅用于本地预览，记录 `source_dirty: true`，CI 不使用。输出目录须不存在，tag 须匹配 Cargo 版本，如 `0.1.0` 对应 `v0.1.0` 或其 prerelease。
+`--allow-dirty` Only for local preview, record `source_dirty: true`，CI Not used. The output directory must not exist，tag must match Cargo version, such as `0.1.0` correspond `v0.1.0` or its prerelease。
 
-| 文件 | 内容 |
+| document | content |
 |---|---|
-| `rustaller-x86_64-linux-musl` | 唯一入口，内嵌精确匹配的 worker |
-| `SHA256SUMS` | 入口、许可证、构建元数据摘要 |
-| `LICENSE` | GNU GPLv3（`GPL-3.0-only`）完整条款；保留上游声明与署名 |
-| `build-info.json` | 版本、schema、源码提交/脏状态、TUI、worker 哈希、`installer_complete: false` |
-| `RELEASE-NOTES.md` | Release 正文，不作为下载附件 |
+| `rustaller-x86_64-linux-musl` | The only entrance, embedded with exact matching worker |
+| `SHA256SUMS` | Portal, license, build metadata summary |
+| `LICENSE` | GNU GPLv3（`GPL-3.0-only`）Full terms; upstream claims and attribution retained |
+| `build-info.json` | Version、schema、Source code submission/dirty state、TUI、worker Hash、`installer_complete: false` |
+| `RELEASE-NOTES.md` | Release Main text, not as download attachment |
 
-## 源码导入与对拍基准
+## Source code import and comparison benchmark
 
-已有仓库先 clone 再复制源码到根目录，保留隐藏目录和已有历史，不强制覆盖。源码包排除 `.git`、构建产物、VM、日志及私钥；`target/`、`artifacts/`、`dist/` 由 Git 忽略。
+Already have a warehouse? clone Then copy the source code to the root directory, retain the hidden directory and existing history, and do not force overwriting. Source code package exclusion `.git`、Build product、VM、Logs and private keys；`target/`、`artifacts/`、`dist/` Depend on Git neglect。
 
-Shell 对拍依赖固定上游对象；CI 自动获取，本地执行：
+Shell Dependency on fixed upstream objects；CI Obtain automatically and execute locally：
 
 ```console
 git fetch --no-tags --depth=1 https://github.com/bin456789/reinstall.git 98f1e21013233d42750cc2e7a298a0818461d686:refs/rustaller/upstream-baseline
 cargo xtask check
 ```
 
-以下是历史浅克隆迁移命令，仅在仓库确为浅克隆且需补齐原历史时使用：
+The following is a historical shallow clone migration command, which can only be used when the warehouse is indeed a shallow clone and the original history needs to be supplemented.：
 
 ```console
 git fetch --unshallow origin
 ```
 
-首次导入的提交/推送示例（已有远程历史须先整合）：
+initial imported commit/Push example (existing remote history must be integrated first）：
 
 ```console
 git status --short
@@ -92,39 +92,39 @@ git remote set-url origin https://github.com/Clementine-Miles/rustaller.git
 git push -u origin main
 ```
 
-保留上游声明与 GPLv3。Check 执行格式、Clippy、隔离/终端/Shell 测试、ShellCheck 和 musl 构建，不运行真实安装。
+Preserve the upstream declaration with GPLv3。Check Execution format、Clippy、isolation/terminal/Shell test、ShellCheck and musl Build without running the real installation。
 
-## 发布预览版本
+## Release Preview
 
-Check 通过后，对待发布提交创建新 tag；以下仅为示例，勿复用已有版本：
+Check After passing, create a new tag；The following are examples only, do not reuse existing versions.：
 
 ```console
 git tag v0.1.0-preview.1
 git push origin v0.1.0-preview.1
 ```
 
-Release preview 对 tag 重新检查、打包并创建 draft/prerelease；也可从 Actions 手动指定已有 tag。仅创建草稿的 job 有 `contents: write`，使用仓库 `GITHUB_TOKEN`。
+Release preview right tag recheck, package and create draft/prerelease；Also available from Actions Manually specify existing tag。Create draft only job have `contents: write`，Use warehouse `GITHUB_TOKEN`。
 
-审阅草稿与附件后才公开为开发预览。未公开草稿不能匿名下载；prerelease 须使用固定 tag，`latest` 不自动指向它。已有版本不覆盖。完整安装验收前保持 `installer_complete: false` 和预览状态。
+The draft and attachments are reviewed before being released as a development preview. Unpublished drafts cannot be downloaded anonymously；prerelease must use pinned tag，`latest` Does not automatically point to it. Existing versions will not be covered. Maintain until complete installation acceptance `installer_complete: false` and preview status。
 
-## VPS 下载启动
+## VPS Download starts
 
-以下固定版本命令仅在该 tag 与附件已公开后有效：
+The following fixed version commands are only available in this tag Effective after the attachment has been made public：
 
 ```sh
 curl -fL 'https://github.com/Clementine-Miles/rustaller/releases/download/v0.1.0-preview.1/rustaller-x86_64-linux-musl' -o rustaller && chmod 700 rustaller && ./rustaller
 ```
 
-下载为文件再运行可保留交互终端。安装需要 root；TUI 提交并确认磁盘身份后会清盘。Rust ELF 不使用 `curl | sh`。
+Download it as a file and run it to keep the interactive terminal. Installation required root；TUI After submitting and confirming the disk identity, the disk will be liquidated.。Rust ELF Not used `curl | sh`。
 
-完整验收并发布稳定版后，才使用以下稳定入口：
+Only use the following stable entrance after complete acceptance and release of the stable version.：
 
 ```sh
 curl -fL 'https://github.com/Clementine-Miles/rustaller/releases/latest/download/rustaller-x86_64-linux-musl' -o rustaller && chmod 700 rustaller && ./rustaller
 ```
 
-同时按附件原名下载 `SHA256SUMS`，运行 `sha256sum --check --ignore-missing SHA256SUMS` 核对完整性。
+At the same time, download according to the original name of the attachment. `SHA256SUMS`，run `sha256sum --check --ignore-missing SHA256SUMS` Check completeness。
 
-## 待完成
+## To be completed
 
-验收 host → kexec → Alpine Live → 四目标安装 → 一次最终重启全链路，接通 Rust 手动介质/reset。固定下载链接、静态检查和构建通过均不替代安装验收。
+acceptance host → kexec → Alpine Live → Quad target installation → Once the entire link is finally restarted, the Rust manual media/reset。Fixed download links, static checks and build passes do not replace installation acceptance。

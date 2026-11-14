@@ -1,28 +1,28 @@
-# rustaller 续接指南
+# rustaller Continuation Guide
 
-先读根目录 `AGENTS.md`、[架构](ARCHITECTURE.md)与[验收记录](ACCEPTANCE.md)。本文列开发优先级，[历史](HISTORY.md)解释旧决策；无需依赖旧会话或未随源码提供的本地文件。
+Read root directory first `AGENTS.md`、[Architecture](ARCHITECTURE.md)and[acceptance records](ACCEPTANCE.md)。This article lists development priorities，[history](HISTORY.md)Interpret old decisions; no need to rely on old sessions or local files not shipped with source code。
 
-## 本机管理组件
+## native management component
 
-2026-11-14 集成已有独立项目至 `tools/dmitbox-local`；仓库入口为 `cargo xtask local-tool build|check`（Rust 实现）。运行产物为单文件 Bash，保持独立状态和资源所有权验证，不自动挂入重装/TUI/Live。原组件的模块、开发夹具及验收证据一并保留；完整发行版与外部 NAT66 仍未验收。
+2026-11-14 integrate the existing standalone project under `tools/dmitbox-local`；The warehouse entrance is `cargo xtask local-tool build|check`（Rust accomplish). The running product is a single file Bash，Maintain independent status and resource ownership verification, and do not automatically mount reinstallation/TUI/Live。Modules, development fixtures and proof of acceptance of original components are retained; full releases and external NAT66 Still not accepted。
 
-## 当前状态
+## Current status
 
-- Linux x86_64，英文多级 TUI；四目标经认证的 Alpine Live 和 kexec 安装，最后只重启一次。已有真实清盘能力，四系统 BIOS/UEFI 完整验收尚未通过，保持开发预览。
-- 根可选 XFS（默认）/ext4，保留 GRUB（SeaBIOS/UEFI）与 Alpine/OpenRC。EFI Stub 已取消，[评估](EFI-STUB-OPTIONS.md)仅为历史记录。
-- Live 清盘前检查所选文件系统模块及扣除 ESP/对齐后的根容量。XFS 保留兼容特性与 `-K`，ext4 禁止整卷 discard 并完整初始化 inode/journal；fstab、initramfs、GRUB 随选择配置。swapfile 支持两者，仅新目标开机激活，原系统/Live 不 swapon/swapoff。
-- 计划 schema=6、manifest schema=1、Rust 标记 `RUSTALLER-CONFIG-20261112-06`，拒绝旧计划及混用 worker。Shell 四资源及旧标记保持不变。
-- 内核默认与选项、主机名继承、非 root 用户的独立 root 密码见 [POSTINSTALL.md](POSTINSTALL.md)；公共 DNS/Custom 与文件系统输入见 [CONFIGURATION.md](CONFIGURATION.md)。Gentoo 内核/init 保持不变。
-- Arch 显式选择 CachyOS 才启用固定官方脚本、完整密钥和 OS 可用 ISA 仓库检测；首次目标开机完成全包升级、initramfs/GRUB 更新，失败保留状态并重试，不额外自动重启。资源固定值见 [SOURCES.md](SOURCES.md)。
-- 仓库：https://github.com/Clementine-Miles/rustaller 。Cargo 主包、CLI 为 `rustaller`，worker 为 `rustaller-worker`；GNU GPLv3，保留上游声明与署名。
-- 主 crate + xtask，`tests/verify` 独立。核心无第三方运行时依赖；tui 可选，libc 仅测试、sha2 仅开发工具。模块声明集中在 `lib.rs`，公共 Live 命令默认值在 `command::live_command`，环境与重试留在适配器。
-- 源码包保留 Cargo.lock、公开密钥、fixture、`.github`/`.cargo`，排除 `.git`、构建产物、VM、日志与私钥。
+- Linux x86_64，English multi-level TUI；Four Goals Certified Alpine Live and kexec Install and only reboot once at the end. Already have real liquidation capabilities, four systems BIOS/UEFI Full acceptance has not yet passed, keep development preview。
+- root optional XFS（default）/ext4，reserve GRUB（SeaBIOS/UEFI）and Alpine/OpenRC。EFI Stub Canceled，[Evaluate](EFI-STUB-OPTIONS.md)Just for history。
+- Live Check selected file system modules and deductions before liquidation ESP/Aligned root capacity。XFS Retains compatibility features with `-K`，ext4 Whole volume prohibited discard and fully initialized inode/journal；fstab、initramfs、GRUB configure according to the selection。swapfile Supports both, only the new target is activated upon startup, the original system/Live No swapon/swapoff。
+- plan schema=6、manifest schema=1、Rust mark `RUSTALLER-CONFIG-20261112-06`，Reject old plans and mix-ups worker。Shell Four resources and old tags remain unchanged。
+- Kernel defaults and options, hostname inheritance, non- root User independence root See the password [POSTINSTALL.md](POSTINSTALL.md)；public DNS/Custom See with file system input [CONFIGURATION.md](CONFIGURATION.md)。Gentoo Kernel/init remain unchanged。
+- Arch explicit selection CachyOS Only enable fixed official scripts, full keys and OS Available ISA Warehouse inspection; first target boot to complete all-inclusive upgrade、initramfs/GRUB Update, if failed, retain the status and try again without additional automatic restart. Resource fixed value see [SOURCES.md](SOURCES.md)。
+- storehouse：https://github.com/Clementine-Miles/rustaller 。Cargo main bag、CLI for `rustaller`，worker for `rustaller-worker`；GNU GPLv3，Preserve upstream claims and attribution。
+- host crate + xtask，`tests/verify` independent. The core has no third-party runtime dependencies；tui Optional，libc Test only、sha2 Development tools only. Module declarations focus on `lib.rs`，public Live The command default value is `command::live_command`，environment with retries left in the adapter。
+- Source code package retained Cargo.lock、public key、fixture、`.github`/`.cargo`，exclude `.git`、Build product、VM、Logs and private keys。
 
-历史 XFS 修改通过 273 workspace + 49 Shell 测试，参考项目修复后为 277 + 49；这些记录及静态构建不代表新的 VM 安装证据。最新检查以对应提交的 CI 为准。
+history XFS Modification passed 273 workspace + 49 Shell Test, after the reference project is repaired, it is 277 + 49；these records and static builds do not constitute new VM Evidence of installation. latest check to correspond to submitted CI Subject to。
 
-## 恢复开发环境
+## Restore development environment
 
-工具链/musl target 见 `rust-toolchain.toml`。需要 Bash、Git、BusyBox、ShellCheck 0.11+、ssh-keygen；VM 另需 QEMU、SeaBIOS、OVMF、xorriso 与经过认证的可丢弃源镜像。
+tool chain/musl target See `rust-toolchain.toml`。requires Bash、Git、BusyBox、ShellCheck 0.11+、ssh-keygen；VM Additional required QEMU、SeaBIOS、OVMF、xorriso Mirror with certified discardable source。
 
 ```console
 git fetch --no-tags --depth=1 https://github.com/bin456789/reinstall.git 98f1e21013233d42750cc2e7a298a0818461d686:refs/rustaller/upstream-baseline
@@ -31,9 +31,9 @@ cargo xtask bundle
 target/x86_64-unknown-linux-musl/release/rustaller --help
 ```
 
-已有仓库先 clone 再复制源码，保留隐藏目录与历史；裸源码可先 git init。CI 自动获取固定上游对拍对象。
+Already have a warehouse? clone Then copy the source code and keep the hidden directory and history; the bare source code can be git init。CI Automatically obtain fixed upstream matching objects。
 
-可通过 `TEST_BUSYBOX`、`TEST_BASH`、`TEST_SHELLCHECK` 指定工具。以下是旧工作区路径示例，换环境须替换：
+Passable `TEST_BUSYBOX`、`TEST_BASH`、`TEST_SHELLCHECK` Specify tools. The following is an example of the old workspace path, which must be replaced when changing the environment.：
 
 ```console
 PATH=/home/agent/.cargo/bin:$PATH \
@@ -42,42 +42,42 @@ TEST_SHELLCHECK=/workspace/scratch/rustaller-tools-current/usr/bin/shellcheck \
 cargo xtask check
 ```
 
-检查/构建期间不要修改源码；仅针对失败或新变更追加验证。未跟踪源码不得当作垃圾用 git clean/reset 清除。
+examine/Do not modify the source code during the build; only add validation for failures or new changes. Untracked source code must not be used as garbage git clean/reset Clear。
 
-## 功能入口
+## Function entrance
 
-| 功能 | 代码入口 | 当前边界 |
+| Function | Code entry | current boundary |
 |---|---|---|
-| 英文多级 TUI、ASCII 标题、按目标草稿、返回保存/丢弃 | src/tui/；bin/rustaller.rs | 共用 CLI 校验，凭据遮蔽，结果返回不能自动重试 |
-| 主机检查与 kexec | host/preflight.rs、handoff.rs | systemd/openrc-init PID 1；无两次重启回退 |
-| Live 模块、安装调度 | worker/install.rs | 最新模块/服务修复待完整 VM 复验 |
-| 四目标安装与 minimal 包策略 | targets/install.rs、packages.rs、debian.rs、rolling.rs | 尚无完整安装成功验收；不能承诺最终几十 MB |
-| 当前系统持久配置 | host/current.rs | 备份、原生 SSH 校验；不自动重启服务/在线加载 sysctl |
-| 原生 ssh-keygen | host/ssh_keygen.rs、TUI | 调用系统工具，可配置 rounds/cipher/type/comment，仅公钥序列化 |
-| DNS/网络与可选 swapfile | shared/dns.rs、network.rs、swapfile.rs | 预设/Custom 只提交选中值；swap 仅新目标 XFS/ext4 |
-| 原主机名与私密 root 密码输入 | host/hostname.rs、password.rs | 原系统检测后交接；非 root 安装必填，root SSH 仍禁用 |
-| 可选 CachyOS | targets/cachyos.rs | 固定官方脚本与密钥、ISA 仓库、独立首次开机更新服务 |
-| ISO/netboot.xyz/reset | host/iso.rs、boot.rs、args.rs、TUI | Rust 实际交接未接通，不得描述为可用 |
-| 开发与 VM 验收 | xtask/src/ | 不随目标运行时分发 |
+| English multi-level TUI、ASCII Title, draft by target, return to save/throw away | src/tui/；bin/rustaller.rs | share CLI Verification, credential masking, result return cannot be automatically retried |
+| Host check with kexec | host/preflight.rs、handoff.rs | systemd/openrc-init PID 1；No two restarts and fallback |
+| Live Module, installation and scheduling | worker/install.rs | latest module/Service repair to be completed VM Retest |
+| Four target installation with minimal package policy | targets/install.rs、packages.rs、debian.rs、rolling.rs | There is no successful acceptance of the complete installation; we cannot promise that the final dozens of MB |
+| Current system persistent configuration | host/current.rs | Backup, native SSH Verification; do not automatically restart the service/Online loading sysctl |
+| Native ssh-keygen | host/ssh_keygen.rs、TUI | Call system tools, configurable rounds/cipher/type/comment，Public key serialization only |
+| DNS/Network and optional swapfile | shared/dns.rs、network.rs、swapfile.rs | preset/Custom Submit only selected values；swap New goals only XFS/ext4 |
+| Original hostname and privacy root Password input | host/hostname.rs、password.rs | Handover after testing of the original system; non- root Required for installation，root SSH Still disabled |
+| Optional CachyOS | targets/cachyos.rs | Fixed official scripts with keys、ISA Warehouse, independent first boot update service |
+| ISO/netboot.xyz/reset | host/iso.rs、boot.rs、args.rs、TUI | Rust The actual handover is not connected and must not be described as available |
+| Development and VM acceptance | xtask/src/ | Not distributed with the target runtime |
 
-## P0：复验 Live 入口
+## P0：Retest Live Entrance
 
-SeaBIOS/virtio-blk、OVMF/virtio-scsi 已实际 kexec 进入 Live，均未完成安装。UEFI 的 SecureBoot 变量误拦截已区分可读 efivarfs 中确实缺失与未挂载/不可读。
+SeaBIOS/virtio-blk、OVMF/virtio-scsi Already actual kexec Enter Live，None have completed the installation。UEFI of SecureBoot Variables mistakenly intercepted and readable efivarfs is indeed missing and not mounted in/Unreadable。
 
-BIOS 发现两处启动故障，源码已修但缺少新一轮完整复验：
+BIOS Two startup failures were found. The source code has been repaired but a new round of complete re-inspection is missing.：
 
-1. OpenRC 日志重定向缺少后台模式；`host/handoff.rs::LIVE_SERVICE` 已加 `command_background=yes`、pidfile、`need modloop`。
-2. stock modloop 搜索排除 RAM 根；现由 `worker/install.rs::prepare_live_modules` 要求 root、Alpine、`rustaller_live=1` 和内存根，只读挂载认证 squashfs，核对运行内核后建立模块/固件链接。串口 console 放在 cmdline 最后。
+1. OpenRC Log redirection missing background mode；`host/handoff.rs::LIVE_SERVICE` Added `command_background=yes`、pidfile、`need modloop`。
+2. stock modloop Search exclusions RAM root; current source `worker/install.rs::prepare_live_modules` Require root、Alpine、`rustaller_live=1` and memory root, read-only mount authentication squashfs，Check and build the module after running the kernel/Firmware link. serial port console put on cmdline at last。
 
-下一步：
+Next step：
 
-1. 从当前源码重新 bundle，先跑 Alpine BIOS/virtio-blk，再跑 UEFI/virtio-scsi。
-2. 缺少 `RUSTALLER_LIVE_START` 时查 modloop/rustaller 服务、APK 覆盖、`/lib/modules`、findmnt、`/var/log/rustaller.log` 和串口。
-3. 确认模块、存储/NIC、恢复 SSH 后定位首个失败命令；修复并复跑对应案例，添加针对实际故障的回归验证。
+1. Restart from current source code bundle，Run first Alpine BIOS/virtio-blk，Run again UEFI/virtio-scsi。
+2. Lack `RUSTALLER_LIVE_START` time check modloop/rustaller Serve、APK cover、`/lib/modules`、findmnt、`/var/log/rustaller.log` and serial port。
+3. Confirm module, storage/NIC、recover SSH Then locate the first failed command; repair and rerun the corresponding case, and add regression verification for the actual failure.。
 
-旧证据在原工作区 `/workspace/scratch/virt-audit-20261029/`（含 `alpine-bios-console.ppm`、BIOS/EFI 日志），不随源码分发；新环境须重建镜像与证据。
+The old evidence is in the original workspace `/workspace/scratch/virt-audit-20261029/`（Contains `alpine-bios-console.ppm`、BIOS/EFI Log), not distributed with the source code; the new environment must rebuild the image and evidence。
 
-## P1：完整安装与虚拟硬件验收
+## P1：Complete installation and virtual hardware acceptance
 
 ```console
 cargo xtask vm-acceptance --help
@@ -90,30 +90,30 @@ cargo xtask vm-acceptance install \
   --timeout 1800 --output /absolute/new-results-directory
 ```
 
-认证源镜像后使用 prepare-source；每次创建独立目录、qcow2 overlay、OVMF 变量副本，不挂宿主块设备，继承代理/CA 并保持 TLS。详细接口见 [ACCEPTANCE.md](ACCEPTANCE.md)。
+Use after authenticating the source image prepare-source；Create a separate directory each time、qcow2 overlay、OVMF Variable copy, no host block device, inheritance proxy/CA and keep TLS。For detailed interfaces, see [ACCEPTANCE.md](ACCEPTANCE.md)。
 
-覆盖四系统 × BIOS/UEFI，再扩展 virtio-scsi、SATA、NVMe、PVSCSI；源内核也须支持控制器。TCG 设备模拟不替代真实 KVM/ESXi/Hyper-V/Xen HVM 验收。
+Covering four systems × BIOS/UEFI，Expand again virtio-scsi、SATA、NVMe、PVSCSI；The source kernel must also support the controller。TCG Device simulation is not a substitute for reality KVM/ESXi/Hyper-V/Xen HVM acceptance。
 
-每例须看到 Live/start 与 install-complete、dispatch 后 QMP 恰好一次 RESET、新磁盘启动、正确 distro/hostname/kernel、公钥 SSH、所选文件系统/UUID fstab、GRUB/UEFI fallback、DNS/默认路由、原生包元数据更新和目标开机激活 swapfile。IPv6-only、多 NIC、特殊路由及真实 4Kn 另验。
+Each case must be seen Live/start and install-complete、dispatch back QMP Exactly once RESET、New disk starts, correct distro/hostname/kernel、public key SSH、Selected file system/UUID fstab、GRUB/UEFI fallback、DNS/default routes, native package-metadata refresh and target-boot activation swapfile。IPv6-only、many NIC、Special routing and truth 4Kn Check separately。
 
-新配置须补验收：各显式内核 × XFS/ext4 × BIOS/UEFI，源 hostname 继承/缺失，非 root 用户与 root 密码及禁用 root SSH，公共/自定义 DNS 切换和重启后解析。CachyOS 分别验证基线/v3/v4/适用 znver4、仓库签名、首次升级成功/网络失败重试、更新后内核/GRUB 及无额外自动重启；尚无这些新增案例的完整 VM 通过证据。
+New configurations are subject to acceptance: each explicit kernel × XFS/ext4 × BIOS/UEFI，source hostname inherit/Missing, not root Users and root Password and disable root SSH，public/Customize DNS Parsing after switching and restarting。CachyOS Verify baselines separately/v3/v4/Applicable znver4、Warehouse signature, first upgrade successful/Network failure retry, updated kernel/GRUB and no additional automatic restarts; there is no complete set of these new cases VM acceptance evidence。
 
-故障覆盖身份改变/多盘同身份、挂载/swap 占用、只读盘、低 RAM、下载/签名失败、缺驱动、GRUB/SSH 校验失败。清盘前的拒绝条件不得延后，安装失败不得最终重启。
+Failure coverage identity change/Multiple disks with the same identity and mounting/swap Occupied, read-only disk, low RAM、download/Signing failed, driver missing、GRUB/SSH Verification failed. Rejection conditions before liquidation may not be postponed, and failed installations may not be eventually restarted.。
 
-UEFI 为 64 位、Secure Boot 关闭，512 MiB FAT32 ESP、单扇区簇、removable/no-nvram、PE 头校验。拒绝 BIOS/4Kn、32-bit EFI、Xen PV/PVH/control domain、容器及已检测受限 confidential VM。外部内核启动和提供商固件回退策略须另行适配。
+UEFI for 64 Bit、Secure Boot closure，512 MiB FAT32 ESP、single sector cluster、removable/no-nvram、PE Header verification. reject BIOS/4Kn、32-bit EFI、Xen PV/PVH/control domain、Containers and detected restrictions confidential VM。External kernel launch and provider firmware fallback policies must be adapted separately。
 
-## P2：剩余功能
+## P2：remaining functionality
 
-- ISO：接通只读预检、介质校验、GRUB loopback、安全交接与回滚；不承诺通用 ISO，不混入自动清盘。
-- netboot.xyz/reset：补执行和失败恢复，防止误触自动安装。
-- 当前系统配置：目前不创建账户、设密码、换核或建 swap；扩展前须明确恢复边界。
-- minimal：测量根占用与启动 RAM，再按原生依赖裁剪，保留 SSH、网络、CA、模块、引导、包维护能力。
-- 发布：固定版本下载和校验；完整安装验收前保持预览，未公开 draft 不作为匿名下载入口。
+- ISO：Enable read-only preflight and media verification、GRUB loopback、Safe handover and rollback; no universal commitment ISO，Not mixed with automatic liquidation。
+- netboot.xyz/reset：Complementary execution and failure recovery to prevent accidental automatic installation。
+- Current system configuration: Currently no accounts are created, passwords are set, kernels are changed, or swap；Recovery boundaries must be clear before expansion。
+- minimal：Measuring root occupancy and startup RAM，Then cut according to the native dependencies and retain SSH、network、CA、Module, boot, and package maintenance capabilities。
+- Release: fixed version download and verification; keep preview before complete installation and acceptance, not made public draft Not used as an anonymous download portal。
 
-## 工程与交付要求
+## Engineering and Delivery Requirements
 
-遵守 `AGENTS.md`：四目标统一 Live，RAM 下限 512/512/1024/2048 MB 双检，完整身份确认，无通用 `--yes`，计划 0600，凭据不写 cmdline，签名不可降级，失败不重启。TUI 仅 host，开发编排使用 Rust；保留 Shell 四资源和上游 Git 对拍对象。
+obey `AGENTS.md`：Four goals unified Live，RAM lower limit 512/512/1024/2048 MB Double check, complete identity confirmation, no universal `--yes`，plan 0600，Credentials are not written cmdline，The signature cannot be downgraded and will not be restarted if it fails.。TUI only host，Development and orchestration use Rust；reserve Shell Four resources and upstream Git Subject。
 
-更新验收记录中的版本/固件/控制器、结果、首个故障和证据位置，更新 P0/P1。打包源码及 SHA-256 时排除产物、镜像、日志和私钥；无用户明确要求不 commit/push/发布。
+Update the version in the acceptance record/firmware/Controller, results, first failure and evidence location, updates P0/P1。Package source code and SHA-256 Exclude products, images, logs and private keys from time to time; do not exclude them without explicit user request commit/push/release。
 
-参考项目审查已修复 fstab 顺序、新目标 hosts、Hyper-V PCI 模块，并增加 GRUB XFS 识别/语法检查，见 [REFERENCE-REVIEW.md](REFERENCE-REVIEW.md)；没有新增 VM 安装通过证据。
+Reference project review fixed fstab ordering and fresh-target hosts、Hyper-V PCI module and add GRUB XFS identify/Grammar check, see [REFERENCE-REVIEW.md](REFERENCE-REVIEW.md)；No new additions VM Installation pass evidence。

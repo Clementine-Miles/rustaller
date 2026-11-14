@@ -9,7 +9,7 @@ Within rustaller, use `cargo xtask local-tool build` and `cargo xtask local-tool
 Build and inspect the artifact:
 
 ```sh
-python3 build/build.py
+cargo xtask local-tool build
 bash dist/dmitbox-local.sh --help
 ```
 
@@ -47,6 +47,6 @@ The runner writes reproducible local logs and a JSON report under `artifacts/`. 
 
 The [recorded results](docs/TEST-EVIDENCE.md) and [native recovery evidence](docs/NATIVE-EVIDENCE.md) identify the tested artifact and each verification boundary.
 
-The supplied r3 script and review are archived unchanged under `upstream/` for comparison. Legacy unsafe mutation paths and environment bypass flags are not executable fallbacks in the new distribution.
+The original reference is retained in Git history; obsolete standalone archives have been removed from the working tree. Legacy unsafe mutation paths and environment bypass flags are not executable fallbacks in the new distribution.
 
 The refactor is distributed under [GPLv3](LICENSE). Original upstream declarations remain in the archived source; [provenance](docs/UPSTREAM.md) identifies those inputs.

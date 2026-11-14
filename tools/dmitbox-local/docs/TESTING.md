@@ -3,14 +3,14 @@
 Development tools are installed separately. The distributed script never installs a missing dependency as a side effect of status, planning or recovery.
 
 ```sh
-python3 build/build.py
+cargo xtask local-tool build
 DMITBOX_DEV_SHELLCHECK=/path/to/shellcheck bash tests/run.sh --integration
 bash tests/run.sh --strict-integration
 ```
 
 Python is used only for the development build. The first command must produce the standalone artifact before artifact-level testing. The runner creates a private directory under `artifacts/`, captures each check's output, records source SHA-256 sums and tool/environment versions, and writes `results.json`. Exit 77 means a skipped test, not success. Strict integration mode fails when any required check is skipped. `DMITBOX_DEV_SHELLCHECK` is a test-runner setting; it is not accepted by the production artifact.
 
-The archived files under `upstream/` are reference inputs. The runner never executes them.
+Historical reference files are retained in Git history and are never executed by the runner.
 
 Native namespace tests never mutate the caller's network namespace. NFT integration covers real kernel counter changes, atomic rejection, unrelated NAT/container/set preservation, same-table jump position, parent-generation conflicts and exclusive reset recovery with an explicitly mocked boot ID. Static IPv6 and pool tests exercise real addresses, DAD and inverses; manager discovery and external-verifier results are identified fixture mocks.
 

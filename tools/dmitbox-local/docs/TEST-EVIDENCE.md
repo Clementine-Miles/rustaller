@@ -35,6 +35,6 @@ Recorded at `2026-11-14T05:49:33Z`. Source checksums and environment/tool versio
 
 Reported failures: **0**. Reported skips: **2**. Strict integration was **enabled**.
 
-Reproduce with `python3 build/build.py` and `bash tests/run.sh --strict-integration`, then publish the chosen report using `python3 tests/publish-evidence.py artifacts/REPORT/results.json`. Source hashes identify the tested inputs; rerun after any source change.
+Reproduce with `cargo xtask local-tool build` and `bash tests/run.sh --strict-integration`, then publish the chosen report using `python3 tests/publish-evidence.py artifacts/REPORT/results.json`. Source hashes identify the tested inputs; rerun after any source change.
 
 A PASS applies only to the assertions in that check. A SKIP is missing evidence. Namespace facilities and mocked service behavior do not prove boot recovery or external accessibility. See [test levels](TESTING.md) and [limitations](LIMITATIONS.md) before interpreting these results as release acceptance.

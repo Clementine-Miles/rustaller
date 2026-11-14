@@ -1,125 +1,125 @@
-# 项目架构
+# project architecture
 
-项目是 bin456789/reinstall 的个人 Linux x86_64 衍生版，保留 GPLv3。当前为有真实清盘能力的开发预览，完整安装验收未完成。新 agent 先读 [续接指南](AGENT-HANDOFF.md)，运行证据以 [ACCEPTANCE.md](ACCEPTANCE.md) 为准。
+the project is bin456789/reinstall of individuals Linux x86_64 Derivative version, reserved GPLv3。It is currently a development preview with real liquidation capabilities, and the full installation acceptance has not yet been completed. new agent Read first [Continuation Guide](AGENT-HANDOFF.md)，Run the evidence with [ACCEPTANCE.md](ACCEPTANCE.md) Subject to。
 
-## 目录与职责
+## Table of Contents and Responsibilities
 
 ```text
 rustaller/
 ├── Cargo.toml / Cargo.lock / rust-toolchain.toml
-├── build.rs                  嵌入构建器提供的匹配 worker
+├── build.rs                  Matches provided by the embed builder worker
 ├── src/
-│   ├── lib.rs                核心入口，集中声明 host/worker/shared/targets 子模块
-│   ├── bin/rustaller.rs      CLI/TUI 入口、检查、确认与执行
+│   ├── lib.rs                Core entrance, centralized statement host/worker/shared/targets submodule
+│   ├── bin/rustaller.rs      CLI/TUI Entry, inspection, confirmation and execution
 │   ├── bin/rustaller-worker.rs
-│   │                         无界面 Live、网络、首启与日志命令
+│   │                         No interface Live、Network, first boot and log commands
 │   ├── model.rs / config.rs / postinstall.rs
-│   │                         安装计划及配置模型；不直接执行安装
+│   │                         Installation plan and configuration model; do not perform installation directly
 │   ├── codec.rs / plan_file.rs / deployment.rs
-│   │                         有界编码、私密计划文件、磁盘/网络部署清单
+│   │                         Bounded encoding, private plan file, disk/Network deployment checklist
 │   ├── command.rs / fsutil.rs
-│   │                         子进程、mock、swap 防护、公共 Live 命令默认值、原子写入
+│   │                         child process、mock、swap protection and shared Live Command defaults, atomic writes
 │   ├── host/                 args、preflight、disk、sources、handoff、
 │   │                         initrd、boot、iso、current、ssh_keygen
 │   ├── worker/               args、live、install、initrd_network、firstboot、log_stream
-│   ├── targets/              packages 包策略；install 公共安装；debian / rolling 适配
+│   ├── targets/              packages package policy；install public installation；debian / rolling adaptation
 │   ├── shared/               storage、configure、dns、network、swapfile
-│   └── tui/                  host 专属目录状态、字段、编辑、渲染与测试
+│   └── tui/                  host Exclusive directory status, fields, editing, rendering and testing
 ├── xtask/src/                check、bundle、dist、sources、vm、vm_guest
-├── tests/                    Rust 隔离测试；verify/ 为单独 Shell 对拍 crate
-├── .github/workflows/        检查与预览 Release 草稿
-└── docs/                     当前接口、架构、验收、续接与历史说明
+├── tests/                    Rust isolated tests；verify/ for alone Shell Match shooting crate
+├── .github/workflows/        Check and Preview Release draft
+└── docs/                     Current interface, architecture, acceptance, continuation and historical description
 ```
 
-模块按职责划分，公开路径保持稳定；TUI 的 mod.rs 含界面逻辑。
+Modules are divided according to responsibilities, and the public path remains stable；TUI of mod.rs Contains interface logic。
 
-## 运行流程
+## Run process
 
 ```mermaid
 flowchart TD
-    A[静态 host：CLI 或英文 TUI] --> B[公共计划校验]
-    B --> C[只读预检：固件、内存、磁盘身份、网络、kexec]
-    C --> D[完整磁盘身份确认]
-    D --> E[验证 Alpine netboot 签名与摘要]
-    E --> F[私密 initrd / apkovl / worker / plan / manifest]
-    F --> G[原生 PID 1 有序退出并 kexec]
-    G --> H[Alpine Live：模块、网络、恢复 SSH]
-    H --> I[重验磁盘、RAM、占用及扇区]
-    I --> J[分区并执行目标发行版适配器]
-    J --> K[配置账户、网络、内核、GRUB、可选 swapfile]
-    K --> L[验证、卸载、sync、一次最终重启]
-    A --> M[独立配置当前系统：备份与持久修改]
+    A[static host：CLI or english TUI] --> B[public plan verification]
+    B --> C[Read-only preflight: firmware, memory, disk identity, network、kexec]
+    C --> D[Full disk identity confirmation]
+    D --> E[verify Alpine netboot Signature and abstract]
+    E --> F[private initrd / apkovl / worker / plan / manifest]
+    F --> G[Native PID 1 orderly exit and kexec]
+    G --> H[Alpine Live：module, network, recovery SSH]
+    H --> I[revalidate the disk、RAM、Occupancy and sectors]
+    I --> J[Partition and execute target distribution adapter]
+    J --> K[configure accounts, networking and kernel、GRUB、Optional swapfile]
+    K --> L[verify and unload、sync、a final reboot]
+    A --> M[Configuring the current system independently: backups and persistent modifications]
 ```
 
-Alpine 最新稳定版、Debian stable/minbase、Arch rolling、Gentoo systemd stage3 均从 Alpine Live 安装，依赖发行版原生工具。CLI/TUI 共用模型和回调，按目标保存草稿；ssh-keygen 暂时恢复终端，仅公钥进入计划。当前系统配置独立于清盘，见 [CONFIGURATION.md](CONFIGURATION.md)。
+Alpine Latest stable version、Debian stable/minbase、Arch rolling、Gentoo systemd stage3 All from Alpine Live Installation, relying on the distribution’s native tools。CLI/TUI Share models and callbacks, save drafts by target；ssh-keygen Temporarily restore the terminal and only the public key enters the program. The current system configuration is independent of liquidation, see [CONFIGURATION.md](CONFIGURATION.md)。
 
-## 模块边界
+## module boundaries
 
-| 层 | 负责 | 不负责 |
+| layer | Responsible | irresponsible |
 |---|---|---|
-| model/config/postinstall | 计划、字段及组合约束 | 文件修改、下载、执行安装 |
-| host | 发现、认证资源、身份确认、交接、当前系统配置 | 在原系统直接格式化目标盘 |
-| worker | Live 入口与阶段顺序、首启服务 | TUI、再次询问主机安装选项 |
-| targets | 各发行版 rootfs、包、内核、GRUB、验证 | UI、任意用户脚本钩子 |
-| shared | 受检目标目录中的配置及存储操作 | 授权选择目标盘 |
-| command | 明确 argv/env/I/O、并发捕获、mock、swap 限制 | 解释并执行自由输入的 Shell |
-| xtask | 开发检查、静态打包、源审计、隔离 VM | 随运行时部署 |
+| model/config/postinstall | Plan, field and combination constraints | File modification, download, and installation execution |
+| host | Discovery, authentication resources, identity confirmation, handover, current system configuration | Format the target disk directly in the original system |
+| worker | Live Entrance and stage sequence, first start service | TUI、Ask again for host installation options |
+| targets | Each release rootfs、package, kernel、GRUB、verify | UI、Arbitrary user script hook |
+| shared | Configuration and storage operations in the inspected target directory | Authorization to select target disk |
+| command | clear argv/env/I/O、concurrent capture、mock、swap limitation | Interpret and execute freely entered Shell |
+| xtask | Development inspection, static packaging, source audit, isolation VM | deploy with the runtime |
 
-Live 命令默认 cwd=/、stdin=null、输出继承；适配器保留各自环境及错误/重试语义。
+Live Command default cwd=/、stdin=null、Output inheritance; adapters retain their own environment and errors/retry semantics。
 
-## 相似代码的归并（2026-11-12）
+## Merge of similar code（2026-11-12）
 
-此次重构通过 278 项 workspace、49 项 Shell 测试及格式/lint/语法检查，静态 bundle、worker 精确嵌入与两个入口的 --help 检查通过；无新增 BIOS/UEFI 完整安装证据。
+This reconstruction passed 278 items workspace、49 items Shell Tests and formats/lint/syntax check, static bundle、worker Precisely embedded with two entrances --help Check passed; no new additions BIOS/UEFI Complete proof of installation。
 
-| 公共入口 | 合并的职责 | 调用方继续负责 |
+| public entrance | Combined responsibilities | The caller remains responsible |
 |---|---|---|
-| command::checked_output | 启动命令、要求退出码为零、构造统一命令错误 | 阶段名、argv、环境、工作目录及 I/O 策略 |
-| command::run_checked / capture_checked | 分别执行并检查、捕获 stdout 并检查；复用同一状态检查 | UTF-8 解码、领域错误及输出长度限制 |
-| command::target_command | 两套目标适配器共同的 Live 默认值、PATH 和 SYSTEMD_OFFLINE | install 的 LC_ALL/DEBIAN_FRONTEND；rolling 的 LANG/TERM |
-| shared::dns::write_config | 检查目标路径、准备父目录、按指定权限原子写入 | 目标 root 的隔离校验、配置内容、目标发行版和权限选择 |
-| shared::dns::walk_parents | 检查每级祖先是否为真实目录；按入口决定是否创建缺失目录 | validate_planned_parent 保持只检查，ensure_parent 允许创建 |
+| command::checked_output | Start command, require exit code zero, construct unified command error | stage name、argv、environment, working directory and I/O Strategy |
+| command::run_checked / capture_checked | Execute and inspect and capture separately stdout And check; reuse the same status check | UTF-8 Decoding, field errors, and output length limitations |
+| command::target_command | Common to both sets of target adapters Live default value、PATH and SYSTEMD_OFFLINE | install of LC_ALL/DEBIAN_FRONTEND；rolling of LANG/TERM |
+| shared::dns::write_config | Check the target path, prepare the parent directory, and write atomically according to the specified permissions | Target root Isolation verification, configuration content, target distribution and permission selection |
+| shared::dns::walk_parents | Check whether the ancestors at each level are real directories; decide whether to create missing directories based on the entry | validate_planned_parent keep checking only，ensure_parent Allow creation |
 
-host/handoff、worker/install、targets/install、targets/rolling、shared/swapfile 共用 capture_checked；输出上限、解码错误和 stderr 策略留在调用方。worker/install 复用 live_command 并保留 LC_ALL=C。
+host/handoff、worker/install、targets/install、targets/rolling、shared/swapfile share capture_checked；Output upper limit, decoding error and stderr The policy remains on the caller。worker/install Reuse live_command and retain LC_ALL=C。
 
-目标写入复用 dns 路径检查，不新增跨层模块；批量 DNS/网络仍先校验整批再发布，保持失败前的修改范围。
+target write multiplexing dns Path check, no new cross-layer modules; batch DNS/The network still verifies the entire batch before publishing, maintaining the modification range before the failure.。
 
-保留语义不同的实现：三种 UUID 校验、Gentoo 元数据解析与签名认证、Debian/公共 fstab 的注释/ESP/fsck 差异。磁盘、内存、挂载复验属于安全检查，不作为重复代码删除。
+Different implementations that preserve semantics: three UUID check、Gentoo Metadata parsing and signature authentication、Debian/public fstab Comments/ESP/fsck difference. Disk, memory, and mount rechecks are security checks and are not deleted as duplicate codes.。
 
-## 作用原理与阅读顺序
+## Principle of action and reading order
 
-1. bin/rustaller.rs：CLI/TUI 共用 InstallPlan 与回调；model/config/postinstall 定义配置，codec/plan_file 负责交接与私密文件生命周期。
-2. host/handoff.rs：discover 收集原系统事实和磁盘令牌，prepare 认证资源/组装 Live，execute 复验后由 PID 1 有序退出并 kexec，不经过固件重启。
-3. bin/rustaller-worker.rs、worker/install.rs：验证 Live 来源、恢复网络/SSH，以 manifest 稳定身份重绑磁盘，复验 RAM/挂载/swap/扇区后分区。Live 根在内存，目标挂载于 /os。
-4. targets/install.rs、debian/rolling/packages：串联 prepare/bootstrap/configure/最终验证，以原生 APK、APT、pacman、Portage 实现发行版差异；Rust 控制参数与顺序。
-5. shared：storage 布局/格式化/挂载，其余模块配置受检目标。验证成功、卸载、sync 后才最终重启，失败保留 Live 恢复环境。
-6. host/current.rs：独立备份/发布当前系统配置；TUI 负责草稿和展示。xtask、测试、Shell 对拍为开发工具，Rust 自动入口不调用保留 Shell 实现。
+1. bin/rustaller.rs：CLI/TUI share InstallPlan with callbacks；model/config/postinstall Define configuration，codec/plan_file Responsible for handover and private file life cycle。
+2. host/handoff.rs：discover Collect legacy system facts and disk tokens，prepare Certification resources/Assemble Live，execute After re-inspection, PID 1 orderly exit and kexec，No firmware restart。
+3. bin/rustaller-worker.rs、worker/install.rs：verify Live Source, recovery network/SSH，by manifest Stable identity, rebind the disk, and re-verify RAM/mount/swap/partition after sector。Live The root is in memory and the target is mounted on /os。
+4. targets/install.rs、debian/rolling/packages：series connection prepare/bootstrap/configure/Final verification, with native APK、APT、pacman、Portage Implement release differences；Rust Control parameters and sequence。
+5. shared：storage layout/format/Mount, the remaining modules configure the inspected target. Verification successful, uninstall、sync Only then finally restarted, failed to retain Live Restoration environment。
+6. host/current.rs：Independent backup/Publish current system configuration；TUI Responsible for drafts and presentations。xtask、test、Shell Matchmaking as a development tool，Rust Automatic entry does not call reservation Shell accomplish。
 
-## 不可破坏的约束
+## indestructible constraints
 
-- 核心无第三方运行时依赖；ratatui/crossterm 仅 host 可选 tui feature。worker 用 --no-default-features。
-- 计划 schema=6；部署清单 schema=1；兼容标记 RUSTALLER-CONFIG-20261112-06。拒绝旧计划；改变交接协议须同步校验与测试。
-- Alpine netboot 与 Gentoo stage3 有固定发布密钥/签名/摘要验证；APT/APK/pacman 使用原生信任链。audit-sources 只检查元数据和可达性。
-- 清盘以稳定磁盘身份为依据，Live 重绑后再验挂载、swap、RAM 和只读/扇区状态。
-- UEFI 要求 64 位固件与未启用 Secure Boot；512 MiB FAT32 ESP；GRUB 使用 removable/no-nvram。平台限制见验收文档。
-- 根文件系统可选 XFS（默认）/ext4，格式化、fstab、initramfs 与 GRUB 校验随选择配置；原系统和 Live 不执行 swapon/swapoff，目标 /swapfile 仅开机激活。
-- 非 root 安装的 root 密码单独遮蔽、确认并私密交接；CLI 在交互终端可提示补齐，root SSH 保持禁用。hostname 在原系统检测并写入计划，缺失时使用发行版名。
-- DNS 预设/自定义只提交选中值。Arch CachyOS 使用固定官方脚本与密钥、OS 可用 ISA 检测、目标首次开机完整更新；其余内核不引入该仓库。
-- 失败不请求最终重启；不能自动退回两次重启。当前只适配 systemd/openrc-init 原系统 PID 1。
+- The core has no third-party runtime dependencies；ratatui/crossterm only host Optional tui feature。worker use --no-default-features。
+- plan schema=6；deployment manifest schema=1；Compatibility mark RUSTALLER-CONFIG-20261112-06。Reject the old plan; changes to the handover agreement must be verified and tested simultaneously。
+- Alpine netboot and Gentoo stage3 Have a fixed publishing key/sign/digest verification；APT/APK/pacman Use native trust chain。audit-sources Only check metadata and reachability。
+- Liquidation is based on stable disk identity，Live verify the mount after rebinding、swap、RAM and readonly/sector status。
+- UEFI Require 64 Bit firmware and not enabled Secure Boot；512 MiB FAT32 ESP；GRUB use removable/no-nvram。Please see the acceptance document for platform restrictions.。
+- Root file system optional XFS（default）/ext4，format、fstab、initramfs and GRUB Verification is configured according to the selection; the original system and Live Not executed swapon/swapoff，Target /swapfile Activate only on boot。
+- non- root installed root Passwords are individually masked, confirmed and handed over privately；CLI In the interactive terminal, you can be prompted to complete the，root SSH remain disabled。hostname Detect and write the plan on the original system, use the release name if missing。
+- DNS preset/Customize to submit only selected values。Arch CachyOS Use fixed official scripts with keys、OS Available ISA Detection and complete update of the target on first boot; other kernels will not be introduced into this warehouse。
+- Failure does not require a final restart; it cannot automatically fall back to two restarts. Currently only suitable for systemd/openrc-init original system PID 1。
 
-## 构建与分发
+## Build and distribute
 
-`cargo xtask bundle` 验证无 TUI worker 的静态 ELF/版本，再嵌入 host 并核对精确字节。`cargo xtask dist` 默认拒绝脏源码，Release 保持 draft/prerelease、`installer_complete=false`；CI 获取固定上游对拍对象。见[发布指南](GITHUB-RELEASE.md)。
+`cargo xtask bundle` verify absence of TUI worker of static ELF/version, then embed host and check the exact bytes。`cargo xtask dist` reject dirty source by default，Release Keep draft/prerelease、`installer_complete=false`；CI Get the fixed upstream matching object. See[Publishing Guidelines](GITHUB-RELEASE.md)。
 
-## 保留的 Shell 基线
+## reserved Shell baseline
 
-Shell 兼容标记仍为 PERSONAL-LINUX-ONLY-20261119-04；Rust 的新标记和 schema 不用于这些保留资源。
+Shell The compatibility flag remains PERSONAL-LINUX-ONLY-20261119-04；Rust new tags and schema Not used for these reserved resources。
 
-`reinstall.sh` 准备原系统，`trans.sh` 执行 Live 安装；保留作对拍及未迁移接口，验收前不能删除，也不能混用 Rust/Shell 的确认与资源模型。
+`reinstall.sh` Prepare original system，`trans.sh` implement Live Installation; reserved for comparison and unmigrated interfaces, cannot be deleted before acceptance, and cannot be mixed. Rust/Shell Confirmation and resource model。
 
-Shell 部署除 reinstall.sh 外仍恰好四个资源：trans.sh、initrd-network.sh、fix-eth-name.sh、logviewer.html。TTY/frpc helpers 和服务模板已内联；资源必须来自用户控制的匹配 HTTPS 部署。Rust 内嵌 worker 与日志页面，不套用这条四文件部署规则。
+Shell deployment except reinstall.sh There are still exactly four resources outside：trans.sh、initrd-network.sh、fix-eth-name.sh、logviewer.html。TTY/frpc helpers and service templates are inlined; the resource must come from a user-controlled match HTTPS deployment。Rust Embedded worker and log page, do not apply this four-file deployment rule。
 
-Rust 手动 ISO/netboot.xyz/reset 目前有菜单/模型/部分组件，实际交接未连接。保留代码不等于功能已交付；完整待办见续接指南。
+Rust Manual ISO/netboot.xyz/reset There is currently a menu/Model/components only; execution handoff is not connected. Retained code does not constitute a delivered feature; see the handoff guide。
 
-## 独立本机管理组件
+## Standalone native management component
 
-`tools/dmitbox-local` 保留模块化开发、单文件 Bash 分发及独立事务状态。`xtask::local_tool` 用 Rust 完成仓库级构建和检查入口，生成字节与原组件构建结果一致。安装器、Live worker、四项 Shell 运行时资产均不自动调用该工具；它的完整发行版/网络验收单独记录。
+`tools/dmitbox-local` Keep modular development, single file Bash Distribution and independent transaction status。`xtask::local_tool` use Rust Complete the warehouse-level construction and check entry, and the generated bytes are consistent with the original component construction results. installer、Live worker、Four items Shell None of the runtime assets automatically call the tool; its full distribution/Separate record of network acceptance。

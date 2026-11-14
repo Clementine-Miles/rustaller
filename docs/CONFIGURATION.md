@@ -1,107 +1,107 @@
-# 安装前配置与一次重启目标
+# Pre-installation configuration and one-time restart target
 
-配置通过 TUI/CLI 写入 schema 6 计划。**确认磁盘身份后会执行真实安装；仅检查须加 `--inspect`。** 四目标 BIOS/UEFI 完整验收仍待完成，见[验收记录](ACCEPTANCE.md)。原生 ssh-keygen 会立即写入指定本机文件。
+configuration passes TUI/CLI write schema 6 plan。**After confirming the disk identity, a real installation will be performed; only checking the required `--inspect`。** four goals BIOS/UEFI Full acceptance is still pending, see[acceptance records](ACCEPTANCE.md)。Native ssh-keygen The specified local file will be written immediately。
 
-## 执行顺序
+## Execution order
 
-四种自动安装的目标流程调整为：
+The target processes of the four automatic installations are adjusted as follows:：
 
 ```text
-原系统中的 TUI：完成全部配置、公钥准备、最终审核
-  → 校验磁盘身份、现有网络、RAM、kexec 权限和内核能力
-  → 验证官方资源签名/摘要，准备 Alpine Live 与匹配 worker
-  → 将私密计划放入 initrd，不把口令塞入内核参数
-  → kexec 切换到 Alpine 内存环境（SSH 会断开，不经过固件/GRUB 重启）
-  → Live 再验证磁盘/RAM，安装 rootfs、账户、SSH、网络、内核与引导
-  → 写入目标 DNS/网络配置，可选创建目标 swapfile，完成检查
-  → 最后重启一次，进入配置完成的新系统
+in the original system TUI：Complete all configurations, public key preparation, and final review
+  → Verify disk identity, existing network、RAM、kexec Permissions and kernel capabilities
+  → verify official resource signatures/summary, preparation Alpine Live match worker
+  → Put private plan into initrd，Don’t stuff passwords into kernel parameters
+  → kexec switch to Alpine memory environment（SSH Will disconnect without going through firmware/GRUB reboot）
+  → Live Verify disk again/RAM，Install rootfs、Account、SSH、Network, Kernel and Boot
+  → Write target DNS/Network configuration, optionally create target swapfile，Complete inspection
+  → Reboot for the last time and enter the new system with complete configuration.
 ```
 
-Rust 通过 kexec 进入 Live，仅在安装验证成功后最终重启；不静默退回 Shell 的两次重启流程。原系统 PID 1 须为 systemd/openrc-init；预检要求内核 kexec 配置、未禁用/lockdown 及可用工具，实际加载和平台兼容性仍需验收。ISO/netboot.xyz 为独立交互介质；`hold=2` 时由用户最终重启。
+Rust pass kexec Enter Live，Only final restart after successful installation verification; does not return silently Shell Two restart processes. original system PID 1 must be systemd/openrc-init；preflight requires kernel kexec configuration; not disabled/lockdown and available tools, actual loading and platform compatibility still need to be accepted。ISO/netboot.xyz independent interactive medium；`hold=2` eventually restarted by the user。
 
-## 账户、主机名与根文件系统
+## Accounts, hostnames, and root file systems
 
-创建非 root 用户时，须另设 root 账户密码；TUI 输入两次并遮蔽，交互 CLI 在缺少参数时私密询问。非交互调用须提供 `--root-password`，其值可能暴露于 shell 历史或进程参数，优先使用交互输入。root 密码与用户的密码/公钥认证独立，不开启 root SSH。
+Create non- root User must set another root Account password；TUI Enter twice and mask, interact CLI Ask privately when parameters are missing. Non-interactive calls must provide `--root-password`，Its value may be exposed to shell History or process parameters, interactive input is preferred。root Passwords and user passwords/Public key authentication is independent and is not enabled. root SSH。
 
-主机名优先继承原系统有效名称，检测不到时使用发行版名称；显式 `--hostname` 优先。当前系统配置不自动填入或修改 hostname，详见[目标配置](POSTINSTALL.md)。
+The host name will first inherit the effective name of the original system. If it cannot be detected, the release name will be used; explicit `--hostname` priority. The current system configuration is not automatically filled in or modified hostname，See details[target configuration](POSTINSTALL.md)。
 
-`--filesystem xfs|ext4` 选择整盘安装后的根文件系统，默认 XFS；TUI 位于 Disk and boot。Live 清盘前检查所选模块，fstab、initramfs 和 GRUB 随选择配置。ESP 仍为 FAT32，Gentoo 的 systemd/内核路线不变。
+`--filesystem xfs|ext4` Select the root file system after the entire disk installation, the default XFS；TUI lie in Disk and boot。Live Check selected modules before liquidation，fstab、initramfs and GRUB configure according to the selection。ESP still FAT32，Gentoo of systemd/The kernel route remains unchanged。
 
-## DNS 选择与输入
+## DNS Select and enter
 
-TUI 可选 Automatic、Cloudflare、Google、Quad9 或 Custom；CLI 的 `--dns` 用于自定义 IP。自动模式不提交静态值；切换服务商时保留自定义草稿，但只提交当前选项。关闭 IPv6 时预设只含 IPv4，否则最多提交两个 IPv4 和一个 IPv6。
+TUI Optional Automatic、Cloudflare、Google、Quad9 or Custom；CLI of `--dns` for customization IP。Automatic mode does not submit static values; custom drafts are retained when switching providers, but only the current options are submitted. closure IPv6 The default is to include only IPv4，Otherwise, submit at most two IPv4 and a IPv6。
 
-Custom 接受逗号分隔的 1–3 个 IP，逐项去除外围空格；拒绝空项、重复地址、域名、控制字符、回环/多播/未指定地址及无作用域链路本地 IPv6。搜索域独立验证。不会静默吞掉输入错误或将无效自定义值改成预设。
+Custom Accept comma separated 1–3 indivual IP，Remove peripheral spaces item by item; reject empty items, duplicate addresses, domain names, control characters, and loopbacks/multicast/Unspecified address and unscoped link local IPv6。Search domains are independently verified. Will not silently swallow input errors or change invalid custom values ​​to defaults。
 
-## 网络参考脚本取舍
+## Network reference script choices
 
-2026-10-26 仅阅读 `https://box.dmitstock.com`：534595 字节，SHA-256 `b70844acb181b9b6c82f0904b682bdfb5908d188c3b73328568edc21e6766fda`。未执行、复制或作为运行时依赖；远程内容可能变化。
+2026-10-26 Read only `https://box.dmitstock.com`：534595 byte，SHA-256 `b70844acb181b9b6c82f0904b682bdfb5908d188c3b73328568edc21e6766fda`。Not executed, copied, or used as a runtime dependency; remote content may change。
 
-保留可映射到四目标原生配置的选项：
+Preserves options mappable to quad-target native configurations：
 
-| 配置 | 默认 / 范围 | 作用 |
+| configuration | default / scope | effect |
 |---|---|---|
-| DNS | 自动、公共预设或自定义 1–3 个 IPv4/IPv6 | 静态解析器及 DHCP/RA DNS 覆盖控制 |
-| 搜索域 | 无；最多 6 个 ASCII 域，总计 255 字节 | DNS 搜索路径 |
-| 拥塞控制 | default / bbr / cubic | BBR 必须配 fq，并校验目标内核配置 |
-| 默认队列 | default / fq / fq_codel | 校验目标内核配置，模块形式时准备原生加载配置 |
-| IPv6 | inherit / enable / disable | 只控制新系统的 IPv6 禁用标志；不强行修改 RA/转发/地址 |
-| 地址优先级 | default / ipv4 | Debian/Arch/Gentoo 的 glibc gai.conf；Alpine/musl 隐藏并拒绝 ipv4 选项 |
-| 网卡 MTU | 留空沿用；1280–9000 | 只修改已生成目标网络文件中的非 lo 接口，不运行测速/探测 |
-| TCP/socket 缓冲上限 | 留空沿用；1–64 MiB | 设置 socket 最大值和 TCP 三元组，不预留固定大小内存 |
-| somaxconn / SYN / netdev 队列 | 留空沿用；128–262144 | 对应监听/SYN/收包积压队列 |
-| TCP MTU probing | 留空沿用；0 / 1 / 2 | 关闭 / 黑洞时探测 / 始终探测 |
-| TCP Fast Open | 留空沿用；0–3 | 关闭 / 客户端 / 服务端 / 两者，应用仍须支持 |
-| SYN cookies | 留空沿用；0 / 1 | 显式关闭或开启 |
+| DNS | Automatic, public preset or custom 1–3 indivual IPv4/IPv6 | static parser and DHCP/RA DNS Override control |
+| search domain | None; most 6 indivual ASCII domain, total 255 byte | DNS search path |
+| congestion control | default / bbr / cubic | BBR Must match fq，and verify the target kernel configuration |
+| default queue | default / fq / fq_codel | Verify the target kernel configuration and prepare native loading configuration in module form |
+| IPv6 | inherit / enable / disable | Only controls the new system IPv6 Disabled flag; do not force modification RA/Forward/address |
+| Address priority | default / ipv4 | Debian/Arch/Gentoo of glibc gai.conf；Alpine/musl hide and reject ipv4 Options |
+| network card MTU | Leave blank and use；1280–9000 | Only modify non- lo Interface, does not run speed test/detection |
+| TCP/socket buffer limit | Leave blank and use；1–64 MiB | set up socket maximum sum TCP Triplet, no fixed size memory reserved |
+| somaxconn / SYN / netdev queue | Leave blank and use；128–262144 | Corresponding monitoring/SYN/Packet receiving backlog queue |
+| TCP MTU probing | Leave blank and use；0 / 1 / 2 | closure / probe when black-holed / Always detect |
+| TCP Fast Open | Leave blank and use；0–3 | closure / client / Server / Both, applications must still support |
+| SYN cookies | Leave blank and use；0 / 1 | Explicitly turn off or on |
 
-“填入参考脚本固定 TCP 参数”只填充草稿：BBR/fq、64 MiB 最大缓冲、somaxconn/SYN 队列 8192、netdev 队列 16384、MTU probing=1、Fast Open=3、cookies=1。可逐项修改或清除，不在当前主机执行 sysctl，也不表示这些参数一定提高性能。低内存 VPS 可保留内核默认或选较小上限。
+“Fill in reference script fixed TCP Parameters” only populates the draft：BBR/fq、64 MiB max buffer、somaxconn/SYN queue 8192、netdev queue 16384、MTU probing=1、Fast Open=3、cookies=1。Can be modified or cleared item by item, and will not be executed on the current host. sysctl，It does not mean that these parameters will necessarily improve performance. low memory VPS You can keep the kernel default or choose a smaller upper limit。
 
-不纳入网络配置：动态测速/BDP/HTB、NAT66 随机出网、IPv6 地址池、全量防火墙规则、服务商专用“默认值”、已过时的 `tcp_adv_win_scale`、`kernel.panic=-1`、强制 RA=2、自动重启当前网络服务等。内核仅提供[明确列出的选择](POSTINSTALL.md)。
+Not included in network configuration: dynamic speed measurement/BDP/HTB、NAT66 random outbound selection、IPv6 Address pools, full firewall rules, provider-specific ”defaults”, obsolete `tcp_adv_win_scale`、`kernel.panic=-1`、force RA=2、Automatically restart current network services, etc. The kernel only provides[clearly listed choices](POSTINSTALL.md)。
 
-配置仅用于目标，Live 沿用原系统网络。拒绝禁用 IPv6 与 IPv6 DNS 同选，并须证明 IPv4 路径可用。TUI 尚不提供手动 IP/路由替换；IPv6-only 与提供商特殊网络另行验收。
+configuration applies only to the target，Live Use the original system network. refuse to disable IPv6 and IPv6 DNS Same election, and must prove IPv4 path available。TUI Manual is not available yet IP/Route replacement；IPv6-only Separate acceptance with provider-specific network。
 
-### 原生落盘组件
+### Native placement component
 
-- `shared::dns`：静态 `/etc/resolv.conf`；Alpine 全局关闭 dhcpcd/udhcpc 的 DNS 覆盖；networkd 文件设置 DNS/Domains 并禁止 DHCPv4/v6/RA 替换。自动模式不写文件。拒绝回环、多播、未指定及无作用域的链路本地 DNS，允许内网 DNS；不测试地址可达性。
-- `shared::network`：目标 `/etc/sysctl.d/90-rustaller-network.conf`；模块加载配置；glibc 完整 precedence 表；MTU 写入已有 networkd 文件或 Alpine ifupdown stanza。修改在网络文件内部，首启按网卡名重命名文件不会丢失选项。
-- OpenRC 的 sysctl/modules 服务以目标 runlevel 链接离线启用；服务脚本必须已存在且可执行。systemd 通过原生 modules-load/sysctl 读取配置。
-- BBR/qdisc 使用**目标已安装内核**的 Kconfig，须与版本绑定、核对模块并在启动后验证。
+- `shared::dns`：static `/etc/resolv.conf`；Alpine global shutdown dhcpcd/udhcpc of DNS cover；networkd File settings DNS/Domains and prohibit DHCPv4/v6/RA replace. Automatic mode does not write files. Deny loopback, multicast, unspecified and unscoped link-local DNS，Allow intranet DNS；Address reachability is not tested。
+- `shared::network`：Target `/etc/sysctl.d/90-rustaller-network.conf`；Module loading configuration；glibc whole precedence surface；MTU write existing networkd file or Alpine ifupdown stanza。The modification is inside the network file. If you rename the file according to the network card name for the first time, you will not lose the option.。
+- OpenRC of sysctl/modules Serving with goals runlevel enable offline through links; the service script must already exist and be executable。systemd via native modules-load/sysctl Read configuration。
+- BBR/qdisc use**Target has kernel installed**of Kconfig，bind to the version, check modules and verify after boot。
 
-这些函数只接收受检独立根目录，拒绝宿主 `/`、路径逃逸、符号链接父目录和不安全配置文件。resolver 最终链接通过 rename 替换而不跟随。所有可预检项先检查，各文件分别原子替换；不提供跨文件事务，调用方必须独占目标树。
+These functions only accept inspected standalone root directories, rejecting hosts `/`、Path escapes, symbolic link parent directories, and unsafe configuration files。resolver Final link passed rename Replace without following. All precheckable items are checked first, and each file is replaced atomically; no cross-file transactions are provided, and the caller must exclusively occupy the target tree.。
 
-## SSH 密钥生成
+## SSH Key generation
 
-菜单：`账户与 SSH → 认证设置 → SSH 公钥 → 公钥管理 → 生成密钥`。
+menu：`Account and SSH → Authentication settings → SSH public key → Public key management → Generate key`。
 
-| 选项 | 默认 / 支持值 |
+| Options | default / Support value |
 |---|---|
-| 类型 | ed25519；也可选 RSA |
-| KDF 轮数 `-a` | 512；1–65536 |
-| 加密算法 `-Z` | aes256-ctr；另有 aes256-gcm@openssh.com、chacha20-poly1305@openssh.com，需系统工具支持 |
-| 注释 `-C` | 系统 `date +%Y%m%d` 的结果；可编辑 |
-| RSA 位数 `-b` | 4096；2048/3072/4096/8192，仅 RSA 显示 |
-| 保存位置 `-f` | 本机绝对路径；默认当前用户 `.ssh/id_rustaller_ed25519` |
+| type | ed25519；Also optional RSA |
+| KDF Number of rounds `-a` | 512；1–65536 |
+| encryption algorithm `-Z` | aes256-ctr；Also aes256-gcm@openssh.com、chacha20-poly1305@openssh.com，requires native tool support |
+| Comment `-C` | system `date +%Y%m%d` Result; editable |
+| RSA Number of digits `-b` | 4096；2048/3072/4096/8192，only RSA show |
+| save location `-f` | Absolute path of the local machine; defaults to the current user `.ssh/id_rustaller_ed25519` |
 
-参数独立传入系统 ssh-keygen，不经过 Shell。生成时暂退 raw/备用屏幕，由原生工具询问口令，完成后恢复 TUI；口令不经过字段、计划、环境或 argv，空口令无 KDF 保护。不自动安装缺失工具。
+Parameters are independently passed into the system ssh-keygen，not pass Shell。Exit while generating raw/Alternate screen where native tool asks for password and restores after completion TUI；Passwords are not passed through fields, plans, environments or argv，Empty password None KDF Protect. Missing tools are not automatically installed。
 
-私有暂存目录为 0700；拒绝覆盖、符号链接和他人可写父目录。私钥 0600、公钥 0644，仅公钥加入认证计划。**这是客户端登录密钥，清盘前须备份到自己的客户端。**普通添加公钥支持文件、URL、github:/gitlab:。
+The private staging directory is 0700；Deny overrides, symbolic links, and parent directories writable by others. private key 0600、public key 0644，Only public keys join the certification program。**This is the client login key, which must be backed up to your own client before liquidation.。**Commonly add public key support files、URL、github:/gitlab:。
 
-## 目标 swapfile
+## Target swapfile
 
-保留 GRUB BIOS/UEFI。清盘前扣除 ESP/对齐，根至少 512 MiB；这只是格式化下限。`mkfs.xfs -K` 跳过整卷 discard，不修改挂载/TRIM 策略。dd 同步后核对长度与分配块数，仍需目标实际激活验收。
+reserve GRUB BIOS/UEFI。Deductions before liquidation ESP/Aligned, root at least 512 MiB；This is just the lower limit for formatting。`mkfs.xfs -K` Skip entire volume discard，Do not modify the mount/TRIM Strategy。dd After synchronization, check the length and the number of allocated blocks, and the target still needs to be actually activated for acceptance.。
 
-菜单：`目标 swapfile → 启用 → 大小 MiB / swappiness`。默认不创建；这是本次用户明确要求后加入的 Rust 选项，保留 Shell 基线的无 swap 行为。
+menu：`Target swapfile → enable → size MiB / swappiness`。not created by default; added at the user’s explicit request Rust options; retain Shell Baseline None swap Behavior。
 
-- 固定目标 `/swapfile`，64–65536 MiB。`bs=1M count=2048` 是 **2048 MiB = 2 GiB**；1 GiB 使用 1024 MiB。
-- 只接受独立挂载且与计划匹配的 XFS/ext4 目标根；先检查空闲空间并至少留下 512 MiB。该余量是最低保护，不是后续更新空间足够的保证；应在软件包安装完成后执行。
-- Live 中调用 GNU dd（bs=1M、count=所选 MiB、conv=notrunc,fsync、status=progress）完整写零，避免稀疏文件；0600；只对这个新建、尚未启用的目标文件调用系统 `mkswap`。
-- 不覆盖已有 swapfile、不改已有 swap 条目；成功后为目标 fstab 添加一次 `/swapfile none swap defaults 0 0`。
-- 可选 swappiness 为 0–200，写入目标 sysctl 文件。systemd 通过 fstab generator 启用；Alpine 离线启用目标 OpenRC swap 服务（及必要的 sysctl）。
-- **原系统/Live 不执行 swapon、swapoff 或修改其 fstab**。进入新系统的正常启动过程自动启用，不需要额外重启。安装最低 RAM 不因 swapfile 改变。
+- fixed target `/swapfile`，64–65536 MiB。`bs=1M count=2048` yes **2048 MiB = 2 GiB**；1 GiB use 1024 MiB。
+- Only accept independent mounts and match the plan XFS/ext4 Target root; check free space first and leave at least 512 MiB。This margin is the minimum protection and is not a guarantee of sufficient space for subsequent updates; it should be executed after the software package is installed.。
+- Live call in GNU dd（bs=1M、count=selected MiB、conv=notrunc,fsync、status=progress）Write complete zeros to avoid sparse files；0600；Call the system only for this newly created, not yet enabled target file `mkswap`。
+- Do not overwrite existing swapfile、Don’t change what you have swap Entry; target after success fstab add once `/swapfile none swap defaults 0 0`。
+- Optional swappiness for 0–200，Write target sysctl document。systemd pass fstab generator enable；Alpine Enable goals offline OpenRC swap Services (and necessary sysctl）。
+- **original system/Live Not executed swapon、swapoff or modify it fstab**。is enabled during normal target startup without another reboot. Minimum installation RAM Not because of swapfile Change。
 
-`CommandRunner` 的全局 swap 拦截保持有效；只有内部目标文件分配器产生的特定 mkswap 调用具有精确例外。测试以 mock 拦截格式化，不实际调用 mkswap/swapon。多个文件发布发生 I/O 错误时仍可能留下部分目标配置，安装驱动必须停止并提供检查信息。
+`CommandRunner` overall situation swap Interception remains in effect; only specific mkswap Called with exact exception. Test with mock Intercept formatting without actually calling mkswap/swapon。Multiple file publishing occurs I/O partial target configuration may remain on error; the installer must stop and provide inspection details。
 
-## CLI 示例与执行边界
+## CLI Examples and execution boundaries
 
 ```console
 ./rustaller debian --confhome https://your.example/reinstall/pinned-version \
@@ -113,4 +113,4 @@ Custom 接受逗号分隔的 1–3 个 IP，逐项去除外围空格；拒绝空
   --mtu 1450 --swapfile-mib 2048 --swappiness 10
 ```
 
-示例确认后会进入 Live 清盘；仅检查须加 `--inspect`。可加 `--filesystem ext4` 选择 ext4；创建非 root 用户还需独立 root 密码。schema 6 拒绝旧计划；密钥生成是立即执行的本机工具，不交给 worker。
+The example will be entered after confirmation Live Liquidation; only inspection required `--inspect`。Can be added `--filesystem ext4` choose ext4；Create non- root Users need to be independent root password。schema 6 Reject the old plan; key generation is performed immediately by the native tool and is not handed over to worker。

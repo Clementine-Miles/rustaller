@@ -1,16 +1,16 @@
-# 历史决策摘要
+# Summary of historical decisions
 
-本文汇总旧计划、设计和续接记录。当前实施依据为 `AGENTS.md`、[架构](ARCHITECTURE.md)、[续接指南](AGENT-HANDOFF.md)和最新用户指令。
+This article summarizes old plans, designs, and continuity records. The current implementation basis is `AGENTS.md`、[Architecture](ARCHITECTURE.md)、[Continuation Guide](AGENT-HANDOFF.md)and latest user instructions。
 
-- 上游基准 `98f1e21013233d42750cc2e7a298a0818461d686`；保留 GPLv3 与署名。
-- Shell 删除 Windows/ARM、地域检测、Debian Installer；四目标统一 Alpine Live，Debian 用 debootstrap minbase，Gentoo 保留 systemd stage3、原生内核与 GRUB。
-- Shell 部署资源九减四，辅助函数与服务模板内联；保留固定 Git 对象作逐字节对拍。
-- Rust 使用静态 host + 内嵌无界面 worker，以发行版原生工具安装；未采用早期 clap/serde/tokio 提案。
-- 2026-10-25/26：加入英文多级 TUI、目标草稿、原生 ssh-keygen、当前系统配置并接通真实清盘调度；后续授权目标 swapfile 与隔离 VM 破坏性验收，开发宿主和生产盘仍禁作测试对象。
-- 2026-10-28：src 文件 60→48，整合配置/包策略/存储/元数据，子进程输出直接继承。测量见 [REFACTOR.md](REFACTOR.md)。
-- 2026-10-29：增加 UEFI/虚拟化检查、FAT32 ESP、initramfs 驱动；VM 发现并修复 OpenRC 后台日志及 RAM modloop 定位，缺少修复后的完整安装验收。
-- 2026-10-30：src 文件 48→44，统一 Live 命令默认值和文档续接入口，无新增运行时依赖或 unsafe。
-- 2026-11-02：采用 XFS 根、GNU dd 目标 swapfile，保留 GRUB/Alpine OpenRC；EFI Stub 取消，方案仅存历史。
-- 2026-11-11：源码导入 `Clementine-Miles/rustaller`，统一项目命名与 GPLv3，保留上游声明。
+- upstream benchmark `98f1e21013233d42750cc2e7a298a0818461d686`；reserve GPLv3 with signature。
+- Shell delete Windows/ARM、Region detection、Debian Installer；Four goals unified Alpine Live，Debian use debootstrap minbase，Gentoo reserve systemd stage3、native kernel vs. GRUB。
+- Shell reduce deployment assets from nine to four; inline helpers and service templates; retain the pinned Git Object byte-by-byte comparison。
+- Rust Use static host + Embedded without interface worker，Installed using the distribution’s native tools; not using earlier clap/serde/tokio proposal。
+- 2026-10-25/26：Add English multi-level TUI、Target draft, native ssh-keygen、The current system is configured and connected to real liquidation scheduling; subsequent authorization targets swapfile and isolation VM Destructive acceptance, development host and production disk are still prohibited as test objects。
+- 2026-10-28：src document 60→48，Integrated configuration/package policy/storage/Metadata, child process output is directly inherited. Measurements see [REFACTOR.md](REFACTOR.md)。
+- 2026-10-29：Increase UEFI/Virtualization check、FAT32 ESP、initramfs driver；VM Discover and fix OpenRC Backend logs and RAM modloop Positioning, lack of complete installation acceptance after repair。
+- 2026-10-30：src document 48→44，unified Live Command default value and document continuation entry, no new runtime dependencies or unsafe。
+- 2026-11-02：use XFS root、GNU dd Target swapfile，reserve GRUB/Alpine OpenRC；EFI Stub Canceled, the plan remains only as history。
+- 2026-11-11：Source code import `Clementine-Miles/rustaller`，Unify project naming and GPLv3，Keep upstream claims。
 
-历史源码/审计快照、VM 镜像和日志未随源码分发，不应假定旧工作区路径存在。行为对拍基准由 `tests/verify` 从固定 Git 对象读取，获取方法见[发布指南](GITHUB-RELEASE.md)。旧体积和测试数仅代表对应版本。
+Historical source code/Audit snapshot、VM images and logs are not distributed with source; do not assume previous workspace paths exist. The behavior baseline is `tests/verify` from fixed Git Object reading, see the obtaining method[Publishing Guidelines](GITHUB-RELEASE.md)。The old volume and test number only represent the corresponding version。

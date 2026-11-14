@@ -2,14 +2,14 @@
 # Personal Linux-only derivative of bin456789/reinstall; see docs/TRIMMING.md.
 # shellcheck shell=dash
 # shellcheck disable=SC2086,SC3047,SC3036,SC3010,SC3001,SC3060,SC3015
-# alpine 默认使用 busybox ash
-# 注意 bash 和 ash 以下语句结果不同
+# alpine use by default busybox ash
+# Notice bash and ash The following statements have different results
 # [[ a = '*a' ]] && echo 1
 
-# 出错后停止运行，将进入到登录界面，防止失联
+# After an error occurs, the operation will stop and the login interface will be entered to prevent loss of connection.
 set -eE
 
-# 用于判断 reinstall.sh 和 trans.sh 是否兼容
+# used to judge reinstall.sh and trans.sh Is it compatible
 # shellcheck disable=SC2034
 SCRIPT_VERSION=PERSONAL-LINUX-ONLY-20261119-04
 # Filled by extract_env_from_cmdline from the finalos_* kernel arguments.
@@ -62,11 +62,11 @@ error_and_exit() {
     echo "Run '$sudo_/trans.sh' to retry." >&2
     echo "Run '$sudo_/trans.sh alpine' to install Alpine Linux instead." >&2
 
-    # 解除锁定，允许用户登录处理故障
+    # Unlock and allow users to log in to handle failures
     # passwd -u "$username" >/dev/null
 
-    # 用不着，因为 alpine 锁定账户后无法登录 ssh
-    # 因此不会锁定
+    # No need, because alpine locked accounts cannot log in ssh
+    # So it won’t lock
 
     exit 1
 }
@@ -87,11 +87,11 @@ is_run_from_locald() {
     [[ "$0" = "/etc/local.d/*" ]]
 }
 
-# reinstall.sh 有相同方法 add_community_repo_for_alpine
+# reinstall.sh There is the same method add_community_repo_for_alpine
 add_community_repo() {
     local ver mirror
 
-    # 先检查原来的 repo 是不是 edge 或者 latest-stable
+    # Check the original first repo Yes or no edge or latest-stable
     if grep -q "^http.*/edge/main$" /etc/apk/repositories; then
         ver=edge
     elif grep -q "^http.*/latest-stable/main$" /etc/apk/repositories; then
@@ -106,8 +106,8 @@ add_community_repo() {
     fi
 }
 
-# 有时网络问题下载失败，导致脚本中断
-# 因此需要重试
+# Sometimes the download fails due to network problems, causing the script to interrupt
+# So need to try again
 apk() {
     retry 5 command apk "$@" >&2
 }
@@ -122,7 +122,7 @@ show_url_in_args() {
 }
 
 killall() {
-    # killall 是异步的，要等一下
+    # killall It’s asynchronous, please wait.
     local ret=0
     if ! command killall "$@"; then
         ret=$?
@@ -131,23 +131,23 @@ killall() {
     return $ret
 }
 
-# 在没有设置 set +o pipefail 的情况下，限制下载大小：
-# retry 5 command wget | head -c 1048576 会触发 retry，下载 5 次
-# command wget "$@" --tries=5 | head -c 1048576 不会触发 wget 自带的 retry，只下载 1 次
+# In no setting set +o pipefail In case of limit download size：
+# retry 5 command wget | head -c 1048576 will trigger retry，download 5 Second-rate
+# command wget "$@" --tries=5 | head -c 1048576 will not trigger wget Comes with it retry，download only 1 Second-rate
 wget() {
     show_url_in_args "$@" >&2
     if command wget 2>&1 | grep -q BusyBox; then
-        # busybox wget 没有重试功能
-        # 好像默认永不超时
+        # busybox wget No retry function
+        # It seems to never time out by default
         retry 5 command wget "$@" -T 10
     else
-        # 原版 wget 自带重试功能
+        # Original wget Comes with retry function
         command wget --tries=5 --progress=bar:force "$@"
     fi
 }
 
 is_have_cmd() {
-    # command -v 包括脚本里面的方法
+    # command -v Including methods in scripts
     is_have_cmd_on_disk / "$1"
 }
 
@@ -184,8 +184,8 @@ retry() {
             return
         else
             ret=$?
-            # wget -O- | grep -m1 成功后会提前关闭管道，导致 141 错误
-            # 这是预期行为，因此需要排除
+            # wget -O- | grep -m1 After success, the pipeline will be closed early, resulting in 141 error
+            # This is expected behavior and therefore needs to be excluded
             if [ $ret -eq 141 ]; then
                 return
             fi
@@ -201,12 +201,12 @@ create_alpine_rootfs() {
     local os_dir=$1
     local init_now=${2:-false}
 
-    # 复制当前系统的 /etc/apk 文件夹
+    # Copy the current system /etc/apk folder
     mkdir -p "$os_dir"
     cp -a --parents /etc/apk "$os_dir"
     rm -f "$os_dir/etc/apk/world"
 
-    # 安装 alpine
+    # Install alpine
     apk add --root "$os_dir" --initdb \
         alpine-base openssl ca-certificates
 
@@ -223,9 +223,9 @@ create_alpine_rootfs_with_arch_install_scripts() {
 
     create_alpine_rootfs "$os_dir" $init_now
 
-    # 将 alpine-base 的依赖写入 world，再删除 alpine-base alpine-conf
-    # --installed --depends 顺序不能错
-    # 不添加 --installed 则会同时显示已安装的和最新版的
+    # Will alpine-base dependency writing world，Delete again alpine-base alpine-conf
+    # --installed --depends ordering must be preserved
+    # Do not add --installed will display both the installed version and the latest version
     alpine_base_depends=$(chroot "$os_dir" apk info --installed --depends alpine-base | sed '/depends on:/d')
     chroot "$os_dir" apk add $alpine_base_depends
     chroot "$os_dir" apk del alpine-base alpine-conf
@@ -256,7 +256,7 @@ update_part() {
     sleep 1
 
     # partprobe
-    # 有分区挂载中会报 Resource busy 错误
+    # It will report if there is a partition being mounted. Resource busy error
     if is_have_cmd partprobe; then
         partprobe /dev/$xda 2>/dev/null || true
         sleep 1
@@ -270,18 +270,18 @@ update_part() {
     fi
 
     # mdev
-    # mdev 不会删除 /dev/disk/ 的旧分区，因此手动删除
-    # 如果 rm -rf 的时候刚好 mdev 在创建链接，rm -rf 会报错 Directory not empty
-    # 因此要先停止 mdev 服务
-    # 还要删除 /dev/$xda*?
+    # mdev will not be deleted /dev/disk/ old partition, so delete it manually
+    # if rm -rf It’s just the right time mdev Creating a link，rm -rf Will report an error Directory not empty
+    # So stop it first mdev Serve
+    # Also delete /dev/$xda*?
     ensure_service_stopped mdev
     sleep 1
-    # 即使停止了 mdev，有时也会报 Directory not empty，因此添加 retry
+    # even if it stops mdev，Sometimes I will report Directory not empty，So add retry
     retry 5 rm -rf /dev/disk/*
 
-    # 没挂载 modloop 时会提示
+    # Not mounted modloop will prompt
     # modprobe: can't change directory to '/lib/modules': No such file or directory
-    # 因此强制不显示上面的提示
+    # Therefore, it is forced not to display the above prompt
     mdev -sf 2>/dev/null
     sleep 1
     ensure_service_started mdev 2>/dev/null
@@ -306,14 +306,14 @@ setup_websocketd() {
     wget $confhome/logviewer.html -O /tmp/web$web_path
 
     killall -q websocketd || true
-    # websocketd 遇到 \n 才推送，因此要转换 \r 为 \n
+    # websocketd when encountering \n Just push it, so it needs to be converted \r for \n
     websocketd --port "$web_port" --loglevel=fatal --staticdir=/tmp/web \
         stdbuf -oL -eL \
         sh -c "if [ \"\$PATH_INFO\" = \"$web_path\" ]; then tail -fn+0 /reinstall.log | tr '\r' '\n' | grep -Fiv -e password -e token; fi" &
 }
 
 get_approximate_ram_size() {
-    # lsmem 需要 util-linux
+    # lsmem requires util-linux
 
     if [ -z $ram_size ]; then
         ram_size=$(free -m | awk '{print $2}' | sed -n '2p')
@@ -324,7 +324,7 @@ get_approximate_ram_size() {
 
 setup_web_if_enough_ram() {
     total_ram=$(get_approximate_ram_size)
-    # 512内存才安装
+    # 512Memory is installed
     if [ "$total_ram" -ge 400 ]; then
         setup_websocketd
     fi
@@ -337,8 +337,8 @@ get_ttys() {
     local is_first=true
     local tty
 
-    # 最后一个 tty 是主 tty，显示的信息最全
-    # hytron 有 ttyS0 但无法写入；用于 cmdline 时不能排除不存在的 tty
+    # the last one tty It’s the Lord tty，Display the most complete information
+    # hytron have ttyS0 but cannot be written to; used for cmdline cannot exclude non-existent tty
     if [ "$prefix" = "console=" ]; then
         is_for_cmdline=true
     fi
@@ -361,23 +361,23 @@ get_ttys() {
 }
 
 find_xda() {
-    # 出错后再运行脚本，硬盘可能已经格式化，之前记录的分区表 id 无效
-    # 因此找到 xda 后要保存 xda 到 /configs/xda
+    # Run the script again after an error occurs. The hard disk may have been formatted and the partition table recorded previously id invalid
+    # So find xda to save later xda arrive /configs/xda
 
-    # 先读取之前保存的
+    # Read previously saved
     if xda=$(get_config xda 2>/dev/null) && [ -n "$xda" ]; then
         return
     fi
 
-    # 防止 $main_disk 为空
+    # prevent $main_disk is empty
     if [ -z "$main_disk" ]; then
         error_and_exit "cmdline main_disk is empty."
     fi
 
-    # busybox fdisk/lsblk/blkid 不显示 mbr 分区表 id
-    # 可用以下工具：
-    # fdisk 在 util-linux-misc 里面，占用大
-    # sfdisk 占用小
+    # busybox fdisk/lsblk/blkid Don’t show mbr partition table id
+    # The following tools are available：
+    # fdisk exist util-linux-misc inside, consuming significant space
+    # sfdisk Small footprint
     # lsblk
     # blkid
 
@@ -418,7 +418,7 @@ get_all_disks() {
 }
 
 extract_env_from_cmdline() {
-    # 提取 finalos/extra 到变量
+    # extract finalos/extra to variable
     for prefix in finalos extra; do
         while read -r line; do
             if [ -n "$line" ]; then
@@ -429,7 +429,7 @@ extract_env_from_cmdline() {
         done < <(xargs -n1 </proc/cmdline | grep "^${prefix}_" | sed "s/^${prefix}_//")
     done
 
-    # 如果空白则设置默认值
+    # Set default value if blank
     username=${username:-root}
     ssh_port=${ssh_port:-22}
     web_port=${web_port:-80}
@@ -441,7 +441,7 @@ ensure_service_started() {
     if ! rc-service -q "$service" start; then
         for i in $(seq 10); do
             if [ "$service" = modloop ]; then
-                # 避免有时 modloop 下载不完整导致报错
+                # avoid sometimes modloop Incomplete download leads to error
                 # * Failed to verify signature of !
                 # mount: mounting /dev/loop0 on /.modloop failed: Invalid argument
                 rm -f /lib/modloop-lts /lib/modloop-virt
@@ -464,8 +464,8 @@ ensure_service_stopped() {
 }
 
 mod_motd() {
-    # 安装后 alpine 后要恢复默认
-    # 自动安装失败后，可能手动安装 alpine，因此无需判断 $distro
+    # After installation alpine To restore the default
+    # After automatic installation fails, manual installation may be required. alpine，So no need to judge $distro
     file=/etc/motd
     if ! [ -e $file.orig ]; then
         cp $file $file.orig
@@ -492,7 +492,7 @@ umount_all() {
     fi
 }
 
-# 可能脚本不是首次运行，先清理之前的残留
+# Maybe the script is not run for the first time, so clean up the previous remnants first.
 clear_previous() {
     if is_have_cmd vgchange; then
         umount -R /os || true
@@ -500,34 +500,34 @@ clear_previous() {
         apk add device-mapper
         dmsetup remove_all
     fi
-    # 安装 arch 有 gpg-agent 进程驻留
-    # 在 aria2c 下载时手动中止脚本，aria2c 还会在后台下载
+    # Install arch have gpg-agent Process resident
+    # exist aria2c Manually abort script while downloading，aria2c It will also download in the background
     killall -q gpg-agent aria2c || true
     umount_all
 
-    # 以下情况 umount -R /1 会提示 busy
+    # The following situations umount -R /1 Will prompt busy
     # mount /file1 /1
     # mount /1/file2 /2
 }
 
-# virt-what 自动安装 dmidecode，因此同时缓存
+# virt-what Automatic installation dmidecode，So cache both
 cache_dmi_and_virt() {
     if ! [ "$_dmi_and_virt_cached" = 1 ]; then
         apk add virt-what
 
-        # 区分 kvm 和 virtio，原因:
-        # 1. 阿里云 c8y virt-what 不显示 kvm
-        # 2. 不是所有 kvm 都需要 virtio 驱动，例如 aws nitro
-        # 3. virt-what 不会检测 virtio
+        # distinguish kvm and virtio，reason:
+        # 1. Alibaba Cloud c8y virt-what Don’t show kvm
+        # 2. not all kvm all require virtio drivers, for example aws nitro
+        # 3. virt-what Will not detect virtio
         _virt=$(
             virt-what
 
-            # hyper-v 环境下 modprobe virtio_scsi 也会创建 /sys/bus/virtio/drivers/virtio_scsi
-            # 因此用 devices 判断更准确，有设备时才有 /sys/bus/virtio/drivers/*
-            # 或者加上 lspci 检测?
+            # hyper-v environment modprobe virtio_scsi will also create /sys/bus/virtio/drivers/virtio_scsi
+            # Therefore use devices Judgment is more accurate only when equipment is available /sys/bus/virtio/drivers/*
+            # Or add lspci Detection?
 
-            # 不要用 ls /sys/bus/virtio/devices/* && echo virtio
-            # 因为有可能返回值不为 0 而中断脚本
+            # Don’t use ls /sys/bus/virtio/devices/* && echo virtio
+            # Because it is possible that the return value is not 0 and interrupt script
             if ls /sys/bus/virtio/devices/* >/dev/null 2>&1; then
                 echo virtio
             fi
@@ -594,13 +594,13 @@ show_netconf() {
 get_ra_to() {
     if [ -z "$_ra" ]; then
         apk add ndisc6
-        # 有时会重复收取，所以设置收一份后退出
+        # Sometimes it will be collected repeatedly, so set it up to receive one copy and then exit.
         echo "Gathering network info..."
         # shellcheck disable=SC2154
         _ra="$(rdisc6 -1 "$ethx")"
         apk del ndisc6
 
-        # 显示网络配置
+        # Show network configuration
         info "Network info:"
         echo
         echo "$_ra" | cat -n
@@ -634,8 +634,8 @@ is_any_ipv4_has_internet() {
     grep -q 1 /dev/netconf/*/ipv4_has_internet
 }
 
-# 有 dhcpv4 不等于有网关，例如 vultr 纯 ipv6
-# 没有 dhcpv4 不等于是静态ip，可能是没有 ip
+# have dhcpv4 It does not mean that there is a gateway, for example vultr pure ipv6
+# No dhcpv4 Not equal to staticip，Maybe not ip
 is_dhcpv4() {
     if ! is_ipv4_has_internet || should_disable_dhcpv4; then
         return 1
@@ -713,13 +713,13 @@ should_disable_autoconf() {
 }
 
 is_slaac() {
-    # 如果是静态（包括自动获取到 IP 但无法联网而切换成静态）直接返回 1，不考虑 ra
-    # 防止部分机器slaac/dhcpv6获取的ip/网关无法上网
+    # If it is static (including automatically obtained IP But unable to connect to the Internet and switch to static) directly return 1，Don’t consider ra
+    # handle machines thatslaac/dhcpv6obtainedip/Gateway cannot access the Internet
 
-    # 有可能 ra 的 dhcpv6/slaac 是打开的，但实测无法获取到 ipv6 地址
-    # is_dhcpv6_or_slaac 是实测结果，因此如果实测不通过，也返回 1
+    # possible ra of dhcpv6/slaac It is open, but it cannot be obtained by actual measurement. ipv6 address
+    # is_dhcpv6_or_slaac is the actual measurement result, so if the actual measurement fails, it will also be returned. 1
 
-    # 不要判断 is_staticv6，因为这会导致死循环
+    # don’t judge is_staticv6，Because this will lead to an infinite loop
     if ! is_ipv6_has_internet || ! is_dhcpv6_or_slaac || should_disable_accept_ra || should_disable_autoconf; then
         return 1
     fi
@@ -729,22 +729,22 @@ is_slaac() {
 }
 
 is_dhcpv6() {
-    # 如果是静态（包括自动获取到 IP 但无法联网而切换成静态）直接返回 1，不考虑 ra
-    # 防止部分机器slaac/dhcpv6获取的ip/网关无法上网
+    # If it is static (including automatically obtained IP But unable to connect to the Internet and switch to static) directly return 1，Don’t consider ra
+    # handle machines thatslaac/dhcpv6obtainedip/Gateway cannot access the Internet
 
-    # 有可能 ra 的 dhcpv6/slaac 是打开的，但实测无法获取到 ipv6 地址
-    # is_dhcpv6_or_slaac 是实测结果，因此如果实测不通过，也返回 1
+    # possible ra of dhcpv6/slaac It is open, but it cannot be obtained by actual measurement. ipv6 address
+    # is_dhcpv6_or_slaac is the actual measurement result, so if the actual measurement fails, it will also be returned. 1
 
-    # 不要判断 is_staticv6，因为这会导致死循环
+    # don’t judge is_staticv6，Because this will lead to an infinite loop
     if ! is_ipv6_has_internet || ! is_dhcpv6_or_slaac || should_disable_accept_ra || should_disable_autoconf; then
         return 1
     fi
     get_netconf_to dhcpv6
 
     # shellcheck disable=SC2154
-    # 甲骨文即使没有添加 IPv6 地址，RA DHCPv6 标志也是开的
-    # 部分系统开机需要等 DHCPv6 超时
-    # 这种情况需要禁用 DHCPv6
+    # Oracle even without adding IPv6 address，RA DHCPv6 The sign is also on
+    # some systems must wait during startup DHCPv6 time out
+    # This situation needs to be disabled DHCPv6
     if [ "$dhcpv6" = 1 ] && ! ip -6 -o addr show scope global dev "$ethx" | grep -q .; then
         echo 'DHCPv6 flag is on, but DHCPv6 is not working.'
         return 1
@@ -764,12 +764,12 @@ is_enable_other_flag() {
 }
 
 is_have_rdnss() {
-    # rdnss 可能有几个
+    # rdnss There may be several
     get_netconf_to rdnss
     [ -n "$rdnss" ]
 }
 
-# 15063 或之后才支持 rdnss
+# 15063 Or support it later rdnss
 
 is_need_set_ssh_keys() {
     [ -s /configs/ssh_keys ]
@@ -817,8 +817,8 @@ del_empty_lines() {
 }
 
 del_head_empty_lines_inplace() {
-    # 从第一行直到找到 ^[:space:]
-    # 这个区间内删除所有空行
+    # from the first line until found ^[:space:]
+    # remove all blank lines in this range
     sed -i '1,/[^[:space:]]/ { /^[[:space:]]*$/d }' "$@"
 }
 
@@ -848,15 +848,15 @@ del_invalid_efi_entry() {
     done < <(efibootmgr | grep 'HD(.*,GPT,')
 }
 
-# reinstall.sh 有同名方法
+# reinstall.sh There is a method with the same name
 grep_efi_index() {
     awk '{print $1}' | sed -e 's/Boot//' -e 's/\*//'
 }
 
-# 某些机器可能不会回落到 bootx64.efi
-# 阿里云 ECS 启动项有 EFI Shell
-# 添加 bootx64.efi 到最后的话，会进入 EFI Shell
-# 因此添加到最前面
+# Some machines may not fall back to bootx64.efi
+# Alibaba Cloud ECS The startup items are EFI Shell
+# Add to bootx64.efi In the end, you will enter EFI Shell
+# So add it to the front
 add_default_efi_to_nvram() {
     info "add default EFI to nvram"
 
@@ -868,8 +868,8 @@ add_default_efi_to_nvram() {
         efi_part_num=$(get_part_num_by_part "$efi_part_name")
         efi_file=$(get_fallback_efi_file_name)
 
-        # 创建条目，先判断是否已经存在
-        # 好像没必要先判断
+        # Create an entry, first check whether it already exists
+        # It seems that there is no need to judge first
         if true || ! efibootmgr | grep -i "HD($efi_part_num,GPT,$efi_part_uuid,.*)/File(\\\EFI\\\boot\\\\$efi_file)"; then
             efibootmgr --create \
                 --disk "/dev/$xda" \
@@ -882,16 +882,16 @@ add_default_efi_to_nvram() {
         if [ "$confirmed_no_efi" = 1 ]; then
             echo 'Confirmed no EFI in previous step.'
         else
-            # reinstall.sh 里确认过一遍，但是逻辑扇区大于 512 时，可能漏报？
-            # 这里的应该会根据逻辑扇区来判断？
+            # reinstall.sh already confirmed, but the logical sector size exceeds 512 when, it may be missed？
+            # This should be judged based on logical sectors.？
             echo "
 Warning: This machine is currently using EFI boot, but the main hard drive does not have an EFI partition.
 If this machine supports Legacy BIOS boot (CSM), you can safely restart into the new system by running the reboot command.
 If this machine does not support Legacy BIOS boot (CSM), you will not be able to enter the new system after rebooting.
 
-警告：本机目前使用 EFI 引导，但主硬盘没有 EFI 分区。
-如果本机支持 Legacy BIOS 引导 (CSM)，你可以运行 reboot 命令安全地重启到新系统。
-如果本机不支持 Legacy BIOS 引导 (CSM)，重启后将无法进入新系统。
+Warning: This machine is currently using EFI Boots, but the primary hard drive does not EFI Partition。
+If the machine supports Legacy BIOS guide (CSM)，You can run reboot Command to safely reboot to a new system。
+If the machine does not support Legacy BIOS guide (CSM)，cannot boot the new system after reboot。
 "
             exit
         fi
@@ -908,7 +908,7 @@ insert_into_file() {
         error_and_exit "File not found: $file"
     fi
 
-    # 默认 grep -E
+    # default grep -E
     if [ $# -eq 0 ]; then
         set -- -E
     fi
@@ -951,7 +951,7 @@ create_ifupdown_config() {
 
     rm -f $conf_file
 
-    # 生成 lo配置
+    # generate loconfiguration
     cat <<EOF >>$conf_file
 auto lo
 iface lo inet loopback
@@ -962,11 +962,11 @@ EOF
         mode=auto
         # shellcheck disable=SC2154
 
-        # 头部
+        # head
         get_netconf_to mac_addr
         {
             echo
-            # 这是标记，fix-eth-name 要用，不要删除
+            # this is a marker，fix-eth-name Use it, don’t delete it
             # shellcheck disable=SC2154
             echo "# mac $mac_addr"
             echo $mode $ethx
@@ -1011,7 +1011,7 @@ iface $ethx inet6 static
     gateway $ipv6_gateway
 EOF
             has_ipv6_iface=true
-            # 额外的 IPv6 地址（子网不含网关的地址）
+            # additional IPv6 Address (the subnet does not include the address of the gateway）
             get_netconf_to ipv6_extra_addrs
             if [ -n "$ipv6_extra_addrs" ]; then
                 (
@@ -1022,15 +1022,15 @@ EOF
                 )
             fi
         fi
-        # accept_ra/autoconf 属于 iface 选项
-        # 如果当前网卡没有生成 IPv6 iface stanza，
-        # 先补一个 manual stanza，避免 ifupdown 报 misplaced option
+        # accept_ra/autoconf belong iface Options
+        # If the current network card is not generated IPv6 iface stanza，
+        # Make up one first manual stanza，avoid ifupdown newspaper misplaced option
         if ! $has_ipv6_iface &&
             { should_disable_accept_ra || should_disable_autoconf; }; then
             echo "iface $ethx inet6 manual" >>$conf_file
         fi
         # dns
-        # 有 ipv6 但需设置 dns 的情况
+        # have ipv6 But need to set dns situation
         if is_need_manual_set_dnsv6; then
             for dns in $(get_current_dns 6); do
                 cat <<EOF >>$conf_file
@@ -1039,14 +1039,14 @@ EOF
             done
         fi
 
-        # 禁用 ra
+        # Disable ra
         if should_disable_accept_ra; then
             cat <<EOF >>$conf_file
     pre-up echo 0 >/proc/sys/net/ipv6/conf/$ethx/accept_ra
 EOF
         fi
 
-        # 禁用 autoconf
+        # Disable autoconf
         if should_disable_autoconf; then
             cat <<EOF >>$conf_file
     pre-up echo 0 >/proc/sys/net/ipv6/conf/$ethx/autoconf
@@ -1082,23 +1082,23 @@ add_space() {
     sed "s/^/$spaces/"
 }
 
-# 不够严谨，谨慎使用
+# Not rigorous enough, use with caution
 
 install_alpine() {
     info "install alpine"
 
-    # alpine 安装时会自动检测安装需要的 firmware
+    # alpine During installation, it will automatically detect what is needed for installation. firmware
     # https://github.com/alpinelinux/alpine-conf/blob/3.18.1/setup-disk.in#L421
-    # 但如果没有 modloop 则无法检测
-    # 所以删除 modloop 前先记录用到的 firmware 包
+    # but if not modloop cannot be detected
+    # so delete modloop Record what is used before firmware Bag
     fw_pkgs=$(get_alpine_firmware_pkgs)
 
-    # bios机器用 setup-disk 自动分区会有 boot 分区
-    # 因此手动分区安装
+    # biosFor machines setup-disk Automatic partitioning will have boot Partition
+    # So manual partition installation
     create_part
     mount_part_basic_layout /os /os/boot/efi
 
-    # 网络配置
+    # Network configuration
     create_ifupdown_config /etc/network/interfaces
     echo
     cat -n /etc/network/interfaces
@@ -1108,7 +1108,7 @@ install_alpine() {
     rc-update del swclock boot || true
     rc-update add hwclock boot
 
-    # 通过 setup-alpine 安装会启用以下几个服务
+    # pass setup-alpine The installation will enable the following services
     # https://github.com/alpinelinux/alpine-conf/blob/3.18.1/setup-alpine.in#L229
 
     # boot
@@ -1121,7 +1121,7 @@ install_alpine() {
         rc-update add acpid
     fi
 
-    # 内核
+    # Kernel
     # shellcheck disable=SC2154
     if [ "$no_cloud_kernel" = 1 ]; then
         kernel_flavor=lts
@@ -1133,120 +1133,120 @@ install_alpine() {
         fi
     fi
 
-    # 重置为官方仓库配置
-    # 国内机可能无法访问mirror列表而报错
+    # reset to official repository configuration
+    # Domestic aircraft may not be accessiblemirrorlist and report an error
 
-    # setup-disk 安装 grub 跳过了添加引导项到 nvram
-    # 防止部分机器不会 fallback 到 bootx64.efi
+    # setup-disk Install grub Skipped adding boot entry to nvram
+    # handle machines that cannot fallback arrive bootx64.efi
     if is_efi; then
         apk add efibootmgr
         sed -i 's/--no-nvram//' "$(which setup-disk)"
     fi
 
-    # 安装到硬盘
-    # alpine默认使用 syslinux (efi 环境除外)，这里强制使用 grub，方便用脚本再次重装
+    # Install to hard drive
+    # alpineuse by default syslinux (efi Except environment)，It is mandatory to use here grub，Convenient to reinstall using scripts
     KERNELOPTS="$(get_ttys console=)"
     export KERNELOPTS
     export BOOTLOADER="grub"
     setup-disk -m sys -k $kernel_flavor /os
 
-    # 删除 setup-disk 时自动安装的包
+    # delete setup-disk Packages automatically installed when
     apk del e2fsprogs dosfstools efibootmgr grub*
 
-    # 如果没有挂载 /proc
+    # If not mounted /proc
 
-    # 1. chroot /os setup-keymap us us 会报错
+    # 1. chroot /os setup-keymap us us Will report an error
     # grep: /proc/filesystems: No such file or directory
 
-    # 2. 安装固件微码会触发 grub-probe，如果没挂载会报错
+    # 2. Installing firmware microcode will trigger grub-probe，If it is not mounted, an error will be reported.
     # Executing grub-2.12-r5.trigger
     # /usr/sbin/grub-probe: error: failed to get canonical path of `/dev/vda1'.
     # ERROR: grub-2.12-r5.trigger: script exited with error 1
 
     mount_pseudo_fs /os
 
-    # azure nvme 实例的 initramfs 需要添加 pci_hyperv 驱动
+    # azure nvme instance initramfs must add pci_hyperv driver
     if [ -d /sys/module/pci_hyperv ] &&
         get_drivers "/sys/block/$xda" | grep -qx pci_hyperv; then
         echo 'kernel/drivers/pci/controller/pci-hyperv.ko*' >/os/etc/mkinitfs/features.d/pci-hyperv.modules
         if ! grep -q 'pci-hyperv' /os/etc/mkinitfs/mkinitfs.conf; then
-            # 找到 features=" 开头的行，将最后的"改成 pci-hyperv"
+            # turn up features=" The line that starts with the last"Change to pci-hyperv"
             sed -i '/features="/s/"$/ pci-hyperv"/' /os/etc/mkinitfs/mkinitfs.conf
         fi
         chroot /os mkinitfs -k "$(basename /os/lib/modules/*-*)"
     fi
 
-    # 安装到硬盘后才安装各种应用
-    # 避免占用 Live OS 内存
+    # Install various applications after installing them to the hard disk.
+    # avoid occupying Live OS Memory
 
-    # 网络
+    # network
     # udhcpc
-    # 坑1 ip -4 addr 无法知道是否是 dhcp
-    # 坑2 networking 服务不会运行 udhcpc6
-    # 坑3 h3c 移动云电脑 udhcpc6 无法获取 dhcpv6
+    # pit1 ip -4 addr There is no way to know whether it is dhcp
+    # pit2 networking Service will not run udhcpc6
+    # pit3 h3c Mobile cloud computer udhcpc6 Unable to obtain dhcpv6
 
     # dhcpcd
-    # 坑1 slaac默认开了隐私保护，造成ip和后台面板不一致
+    # pit1 slaacprivacy protection is enabled by default, causingipInconsistent with the background panel
 
-    # slaac方案1: udhcpc + rdnssd
-    # slaac方案2: dhcpcd + 关闭隐私保护
-    # dhcpv6方案: dhcpcd
+    # slaacplan1: udhcpc + rdnssd
+    # slaacplan2: dhcpcd + Turn off privacy protection
+    # dhcpv6plan: dhcpcd
 
-    # 综合使用dhcpcd方案
-    # 1 无需改动/etc/network/interfaces，自动根据ra使用slaac和dhcpv6
-    # 2 自带rdnss支持
-    # 3 唯一要做的是关闭隐私保护
+    # Comprehensive usedhcpcdplan
+    # 1 No changes required/etc/network/interfaces，automatically based onrauseslaacanddhcpv6
+    # 2 Bring your ownrdnsssupport
+    # 3 The only thing to do is to turn off privacy protection
 
-    # 安装 dhcpcd
+    # Install dhcpcd
     chroot /os apk add dhcpcd
     chroot /os sed -i '/^slaac private/s/^/#/' /etc/dhcpcd.conf
     chroot /os sed -i '/^#slaac hwaddr/s/^#//' /etc/dhcpcd.conf
 
-    # 安装其他部件
+    # Install other parts
     chroot /os setup-keymap us us
     chroot /os setup-timezone -i Asia/Shanghai
-    # 3.21 默认是 chrony
-    # 3.22 默认是 busybox ntp
+    # 3.21 default is chrony
+    # 3.22 default is busybox ntp
     printf '\n' | chroot /os setup-ntp || true
 
-    # 设置公钥
+    # Set public key
     add_user_if_need /os
     if is_need_set_ssh_keys; then
         set_ssh_keys_and_del_password /os
     fi
 
-    # 首次启动修正网卡名
+    # repair interface names on first boot
     download "$confhome/fix-eth-name.sh" /os/fix-eth-name.sh
     mkdir -p /os/etc/init.d
     write_fix_eth_name_openrc_service /os/etc/init.d/fix-eth-name
     chmod 755 /os/etc/init.d/fix-eth-name
     chroot /os rc-update add fix-eth-name boot
 
-    # 安装 frpc
+    # Install frpc
     if ls /configs/frpc.* >/dev/null 2>&1; then
         chroot /os apk add frp
-        # chroot rc-update add 默认添加到 sysinit
-        # 但不加 chroot 默认添加到 default
+        # chroot rc-update add add by default to sysinit
+        # But don’t add chroot add by default to default
         chroot /os rc-update add frpc default
 
-        # 固定为 toml
-        # 这样就不用在 /etc/init.d/frpc drop-in 修改 cfgfile
+        # fixed to toml
+        # This way you don’t have to /etc/init.d/frpc drop-in Revise cfgfile
         cp -f /configs/frpc.* /os/etc/frp/frpc.toml
         chmod 600 /os/etc/frp/frpc.toml
     fi
 
-    # setup-disk 会自动选择固件，但不包括微码？
+    # setup-disk Firmware is automatically selected, but microcode is not included？
     # https://github.com/alpinelinux/alpine-conf/blob/3.18.1/setup-disk.in#L421
     if fw_pkgs="$fw_pkgs $(get_ucode_firmware_pkgs)" && [ -n "$fw_pkgs" ]; then
         chroot /os apk add $fw_pkgs
     fi
 
-    # 3.19 或以上，非 efi 需要手动安装 grub
+    # 3.19 or above, not efi requires manual installation grub
     if ! is_efi; then
         chroot /os grub-install --target=i386-pc /dev/$xda
     fi
 
-    # efi grub 添加 fwsetup 条目
+    # efi grub Add to fwsetup entry
     chroot /os update-grub
 
 }
@@ -1264,8 +1264,8 @@ min() {
     printf "%d\n" "$@" | sort -n | head -n 1
 }
 
-# 设置线程
-# 根据 cpu 核数，每个线程的内存，取最小值
+# Set up threads
+# according to cpu Number of cores, memory per thread, take the minimum value
 get_build_threads() {
     threads_per_mb=$1
 
@@ -1387,7 +1387,7 @@ add_systemd_service() {
 
     # Keep the generated one-shot/network services enabled across target presets.
 
-    # 可能是 /usr/lib/systemd/system-preset/ 或者 /lib/systemd/system-preset/
+    # may be /usr/lib/systemd/system-preset/ or /lib/systemd/system-preset/
     if [ -d "$os_dir/usr/lib/systemd/system-preset" ]; then
         echo "enable $service_name.service" >"$os_dir/usr/lib/systemd/system-preset/01-$service_name.preset"
     else
@@ -1398,8 +1398,8 @@ add_systemd_service() {
 add_fix_eth_name_systemd_service() {
     local os_dir=$1
 
-    # 无需执行 systemctl daemon-reload
-    # 因为 chroot 下执行会提示 Running in chroot, ignoring command 'daemon-reload'
+    # No need to execute systemctl daemon-reload
+    # because chroot The next execution will prompt Running in chroot, ignoring command 'daemon-reload'
     download "$confhome/fix-eth-name.sh" "$os_dir/fix-eth-name.sh"
     add_systemd_service "$os_dir" fix-eth-name
 }
@@ -1448,12 +1448,12 @@ add_frpc_systemd_service_if_need() {
         mkdir -p "$os_dir/usr/local/bin"
         mkdir -p "$os_dir/usr/local/etc/frpc"
 
-        # 下载 frpc
-        # 注意下载的 frpc owner 不是 root:root
+        # download frpc
+        # Pay attention to downloading frpc owner no root:root
         frpc_url=$(get_frpc_url linux)
         basename=$(echo "$frpc_url" | awk -F/ '{print $NF}' | sed 's/\.tar\.gz//')
         download "$frpc_url" "$os_dir/frpc.tar.gz"
-        # busybox tar 不支持 wildcard
+        # busybox tar Not supported wildcard
         # tar: */frpc: not found in archive
         tar xzf "$os_dir/frpc.tar.gz" "$basename/frpc" -O >"$os_dir/usr/local/bin/frpc"
         rm -f "$os_dir/frpc.tar.gz"
@@ -1465,7 +1465,7 @@ add_frpc_systemd_service_if_need() {
         chroot "$os_dir" chown root:root /usr/local/etc/frpc/frpc.toml
         chroot "$os_dir" chmod 600 /usr/local/etc/frpc/frpc.toml
 
-        # 添加服务
+        # Add service
         add_systemd_service "$os_dir" frpc
     fi
 }
@@ -1491,11 +1491,11 @@ get_fs_of_mount_point() {
     local mount_point=$1
 
     if ! [ "$mount_point" = / ]; then
-        # 删除最后的若干个 /
+        # Delete the last few /
         mount_point=$(printf "%s" "$mount_point" | sed 's,/*$,,')
     fi
 
-    # findmnt 要安装
+    # findmnt To install
     # findmnt "$mount_point" -rno FSTYPE
     mount | awk -v mp="$1" '$3==mp {print $5}' | grep .
 }
@@ -1503,7 +1503,7 @@ get_fs_of_mount_point() {
 basic_init() {
     local os_dir=$1
 
-    # 此时不能用
+    # Not available at this time
     # chroot $os_dir timedatectl set-timezone Asia/Shanghai
     # Failed to create bus connection: No such file or directory
 
@@ -1515,7 +1515,7 @@ basic_init() {
         fi
     fi
 
-    # gentoo 不会自动创建 machine-id
+    # gentoo will not be created automatically machine-id
     clear_machine_id $os_dir
 
     # sshd
@@ -1541,7 +1541,7 @@ basic_init() {
         change_ssh_port $os_dir $ssh_port
     fi
 
-    # 公钥/密码
+    # public key/password
     add_user_if_need "$os_dir"
     if is_need_set_ssh_keys; then
         set_ssh_keys_and_del_password $os_dir
@@ -1551,9 +1551,9 @@ basic_init() {
         change_ssh_conf_for_password_login $os_dir
     fi
 
-    # 生成 fix-eth-name.service
-    # 即使开了 net.ifnames=0 也需要
-    # 因为 alpine live 和目标系统的网卡顺序可能不同
+    # generate fix-eth-name.service
+    # Even if it is open net.ifnames=0 Also needed
+    # because alpine live The order of network cards may be different from that of the target system.
     add_fix_eth_name_systemd_service $os_dir
 
     # frpc
@@ -1723,14 +1723,14 @@ install_arch_gentoo() {
         local alpine_rootfs=$os_dir/alpine
         create_alpine_rootfs_with_arch_install_scripts "$alpine_rootfs" true "$os_dir"
 
-        # 为了二次运行时 /etc/pacman.conf 未修改
+        # For the second runtime /etc/pacman.conf Unmodified
         if [ -f $alpine_rootfs/etc/pacman.conf.orig ]; then
             cp $alpine_rootfs/etc/pacman.conf.orig $alpine_rootfs/etc/pacman.conf
         else
             cp $alpine_rootfs/etc/pacman.conf $alpine_rootfs/etc/pacman.conf.orig
         fi
 
-        # 设置 repo
+        # set up repo
         insert_into_file $alpine_rootfs/etc/pacman.conf before '\[core\]' <<EOF
 SigLevel = Never
 ParallelDownloads = 5
@@ -1747,8 +1747,8 @@ EOF
         dir='$repo/os/$arch'
         echo "Server = $mirror/$dir" >$alpine_rootfs/etc/pacman.d/mirrorlist
 
-        # 安装系统
-        # 要安装分区工具(包含 fsck.xxx)，用于 initramfs 检查分区数据
+        # Install system
+        # To install partitioning tools(Include fsck.xxx)，used for initramfs Check partition data
         pkgs="base grub openssh"
 
         # efi fs
@@ -1767,7 +1767,7 @@ EOF
             pkgs="$pkgs sudo"
         fi
 
-        # retry 防止网络问题
+        # retry prevent network failures
         if [ "$alpine_rootfs" = / ]; then
             retry 5 pacstrap -K "$os_dir" $pkgs
             killall -q gpg-agent || true
@@ -1782,10 +1782,10 @@ EOF
         # dns
         cp_resolv_conf $os_dir
 
-        # 挂载伪文件系统
+        # Mount pseudo file system
         mount_pseudo_fs $os_dir
 
-        # 要先设置语言，再安装内核，不然出现
+        # You need to set the language first and then install the kernel, otherwise it will appear
         # ==> Creating gzip-compressed initcpio image: '/boot/initramfs-linux.img'
         # bsdtar: bsdtar: Failed to set default locale
         # Failed to set default locale
@@ -1801,7 +1801,7 @@ EOF
 
     # shellcheck disable=SC2317
     install_gentoo() {
-        # 解压系统
+        # Decompression system
         apk add tar xz pv
         # shellcheck disable=SC2154
         download "$img" $os_dir/gentoo.tar.xz
@@ -1813,20 +1813,20 @@ EOF
         # dns
         cp_resolv_conf $os_dir
 
-        # 挂载伪文件系统
+        # Mount pseudo file system
         mount_pseudo_fs $os_dir
 
-        # 下载仓库，选择 profile
+        # Download the repository and select profile
         chroot $os_dir emerge-webrsync
         profile=$(
-            # 筛选 stable systemd，再选择最短的
+            # filter stable systemd，Then choose the shortest
             chroot $os_dir eselect profile list | grep stable | grep systemd |
                 awk '{print length($2), $2}' | sort -n | head -1 | awk '{print $2}'
         )
         echo "Select profile: $profile"
         chroot $os_dir eselect profile set $profile
 
-        # 设置 license
+        # set up license
         cat <<EOF >>$os_dir/etc/portage/make.conf
 ACCEPT_LICENSE="*"
 EOF
@@ -1835,7 +1835,7 @@ EOF
 MAKEOPTS="-j$(get_build_threads 2048)"
 EOF
 
-        # 设置 http repo + binpkg repo
+        # set up http repo + binpkg repo
         mirror_short=$(echo "$img" | sed 's,/releases/.*,,')
         mirror_long=$(echo "$img" | sed 's,/autobuilds/.*,,')
         profile_ver=$(chroot $os_dir eselect profile show | grep -Eo '/[0-9.]*/' | cut -d/ -f2)
@@ -1857,22 +1857,22 @@ priority = 9999
 sync-uri = $mirror_long/binpackages/$profile_ver/$binpkg_type
 EOF
 
-        # 下载公钥
+        # Download public key
 
-        # getuto 会判断是否有 ${TERM} 且 ${TERM} 不是 dumb
-        # 符合条件则 source /lib/gentoo/functions.sh 导入 ebegin 等方法
-        # 不符合条件则自行创建 ebegin 等方法
+        # getuto will determine whether there is ${TERM} and ${TERM} no dumb
+        # If conditions are met source /lib/gentoo/functions.sh import ebegin etc.
+        # If the conditions are not met, create it yourself ebegin etc.
 
-        # /lib/gentoo/functions.sh 会判断是否有 ${RC_OPENRC_PID}
-        # 有的话就不会导入 /functions/openrc.sh，也就不会导入 ebegin 方法
+        # /lib/gentoo/functions.sh will determine whether there is ${RC_OPENRC_PID}
+        # If there is, it will not be imported. /functions/openrc.sh，It will not be imported ebegin method
 
-        # 在 ssh 里运行 /trans.sh 时，没有 ${RC_OPENRC_PID}，${TERM} 是 xterm
-        # 因此 chroot $os_dir getuto 时不会报错
+        # exist ssh run within /trans.sh when, no ${RC_OPENRC_PID}，${TERM} yes xterm
+        # therefore chroot $os_dir getuto No error will be reported when
 
-        # 在 locald 里运行 /trans.sh 时，有 ${RC_OPENRC_PID}，${TERM} 是 linux
-        # 因此 chroot $os_dir getuto 时会报错说 ebegin: command not found
+        # exist locald run within /trans.sh sometimes, there is ${RC_OPENRC_PID}，${TERM} yes linux
+        # therefore chroot $os_dir getuto Sometimes an error will be reported saying ebegin: command not found
 
-        # 有两个解决方法
+        # There are two solutions
         if true; then
             TERM=dumb chroot $os_dir getuto
         else
@@ -1881,12 +1881,12 @@ EOF
 
         set_locale
 
-        # 安装 git 会升级 glibc，此时 /etc/locale.gen 不能为空，否则会提示生成所有 locale
+        # Install git Will be upgraded glibc，at this time /etc/locale.gen It cannot be empty, otherwise it will prompt to generate all locale
         # Generating all locales; edit /etc/locale.gen to save time/space
         chroot $os_dir emerge dev-vcs/git
 
-        # 设置 git repo
-        # github 不支持 ipv6
+        # set up git repo
+        # github Not supported ipv6
         is_any_ipv4_has_internet && git_uri=https://github.com/gentoo-mirror/gentoo.git ||
             git_uri=https://anongit.gentoo.org/git/repo/gentoo.git
 
@@ -1900,7 +1900,7 @@ EOF
         rm -rf $os_dir/var/db/repos/gentoo
         chroot $os_dir emerge --sync
 
-        # 一次性安装所有包，可减少软件包重复 rebuild ?
+        # Install all packages at once to reduce package duplication rebuild ?
         local pkgs=
 
         # https://wiki.gentoo.org/wiki/Handbook:AMD64/Installation/Tools#Filesystem_tools
@@ -1928,13 +1928,13 @@ EOF
             pkgs="$pkgs $fw_pkgs"
         fi
 
-        # 安装 grub + 内核
+        # Install grub + Kernel
         is_efi && grub_platforms="efi-64" || grub_platforms="pc"
         echo GRUB_PLATFORMS=\"$grub_platforms\" >>$os_dir/etc/portage/make.conf
         echo "sys-kernel/installkernel dracut grub" >$os_dir/etc/portage/package.use/installkernel
 
-        # 要设置 root=UUID=xxxx，否则 dracut 会报错
-        # 要注意 root=UUID=xxxx 头尾有空格
+        # To set root=UUID=xxxx，otherwise dracut Will report an error
+        # Pay attention to root=UUID=xxxx There are spaces at the beginning and end
         # https://wiki.gentoo.org/wiki/Installkernel#Install_chroot_check
         # https://wiki.gentoo.org/wiki/Handbook:AMD64/Installation/Kernel#Chroot_detection
         uuid=$(chroot $os_dir findmnt -rno UUID /)
@@ -1942,42 +1942,42 @@ EOF
         echo "kernel_cmdline=\" root=UUID=$uuid \"" >$os_dir/etc/dracut.conf.d/00-installkernel.conf
         pkgs="$pkgs sys-kernel/gentoo-kernel-bin"
 
-        # 安装
-        # 不添加 -n/--noreplace 的话会 rebuild 选定的包，无论是否已安装
+        # Install
+        # Do not add -n/--noreplace If it would rebuild Selected packages, whether installed or not
         chroot "$os_dir" emerge -n $pkgs
     }
 
     local os_dir=/os
 
-    # 挂载分区
+    # Mount partition
     mount_part_basic_layout /os /os/efi
 
-    # 安装系统
+    # Install system
     install_$distro
 
-    # 安装 arch 有 gpg-agent 进程驻留
+    # Install arch have gpg-agent Process resident
     killall -q gpg-agent || true
 
-    # 初始化
+    # initialization
 
     # Network configuration is shared by Arch, Gentoo and Debian.
     setup_systemd_networkd "$os_dir"
 
     basic_init $os_dir
 
-    # ntp 用 systemd 自带的
-    # TODO: vm agent + 随机数生成器
+    # ntp use systemd Comes with it
+    # TODO: vm agent + random number generator
 
     # grub
     if is_efi; then
-        # arch gentoo 推荐 efi 挂载在 /efi
+        # arch gentoo recommend efi mounted on /efi
         chroot $os_dir grub-install --efi-directory=/efi
         chroot $os_dir grub-install --efi-directory=/efi --removable
     else
         chroot $os_dir grub-install /dev/$xda
     fi
 
-    # cmdline + 生成 grub.cfg
+    # cmdline + generate grub.cfg
     if [ -d $os_dir/etc/default/grub.d ]; then
         file=$os_dir/etc/default/grub.d/tty.cfg
     else
@@ -1988,17 +1988,17 @@ EOF
     chroot $os_dir grub-mkconfig -o /boot/grub/grub.cfg
 
     # fstab
-    # fstab 可不写 efi 条目， systemd automount 会自动挂载
-    # fstab 头部有使用说明，因此用 >>
+    # fstab Don’t write it efi entry， systemd automount will be automatically mounted
+    # fstab There are instructions for use on the head, so use >>
     local alpine_rootfs=$os_dir/alpine
     create_alpine_rootfs_with_arch_install_scripts "$alpine_rootfs" true "$os_dir"
-    # genfstab 会用到 findmnt 等工具
+    # genfstab will be used findmnt and other tools
     retry 5 chroot "$alpine_rootfs" apk add util-linux
     chroot "$alpine_rootfs" genfstab -U /parent | sed '/swap/d' >>$os_dir/etc/fstab
     umount -R "$alpine_rootfs/parent"
     remove_alpine_rootfs "$alpine_rootfs"
 
-    # 删除 resolv.conf，不然 systemd-resolved 无法创建软链接
+    # delete resolv.conf，otherwise systemd-resolved Unable to create soft link
     rm_resolv_conf $os_dir
 
 }
@@ -2008,12 +2008,12 @@ aria2c() {
         apk add aria2
     fi
 
-    # stdbuf 在 coreutils 包里面
+    # stdbuf exist coreutils Inside the bag
     if ! is_have_cmd stdbuf; then
         apk add coreutils
     fi
 
-    # 显示 url
+    # show url
     show_url_in_args "$@" >&2
 
     retry 5 5 stdbuf -oL -eL aria2c \
@@ -2070,9 +2070,9 @@ create_part() {
     apk add wipefs
     wipefs -a -f /dev/$xda
     apk del wipefs
-    # alpine 本身关闭了 64bit ext4
+    # alpine itself closed 64bit ext4
     # https://gitlab.alpinelinux.org/alpine/alpine-conf/-/blob/3.18.1/setup-disk.in?ref_type=tags#L908
-    # 而且 alpine 的 extlinux 不兼容 64bit ext4
+    # and alpine of extlinux Not compatible 64bit ext4
     [ "$distro" = alpine ] && ext4_opts="-O ^64bit" || ext4_opts=
     if is_efi; then
         # efi
@@ -2147,7 +2147,7 @@ create_cloud_init_network_config() {
 
     info "Create Cloud-init network config"
 
-    # 防止文件未创建
+    # prevent a missing file
     mkdir -p "$(dirname "$ci_file")"
     touch "$ci_file"
 
@@ -2183,9 +2183,9 @@ create_cloud_init_network_config() {
                     \"gateway\": \"$ipv4_gateway\" }
                     " $ci_file
 
-            # 旧版 cloud-init 有 bug
-            # 有的版本会只从第一种配置中读取 dns，有的从第二种读取
-            # 因此写两种配置
+            # Old version cloud-init have bug
+            # Some versions will only read from the first configuration dns，Some read from the second type
+            # So write two configurations
             # https://github.com/canonical/cloud-init/commit/1b8030e0c7fd6fbff7e38ad1e3e6266ae50c83a5
             for cur in $(get_current_dns 4); do
                 yq -i ".network.config[$config_id].subnets[$subnet_id].dns_nameservers += [\"$cur\"]" $ci_file
@@ -2233,12 +2233,12 @@ create_cloud_init_network_config() {
                     \"gateway\": \"$ipv6_gateway\" }
                     " $ci_file
         fi
-        # 无法设置 autoconf = false ?
+        # Unable to set autoconf = false ?
         if should_disable_accept_ra; then
             yq -i ".network.config[$config_id].accept-ra = false" $ci_file
         fi
 
-        # 有 ipv6 但需设置 dns 的情况
+        # have ipv6 But need to set dns situation
         if is_need_manual_set_dnsv6; then
             need_set_dns6=true
             for cur in $(get_current_dns 6); do
@@ -2261,24 +2261,24 @@ create_cloud_init_network_config() {
                 yq -i ".network.config[$config_id].address += [\"$cur\"]" $ci_file
             done
         fi
-        # 如果 network.config[$config_id] 没有 address，则删除，避免低版本 cloud-init 报错
+        # if network.config[$config_id] No address，Then delete it to avoid low version cloud-init Report an error
         yq -i "del(.network.config[$config_id] | select(has(\"address\") | not))" $ci_file
     fi
 
     apk del yq-go
 
-    # 查看文件
+    # View files
     info "Cloud-init network config"
     cat -n $ci_file >&2
 }
 
-# 实测没用，生成的 machine-id 是固定的
-# 而且 lightsail centos 9 模板 machine-id 也是相同的，显然相同 id 不是个问题
+# The actual test is useless, it is generated machine-id is fixed
+# and lightsail centos 9 template machine-id Also the same, obviously the same id not a problem
 clear_machine_id() {
     local os_dir=$1
 
     # https://www.freedesktop.org/software/systemd/man/latest/machine-id.html
-    # gentoo 不会自动创建该文件
+    # gentoo The file will not be automatically created
     echo uninitialized >$os_dir/etc/machine-id
 
     # https://build.opensuse.org/projects/Virtualization:Appliances:Images:openSUSE-Leap-15.5/packages/kiwi-templates-Minimal/files/config.sh?expand=1
@@ -2286,8 +2286,8 @@ clear_machine_id() {
 }
 
 is_file_or_link() {
-    # -e / -f 坏软连接，返回 false
-    # -L 坏软连接，返回 true
+    # -e / -f Bad soft connection, return false
+    # -L Bad soft connection, return true
     [ -f $1 ] || [ -L $1 ]
 }
 
@@ -2317,21 +2317,21 @@ keep_now_resolv_conf() {
     rm -f $os_dir/etc/resolv.conf.orig
 }
 
-# 抄 https://github.com/alpinelinux/alpine-conf/blob/3.18.1/setup-disk.in#L421
+# copy https://github.com/alpinelinux/alpine-conf/blob/3.18.1/setup-disk.in#L421
 get_alpine_firmware_pkgs() {
-    # 需要有 modloop，不然 modinfo 会报错
+    # must have modloop，otherwise modinfo Will report an error
     ensure_service_started modloop >&2
 
-    # 如果不在单独的文件夹，则用 linux-firmware-other
-    # 如果在单独的文件夹，则用 linux-firmware-xxx
-    # 如果不需要 firmware，则用 linux-firmware-none
+    # If not in a separate folder, use linux-firmware-other
+    # If in a separate folder, use linux-firmware-xxx
+    # if not needed firmware，Then use linux-firmware-none
     firmware_pkgs=$(
         cd /sys/module && modinfo -F firmware -- * 2>/dev/null |
             awk -F/ '{print $1 == $0 ? "linux-firmware-other" : "linux-firmware-"$1}' |
             sort -u
     )
 
-    # 使用 command 因为自己覆盖了 apk 添加了 >&2
+    # use command Because I covered it apk added >&2
     retry 5 command apk search --quiet --exact ${firmware_pkgs:-linux-firmware-none}
 }
 
@@ -2343,8 +2343,8 @@ get_ucode_firmware_pkgs() {
     esac
 
     case "$os-$(get_cpu_vendor)" in
-    # alpine 的 linux-firmware 以文件夹进行拆分
-    # setup-alpine 会自动安装需要的 firmware（modloop 没挂载则无效）
+    # alpine of linux-firmware Split into folders
+    # setup-alpine Will automatically install the required firmware（modloop It will be invalid if it is not mounted.）
     # https://github.com/alpinelinux/alpine-conf/blob/3.18.1/setup-disk.in#L421
     alpine-intel) echo intel-ucode ;;
     alpine-amd) echo amd-ucode ;;
@@ -2372,34 +2372,34 @@ del_user_password_and_lock() {
     local os_dir=$1
     local username=$2
 
-    # 锁定用户后 ssh 能否登录
+    # after locking the user ssh Can I log in?
     # alpine ×
-    # 其它系统 √
+    # Other systems √
 
-    # root 空密码，不锁定 root，其它用户用 su - root 能否切换到 root
+    # root Empty password, no lock root，For other users su - root Can I switch to root
     # alpine ×
-    # 其它系统 √
+    # Other systems √
 
-    # centos 7 不支持一行命令同时 -d -l
+    # centos 7 One line of commands is not supported at the same time -d -l
     # passwd: Only one of -l, -u, -d, -S may be specified.
 
-    # 删除密码
+    # delete password
     chroot "$os_dir" passwd -d "$username"
 
-    # 锁定用户
+    # lock the user
     if ! [ -e "$os_dir/etc/alpine-release" ]; then
         chroot "$os_dir" passwd -l "$username"
     fi
 
-    # alpine 锁定用户无法登录 ssh
-    # 因为 alpine 默认不开启 pam
-    # 其他系统默认开启
+    # alpine locked users cannot log in ssh
+    # because alpine not enabled by default pam
+    # Enabled by default on other systems
 
-    # 不开启 pam 的话，锁定用户无法登录 ssh
-    # 开启 pam 后可以
+    # Not open pam If so, the locked user will be unable to log in ssh
+    # turn on pam Later you can
 
-    # alpine 是通过安装 openssh-server-pam 开启 pam
-    # 不需要设置 UsePAM yes 也无法识别 UsePAM yes
+    # alpine is installed by openssh-server-pam turn on pam
+    # No settings required UsePAM yes also cannot be recognized UsePAM yes
     # localhost:~# sshd -G | grep -i pam
     # /etc/ssh/sshd_config line 88: Unsupported option UsePAM
 }
@@ -2415,20 +2415,20 @@ set_ssh_keys_and_del_password() {
         local user_home="/home/$username"
     fi
 
-    # 添加公钥
+    # Add public key
     if true; then
         (
             umask 077
             mkdir -p "$os_dir/$user_home/.ssh"
             cat /configs/ssh_keys >"$os_dir/$user_home/.ssh/authorized_keys"
         )
-        # 注意要用 chroot，否则 uid/gid 是 alpine live os 下的 uid/gid
+        # Pay attention to use chroot，otherwise uid/gid yes alpine live os down uid/gid
         chroot "$os_dir" chown "$username:$username" "$user_home"
         chroot "$os_dir" chown "$username:$username" "$user_home/.ssh"
         chroot "$os_dir" chown "$username:$username" "$user_home/.ssh/authorized_keys"
     else
         (
-            # 如果日后添加 bsd 无法 chroot 时可以这样
+            # If added later bsd Unable chroot It can be like this
             umask 077
             read -r owner group < \
                 <(awk -F: -v user="$username" '$1==user {print $3,$4}' "$os_dir/etc/passwd")
@@ -2441,13 +2441,13 @@ set_ssh_keys_and_del_password() {
         )
     fi
 
-    # 删除密码/锁定用户
+    # delete password/lock the user
     del_user_password_and_lock "$os_dir" "$username"
 
-    # debian 云镜像 /etc/shadow 的 root 条目为
+    # debian Cloud mirror /etc/shadow of root The entry is
     # root:!unprovisioned:20591:0:99999:7:::
-    # 首次开机会停在设置 root 密码界面，且阻塞 ssh 服务
-    # 因此这里手动清空 root 密码并锁定
+    # first boot pauses for configuration of root Password interface and blocked ssh Serve
+    # So clear it manually here root Password and lock
     if ! [ "$username" = root ] && is_have_cmd_on_disk "$os_dir" systemd-firstboot; then
         del_user_password_and_lock "$os_dir" root
     fi
@@ -2458,7 +2458,7 @@ is_ssh_kv_effective() {
     local key=$2
     local value=$3
 
-    # 解决 ubuntu 22.04 报错
+    # solve ubuntu 22.04 Report an error
     # Missing privilege separation directory: /run/sshd
     if [ -d "$os_dir/run/sshd" ]; then
         we_create_run_sshd_dir=false
@@ -2467,22 +2467,22 @@ is_ssh_kv_effective() {
         mkdir -p "$os_dir/run/sshd"
     fi
 
-    # centos 7 / ubuntu 22.04 不支持 -G
-    # -G 只检测配置文件
-    # -T 会检测配置文件、host key
+    # centos 7 / ubuntu 22.04 Not supported -G
+    # -G Only detect configuration files
+    # -T Configuration files will be detected、host key
     if res=$(chroot "$os_dir" sshd -G 2>/dev/null || chroot "$os_dir" sshd -T 2>/dev/null); then
-        # 删除自己创建的，避免后续权限不准确
+        # Delete the ones you created to avoid inaccurate subsequent permissions
         if $we_create_run_sshd_dir; then
             rm -rf "$os_dir/run/sshd"
         fi
 
-        # centos 7 设置 prohibit-password ，sshd -T 会显示成 without-password
+        # centos 7 set up prohibit-password ，sshd -T will be displayed as without-password
         printf "%s\n" "$res" |
             sed 's/^permitrootlogin without-password$/permitrootlogin prohibit-password/i' |
             if [ -n "$value" ]; then
                 grep -F -xiq "$key $value"
             else
-                # value 为空时，只验证 key 是否存在
+                # value When empty, only verify key exists
                 grep -E -xiq "$key .*"
             fi
     else
@@ -2494,9 +2494,9 @@ change_ssh_conf_if_different() {
     local os_dir=$1
     local key=$2
     local value=$3
-    local explicit=${4:-false} # 是否需要显式设置
+    local explicit=${4:-false} # Does it need to be set explicitly?
 
-    # 有些发行版自带了某些配置，例如
+    # Some distributions come with certain configurations, such as
     # ubuntu:
     # cat /etc/ssh/sshd_config.d/60-cloudimg-settings.conf | grep -i PasswordAuthentication
     # PasswordAuthentication no
@@ -2505,30 +2505,30 @@ change_ssh_conf_if_different() {
     # cat /etc/ssh/sshd_config.d/9999999gentoo-pam.conf | grep -i PasswordAuthentication
     # PasswordAuthentication no
 
-    # 0. 如果已经有这个配置，且不需要显式设置，则不修改
+    # 0. If this configuration already exists and does not need to be set explicitly, do not modify it.
     if is_ssh_kv_effective "$os_dir" "$key" "$value" && ! $explicit; then
         return
     fi
 
     if line="^$key .*" && grep -Exiq "$line" $os_dir/etc/ssh/sshd_config 2>/dev/null; then
-        # 1. 如果 sshd_config 存在此 key（非注释状态），则替换
+        # 1. if sshd_config exists this key（uncommented state), replace
         sed -Ei "s/$line/$key $value/" $os_dir/etc/ssh/sshd_config
     elif include_line='^Include .*/etc/ssh/sshd_config.d' &&
-        # 2. 如果 sshd_config 设置了读取 sshd_config.d
-        #    则写入到 sshd_config.d/01-xxx.conf
+        # 2. if sshd_config Read is set sshd_config.d
+        #    then write to sshd_config.d/01-xxx.conf
 
-        # arch 没有 /etc/ssh/sshd_config.d/ 文件夹
-        # opensuse tumbleweed 没有 /etc/ssh/sshd_config
-        #                       有 /etc/ssh/sshd_config.d/ 文件夹
-        #                       有 /usr/etc/ssh/sshd_config
+        # arch No /etc/ssh/sshd_config.d/ folder
+        # opensuse tumbleweed No /etc/ssh/sshd_config
+        #                       have /etc/ssh/sshd_config.d/ folder
+        #                       have /usr/etc/ssh/sshd_config
         { grep -iq "$include_line" $os_dir/etc/ssh/sshd_config ||
             grep -iq "$include_line" $os_dir/usr/etc/ssh/sshd_config; } 2>/dev/null; then
         mkdir -p $os_dir/etc/ssh/sshd_config.d/
         echo "$key $value" >"$os_dir/etc/ssh/sshd_config.d/01-$(echo "$key" | to_lower).conf"
     else
-        # 3. 写入 sshd_config
-        #    如果 sshd_config 存在此 key (无论是否已注释)，则替换，包括删除注释
-        #    否则追加
+        # 3. write sshd_config
+        #    if sshd_config exists this key (Whether it is annotated or not)，then replace, including deleting comments
+        #    Otherwise append
         line="^[# ]*$key .*"
         if grep -Exiq "$line" $os_dir/etc/ssh/sshd_config; then
             sed -Ei "s/$line/$key $value/" $os_dir/etc/ssh/sshd_config
@@ -2537,7 +2537,7 @@ change_ssh_conf_if_different() {
         fi
     fi
 
-    # 验证是否成功
+    # verify success
     if ! is_ssh_kv_effective "$os_dir" "$key" "$value"; then
         error_and_exit "Failed to set sshd config $key $value."
     fi
@@ -2548,50 +2548,50 @@ change_ssh_conf_for_key_login() {
 
     change_ssh_conf_if_different "$os_dir" PasswordAuthentication no
 
-    # centos 7 PermitRootLogin 默认是 yes，而不是 prohibit-password
+    # centos 7 PermitRootLogin default is yes，instead of prohibit-password
     if [ "$username" = root ]; then
         change_ssh_conf_if_different "$os_dir" PermitRootLogin prohibit-password
     fi
 
-    # sshd -G/-T 有 ChallengeResponseAuthentication 说明是旧版 sshd
-    # 才需要设置 ChallengeResponseAuthentication no
+    # sshd -G/-T have ChallengeResponseAuthentication Description is an old version sshd
+    # Only need to set ChallengeResponseAuthentication no
 
-    # OpenSSH 8.6 和以下 (包括 el8/debian 11/ubuntu 20.04 等)
-    # KbdInteractiveAuthentication ChallengeResponseAuthentication 可设置成不同的值
-    # 如果没有显式设置 ChallengeResponseAuthentication no
-    # 则 KbdInteractiveAuthentication no 不会生效 (sshd -G/-T 显示 KbdInteractiveAuthentication yes)
+    # OpenSSH 8.6 and below (include el8/debian 11/ubuntu 20.04 wait)
+    # KbdInteractiveAuthentication ChallengeResponseAuthentication Can be set to different values
+    # If not explicitly set ChallengeResponseAuthentication no
+    # but KbdInteractiveAuthentication no will not take effect (sshd -G/-T show KbdInteractiveAuthentication yes)
 
-    # 因此先 sshd -G/-T 检测有没有 ChallengeResponseAuthentication 这个 key
-    # 只要有就显式设置为 no
-    # 而且要先设置 ChallengeResponseAuthentication 后设置 KbdInteractiveAuthentication
-    # 否则 change_ssh_conf_if_different 设置 KbdInteractiveAuthentication no 时会检测到不生效而报错
+    # So first sshd -G/-T Check if there is ChallengeResponseAuthentication this key
+    # Whenever possible, set it explicitly to no
+    # And you need to set it first ChallengeResponseAuthentication post settings KbdInteractiveAuthentication
+    # otherwise change_ssh_conf_if_different set up KbdInteractiveAuthentication no It will be detected that it is not effective and an error will be reported.
 
-    # 用户传进来的 rhel-like 系统可能是支持 ChallengeResponseAuthentication 的旧版本
-    # 因此即使 el8/debian 11/ubuntu 20.04 都 EOL 后也不能删除这里
+    # Passed in by user rhel-like The system may support ChallengeResponseAuthentication old version of
+    # So even if el8/debian 11/ubuntu 20.04 all EOL This cannot be deleted later
     if is_ssh_kv_effective "$os_dir" ChallengeResponseAuthentication; then
         change_ssh_conf_if_different "$os_dir" ChallengeResponseAuthentication no true
     fi
 
     # PasswordAuthentication no
-    # KbdInteractiveAuthentication yes (默认是 yes)
-    # 这种情况可以用密码登录
+    # KbdInteractiveAuthentication yes (default is yes)
+    # password login is available in this case
     # ssh -o PreferredAuthentications=keyboard-interactive user@ip
 
-    # 多数发行版都会在 sshd_config 里设置成 no
-    # 但 opensuse 16 没有
+    # Most distributions will have sshd_config set to no
+    # but opensuse 16 No
     change_ssh_conf_if_different "$os_dir" KbdInteractiveAuthentication no
 }
 
 change_ssh_conf_for_password_login() {
     local os_dir=$1
 
-    # opensuse 16/tumbleweed 安装 openssh-server-config-rootlogin
-    # 会生成 /usr/etc/ssh/sshd_config.d/50-permit-root-login.conf
-    # 但是如果用户删除了此文件，包有更新的话，可能会重新创建这个文件？
-    # 因此先不用这个方法
+    # opensuse 16/tumbleweed Install openssh-server-config-rootlogin
+    # will generate /usr/etc/ssh/sshd_config.d/50-permit-root-login.conf
+    # However, if the user deletes this file, the file may be re-created if the package is updated.？
+    # So don’t use this method for now
 
-    # PasswordAuthentication 默认是 yes
-    # 但某些发行版会在 sshd_config.d 里设置 PasswordAuthentication no
+    # PasswordAuthentication default is yes
+    # But some distributions will sshd_config.d set within PasswordAuthentication no
     change_ssh_conf_if_different "$os_dir" PasswordAuthentication yes
 
     if [ "$username" = root ]; then
@@ -2606,7 +2606,7 @@ change_ssh_port() {
     change_ssh_conf_if_different "$os_dir" Port "$ssh_port"
 }
 
-# 暂时用不着
+# Not needed for now
 add_user_if_need_for_alpine() {
     local os_dir=$1
 
@@ -2626,28 +2626,28 @@ add_user_if_need_for_alpine() {
 add_user_if_need() {
     local os_dir=$1
 
-    # 添加用户
+    # Add user
     if ! grep -q "^$username:" "$os_dir/etc/passwd"; then
-        # debian 推荐使用 adduser 而不是 useradd
+        # debian Recommended adduser instead of useradd
         # https://manpages.debian.org/trixie/passwd/useradd.8.en.html
         # useradd is a low level utility for adding users.
         # On Debian, administrators should usually use adduser(8) instead.
 
-        # adduser 会从 /etc/adduser.conf 读取默认要添加的组
-        # 然而通常这个值是空白
+        # adduser will follow /etc/adduser.conf Read the default group to be added
+        # However usually this value is blank
 
         # alpine
         if is_have_cmd_on_disk "$os_dir" adduser &&
             chroot "$os_dir" adduser --help 2>&1 | grep -Fq -- BusyBox; then
             chroot "$os_dir" adduser --disabled-password "$username"
 
-        # 新版 debian/ubuntu
+        # new version debian/ubuntu
         elif is_have_cmd_on_disk "$os_dir" adduser &&
             chroot "$os_dir" adduser --help 2>&1 | grep -Fq -- '--disabled-password' &&
             chroot "$os_dir" adduser --help 2>&1 | grep -Fq -- '--comment'; then
             chroot "$os_dir" adduser --disabled-password --comment '' "$username"
 
-        # 旧版 debian/ubuntu
+        # Old version debian/ubuntu
         elif is_have_cmd_on_disk "$os_dir" adduser &&
             chroot "$os_dir" adduser --help 2>&1 | grep -Fq -- '--disabled-password' &&
             chroot "$os_dir" adduser --help 2>&1 | grep -Fq -- '--gecos'; then
@@ -2658,45 +2658,45 @@ add_user_if_need() {
             chroot "$os_dir" adduser --help 2>&1 | grep -Fq -- '--password'; then
             chroot "$os_dir" adduser --password ! "$username"
 
-        # arch/gentoo 默认没有 adduser
+        # arch/gentoo absent by default adduser
         else
             chroot "$os_dir" useradd -m "$username"
         fi
     fi
 
-    # 添加到 wheel/sudo 组
+    # add to wheel/sudo Group
     if ! [ "$username" = root ]; then
         if [ -e "$os_dir/etc/alpine-release" ]; then
             # alpine
             # https://github.com/alpinelinux/alpine-conf/blob/master/setup-user.in#L168
 
-            # 安装 doas
+            # Install doas
             chroot "$os_dir" apk add doas doas-sudo-shim
             mkdir -p "$os_dir/etc/doas.d"
 
-            # 添加用户到组
+            # Add user to group
             chroot "$os_dir" addgroup "$username" wheel
 
-            # doas: 添加 wheel 组
+            # doas: Add to wheel Group
             local file="$os_dir/etc/doas.d/20-wheel.conf"
             local content="permit persist :wheel"
             if ! grep -q "^$content" "$file" 2>/dev/null; then
                 echo "$content" >>"$file"
             fi
 
-            # doas: 添加单个用户 nopass
+            # doas: Add a single user nopass
             echo "permit nopass $username" >"$os_dir/etc/doas.d/99-$username.conf"
         else
-            # 通常用 wheel 组
-            # debian/ubuntu 没有 wheel 组，只有 sudo 组
+            # Usually used wheel Group
+            # debian/ubuntu No wheel group, only sudo Group
 
-            # aws lightsail 上测试默认用户加入了哪些组
+            # aws lightsail Test which groups the default user has joined
             # debian       admin : admin adm dialout cdrom floppy sudo audio dip video plugdev
             # ubuntu       ubuntu : ubuntu adm cdrom sudo dip lxd
             # almalinux    ec2-user : ec2-user adm systemd-journal
             # opensuse     ec2-user : ec2-user
 
-            # 添加用户到组
+            # Add user to group
             for group in \
                 wheel sudo \
                 adm dialout cdrom floppy audio dip video plugdev lxd systemd-journal; do
@@ -2706,12 +2706,12 @@ add_user_if_need() {
                 fi
             done
 
-            # sudo: gentoo 安装 sudo 后也没有 /etc/sudoers.d
+            # sudo: gentoo Install sudo Not even after /etc/sudoers.d
             if ! [ -d "$os_dir/etc/sudoers.d" ]; then
                 install -d -m 0750 "$os_dir/etc/sudoers.d"
             fi
 
-            # sudo: 添加单个用户 NOPASSWD
+            # sudo: Add a single user NOPASSWD
             # https://wiki.archlinux.org/title/Sudo#Sudoers_default_file_permissions
             local file="$os_dir/etc/sudoers.d/99-$username"
             printf '%s\n' "$username ALL=(ALL) NOPASSWD:ALL" >"$file"
@@ -2744,8 +2744,8 @@ change_user_password() {
             # -password   optional    pam_gnome_keyring.so use_authtok
             # password   substack     postlogin
 
-            # 通过 /etc/pam.d/chpasswd 找到 /etc/pam.d/system-auth 或者 /etc/pam.d/system-auth
-            # 再找到有 password 和 pam_unix.so 的行，并删除 use_authtok，写入 /etc/pam.d/chpasswd
+            # pass /etc/pam.d/chpasswd turn up /etc/pam.d/system-auth or /etc/pam.d/system-auth
+            # Find again password and pam_unix.so line and delete use_authtok，write /etc/pam.d/chpasswd
             files=$(grep -E '^(password|@include)' $pam_d/chpasswd | awk '{print $NF}' | sort -u)
             for file in $files; do
                 if [ -f "$pam_d/$file" ] && line=$(grep ^password "$pam_d/$file" | grep -F pam_unix.so); then
@@ -2755,7 +2755,7 @@ change_user_password() {
             done
         fi
 
-        # 分两行写，不然遇到错误不会终止
+        # Write it in two lines, otherwise it will not terminate when an error occurs.
         plaintext=$(get_password_plaintext)
         printf '%s\n' "$username:$plaintext" | chroot $os_dir chpasswd
 
@@ -2767,7 +2767,7 @@ change_user_password() {
     fi
 }
 
-# 适用于 DD 后修复 gpt 备份分区表
+# Applicable to DD Post-repair gpt Backup partition table
 
 mount_part_basic_layout() {
     local os_dir=$1
@@ -2779,32 +2779,32 @@ mount_part_basic_layout() {
         os_part_num=1
     fi
 
-    # 挂载系统分区
+    # Mount system partition
     mkdir -p $os_dir
     mount -t ext4 "/dev/$(xda $os_part_num)" $os_dir
 
-    # 挂载 efi 分区
+    # mount efi Partition
     if is_efi; then
         mkdir -p $efi_dir
         mount -t vfat -o umask=077 "/dev/$(xda 1)" $efi_dir
     fi
 }
 
-# virt-what 要用最新版
-# vultr 1G High Frequency LAX 实际上是 kvm
-# debian 11 virt-what 1.19 显示为 hyperv qemu
-# debian 11 systemd-detect-virt 显示为 microsoft
-# alpine virt-what 1.25 显示为 kvm
-# 所以不要在原系统上判断具体虚拟化环境
+# virt-what Use the latest version
+# vultr 1G High Frequency LAX actually kvm
+# debian 11 virt-what 1.19 displayed as hyperv qemu
+# debian 11 systemd-detect-virt displayed as microsoft
+# alpine virt-what 1.25 displayed as kvm
+# So don’t judge the specific virtualization environment on the original system.
 
-# lscpu 也可查看虚拟化环境，但 alpine on lightsail 运行结果为 Microsoft
-# 猜测 lscpu 只参考了 cpuid 没参考 dmi
-# virt-what 可能会输出多行结果，因此用 grep
+# lscpu You can also view virtualized environments, but alpine on lightsail The running result is Microsoft
+# guess lscpu Just for reference cpuid No reference dmi
+# virt-what Multiple lines of results may be output, so use grep
 
-# 将 AC/SAC 版本号 转换为 LTSC 版本号
-# 用于查找驱动
+# Will AC/SAC version number converted to LTSC version number
+# Used to find drivers
 
-# reinstall.sh 有同名方法
+# reinstall.sh There is a method with the same name
 
 mkdir_clear() {
     local dir=$1
@@ -2817,17 +2817,17 @@ mkdir_clear() {
     mkdir -p "$dir"
 }
 
-# 注意使用方法是 list=$(list_add "$list" "$item_to_add")
+# Note that the usage method is list=$(list_add "$list" "$item_to_add")
 
-# reinstall.sh 有同名方法
+# reinstall.sh There is a method with the same name
 
-# 添加 netboot.efi 备用
+# Add to netboot.efi spare
 
 sync_time() {
 
-    # ntp 时间差太多会无法同步？
-    # http 时间可能不准确，毕竟不是专门的时间服务器
-    #      也有可能没有 date header?
+    # ntp If the time difference is too large, synchronization will be impossible.？
+    # http The time may not be accurate. After all, it is not a specialized time server.
+    #      Maybe not date header?
     method=http
 
     case "$method" in
@@ -2841,14 +2841,14 @@ sync_time() {
         ;;
     http)
         url="$(grep -m1 ^http /etc/apk/repositories)/$(uname -m)/APKINDEX.tar.gz"
-        # 可能有多行，取第一行
+        # There may be multiple lines, take the first line
         date_header=$(wget -S --no-check-certificate --spider "$url" 2>&1 | grep -m1 '^  Date:')
-        # gnu date 不支持 -D
+        # gnu date Not supported -D
         busybox date -u -D "  Date: %a, %d %b %Y %H:%M:%S GMT" -s "$date_header"
         ;;
     esac
 
-    # 重启时 alpine 会自动写入到硬件时钟，因此这里跳过
+    # during reboot alpine It will be automatically written to the hardware clock, so skip it here.
     # hwclock -w
 }
 
@@ -2859,9 +2859,9 @@ is_tencent_cloud() {
 add_max_sectors_kb_rule() {
     local os_dir=$1
 
-    # 普通发行版
+    # Normal distribution
     if [ -d $os_dir/etc/udev/rules.d/ ]; then
-        # 取自腾讯云 ubuntu 26.04 镜像
+        # Taken from Tencent Cloud ubuntu 26.04 image
         cat <<EOF >$os_dir/etc/udev/rules.d/80-max-sectors-blk.rules
 KERNEL=="vd*[a-z]", ACTION=="add|change", SUBSYSTEM=="block", RUN+="/bin/sh -c '/bin/echo 512 > /sys/%p/queue/max_sectors_kb'"
 EOF
@@ -2897,13 +2897,13 @@ set_max_sectors_kb_for_tencent_cloud_persist() {
     local os_dir etc_dir
     if is_tencent_cloud && etc_dir=$({ ls -d /os/etc/ || ls -d /os/*/etc/; } 2>/dev/null); then
         os_dir=$(dirname $etc_dir)
-        # 重新挂载为读写
+        # remount read-write
         mount -o remount,rw /os
 
         # rule
         add_max_sectors_kb_rule "$os_dir"
 
-        # 重新生成 initramfs
+        # regenerate initramfs
         # el
         if is_have_cmd_on_disk $os_dir dracut; then
             chroot $os_dir dracut -f --regenerate-all
@@ -2985,28 +2985,28 @@ trans() {
     sleep 5
 }
 
-# 脚本入口
+# Script entry
 
 [ "$(uname -m)" = x86_64 ] || error_and_exit "Alpine Live installer requires x86_64."
 
-# 复制脚本
-# 用于打印错误或者再次运行
-# 路径相同则不用复制
-# 重点：要在删除脚本之前复制
+# copy script
+# Used to print errors or run again
+# If the paths are the same, there is no need to copy them.
+# Important: copy before deleting the script
 if ! [ "$(readlink -f "$0")" = /trans.sh ]; then
     cp -f "$0" /trans.sh
 fi
 trap 'trap_err $LINENO $?' ERR
 
-# 删除本脚本，不然会被复制到新系统
+# Delete this script, otherwise it will be copied to the new system
 rm -f /etc/local.d/trans.start
 rm -f /etc/runlevels/default/local
 
-# 提取变量
+# Extract variables
 extract_env_from_cmdline
 
-# 带参数运行部分
-# 重新下载并 exec 运行新脚本
+# Run section with parameters
+# redownload and exec Run new script
 if [ "$1" = "update" ]; then
     info 'update script'
     # shellcheck disable=SC2154
@@ -3025,25 +3025,25 @@ fi
 
 validate_target
 
-# 无参数运行部分
-# 允许 ramdisk 使用所有内存，默认是 50%
+# Run section without parameters
+# allow ramdisk Use all memory, default is 50%
 mount / -o remount,size=100%
 
-# 同步时间
-# 1. 可以防止访问 https 出错
-# 2. 可以防止 https://github.com/bin456789/reinstall/issues/223
+# sync time
+# 1. can prevent access https Error
+# 2. can prevent https://github.com/bin456789/reinstall/issues/223
 #    E: Release file for http://security.ubuntu.com/ubuntu/dists/noble-security/InRelease is not valid yet (invalid for another 5h 37min 18s).
 #    Updates for this repository will not be applied.
-# 4. 允许同步失败，因为不是关键步骤
+# 4. Allow synchronization to fail because it is not a critical step
 sync_time || true
 
-# 安装 ssh 并更改端口
+# Install ssh and change the port
 apk add openssh-server
 if is_need_change_ssh_port; then
     change_ssh_port / $ssh_port
 fi
 
-# 设置密码，添加开机启动 + 开启 ssh 服务
+# Set password and add startup + turn on ssh Serve
 add_user_if_need /
 if is_need_set_ssh_keys; then
     set_ssh_keys_and_del_password /
@@ -3055,8 +3055,8 @@ else
     printf '\nyes' | setup-sshd
 fi
 
-# 设置 frpc
-# 并防止重复运行
+# set up frpc
+# and prevent repeated runs
 if ls /configs/frpc.* >/dev/null 2>&1 && ! pidof frpc >/dev/null; then
     info 'run frpc'
     chmod 600 /configs/frpc.*
@@ -3076,11 +3076,11 @@ if [ "$hold" = 1 ]; then
     fi
 fi
 
-# 正式运行重装
+# Officially run reinstallation
 # shellcheck disable=SC2046,SC2194
 case 1 in
 1)
-    # ChatGPT 说这种性能最高
+    # ChatGPT said to provide the best performance
     exec > >(exec tee $(get_ttys /dev/) /reinstall.log) 2>&1
     trans
     ;;

@@ -660,23 +660,23 @@ fn native_key_generator_is_nested_and_only_generated_public_key_enters_the_plan(
 
 #[test]
 fn text_editor_handles_unicode_cursor_delete_and_atomic_input_limits() {
-    let mut input = Editor::new("甲ab", false);
+    let mut input = Editor::new("\u{7532}ab", false);
     input
         .key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE))
         .unwrap();
     input
         .key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
         .unwrap();
-    input.paste("乙").unwrap();
-    assert_eq!(input.value.0, "甲乙ab");
+    input.paste("\u{4e59}").unwrap();
+    assert_eq!(input.value.0, "\u{7532}\u{4e59}ab");
     input
         .key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE))
         .unwrap();
-    assert_eq!(input.value.0, "甲乙b");
+    assert_eq!(input.value.0, "\u{7532}\u{4e59}b");
     input
         .key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE))
         .unwrap();
-    assert_eq!(input.value.0, "甲b");
+    assert_eq!(input.value.0, "\u{7532}b");
     input
         .key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE))
         .unwrap();
@@ -689,7 +689,7 @@ fn text_editor_handles_unicode_cursor_delete_and_atomic_input_limits() {
     assert!(input.paste("\u{1b}[31m\nsecret").is_err());
     assert_eq!(input.value.0, before);
     let mut secret = Editor::new(&"x".repeat(MAX_INPUT - 1), true);
-    assert!(secret.paste("你").is_err());
+    assert!(secret.paste("\u{4f60}").is_err());
     assert_eq!(secret.value.0.len(), MAX_INPUT - 1);
     secret.paste("y").unwrap();
     assert!(
