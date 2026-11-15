@@ -1,7 +1,7 @@
 use super::fields::{Field, TCP_FIELDS};
 use super::state::{
-    Authentication, CHOICES, Draft, IsoMode, Page, Wizard, boot_label, hold_label, iso_label,
-    optional_label, valid_public_key_source, valid_username, yes_no,
+    Authentication, CHOICES, Draft, IsoMode, Page, Route, Wizard, boot_label, hold_label,
+    iso_label, optional_label, valid_public_key_source, valid_username, yes_no,
 };
 use rustaller::config::{DnsConfig, DnsMode, InstallProfile};
 use rustaller::host::args::{CliError, CliOutcome, parse_args};
@@ -9,12 +9,65 @@ use rustaller::host::ssh_keygen::{self, KeyType, KeygenOptions};
 use rustaller::model::{InstallPlan, SecretString};
 
 impl Wizard {
+    pub fn validate_input(&self, field: Field, value: &str) -> Result<(), String> {
+        if value.trim().is_empty()
+            && !matches!(field, Field::Username | Field::SshPort | Field::WebPort)
+        {
+            return Ok(());
+        }
+        if matches!(
+            field,
+            Field::Hostname
+                | Field::Timezone
+                | Field::Disk
+                | Field::Mtu
+                | Field::TcpBuffer
+                | Field::Somaxconn
+                | Field::SynBacklog
+                | Field::NetdevBacklog
+                | Field::MtuProbing
+                | Field::Fastopen
+                | Field::Syncookies
+                | Field::SwapSize
+                | Field::Swappiness
+                | Field::Username
+                | Field::SshPort
+                | Field::WebPort
+        ) {
+            let mut args = vec![
+                CHOICES[self.choice].1.to_owned(),
+                format!("{}={}", field.option(), value.trim()),
+            ];
+            if field == Field::Swappiness {
+                args.push("--swapfile-mib=2048".into());
+            }
+            parse_args(args).map_err(safe_cli_error)?;
+        }
+        Ok(())
+    }
+    pub fn invalid_field(&self) -> Option<Field> {
+        let mut fields = Vec::new();
+        if self.has_account() {
+            fields.extend([Field::Username, Field::SshPort, Field::WebPort]);
+        }
+        if self.is_automatic() {
+            fields.extend([Field::Hostname, Field::Timezone, Field::Disk, Field::Mtu]);
+            fields.extend_from_slice(TCP_FIELDS);
+            if self.draft().swap_enabled {
+                fields.extend([Field::SwapSize, Field::Swappiness]);
+            }
+        }
+        fields.into_iter().find(|field| {
+            self.validate_input(*field, self.draft().get(*field))
+                .is_err()
+        })
+    }
     pub fn build_plan(&self) -> Result<Box<InstallPlan>, String> {
         let draft = self.draft();
         if self.is_automatic() && draft.hold == Some(1) {
             return Err("For rescue mode, choose Alpine Live from the system list".into());
         }
-        if self.choice == 4
+        if self.route() == Route::LocalIso
             && draft.iso_mode == IsoMode::Kernel
             && (draft.get(Field::IsoKernel).trim().is_empty()
                 || draft.get(Field::IsoInitrd).trim().is_empty())
@@ -52,7 +105,7 @@ impl Wizard {
                 add(Field::Swappiness);
             }
         }
-        if self.choice == 4 {
+        if self.route() == Route::LocalIso {
             add(Field::IsoPath);
             if draft.iso_mode == IsoMode::Loopback {
                 add(Field::IsoConfig);
@@ -96,15 +149,13 @@ impl Wizard {
                 args.push(format!("--hold={hold}"));
             }
         }
-        if self.choice == 5 {
+        if self.route() == Route::Rescue {
             args.push("--hold=1".into());
             if draft.generic_kernel {
                 args.push("--no-cloud-kernel".into());
             }
         }
-        if let Some(boot) = draft.boot
-            && self.choice != 7
-        {
+        if let Some(boot) = draft.boot {
             args.push(format!("--force-boot-mode={}", boot.as_str()));
         }
         if draft.debug {
@@ -275,7 +326,7 @@ impl Wizard {
                 ),
                 format!(
                     "MTU: {}",
-                    optional_label(draft.get(Field::Mtu), "Keep interface configuration")
+                    optional_label(draft.get(Field::Mtu), "Target defaults; not inherited")
                 ),
             ]);
             for field in TCP_FIELDS {
@@ -306,7 +357,7 @@ impl Wizard {
                 draft.display(Field::RootPassword)
             ));
         }
-        if self.choice == 5 {
+        if self.route() == Route::Rescue {
             lines.extend([
                 "Mode: rescue (hold=1), no automatic partitioning".into(),
                 format!("Generic kernel: {}", yes_no(draft.generic_kernel)),
@@ -319,7 +370,7 @@ impl Wizard {
                 format!("frpc: {}", draft.display(Field::Frpc)),
             ]);
         }
-        if self.choice == 4 {
+        if self.route() == Route::LocalIso {
             lines.extend([
                 format!("ISO: {}", draft.display(Field::IsoPath)),
                 format!("ISO boot: {}", iso_label(draft.iso_mode)),
@@ -339,13 +390,11 @@ impl Wizard {
                     .into(),
             );
         }
-        if self.choice != 7 {
-            lines.push(format!("Boot mode: {}", boot_label(draft.boot)));
-        }
+        lines.push(format!("Boot mode: {}", boot_label(draft.boot)));
         lines.push(format!("Debug output: {}", yes_no(draft.debug)));
         lines.extend([
             "".into(),
-            "Installation requires final disk identity confirmation in the native terminal.".into(),
+            if self.route().media() { "Media boot interrupts connectivity and reboots without formatting disks. Exact boot confirmation and active-GRUB attestation are required.".into() } else { "Installation requires final disk identity confirmation in the native terminal.".into() },
             "BIOS/UEFI acceptance status is reported separately; unit tests do not prove boot compatibility.".into(),
         ]);
         lines

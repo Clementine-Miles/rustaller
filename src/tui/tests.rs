@@ -705,12 +705,7 @@ fn rescue_and_manual_targets_match_cli_and_hide_installation_categories() {
     choose(&mut wizard, 6);
     wizard.draft_mut().boot = Some(BootMode::Bios);
     assert_same_plan(&wizard, &["netboot.xyz", "--force-boot-mode", "bios"]);
-    choose(&mut wizard, 7);
-    assert_same_plan(&wizard, &["reset"]);
-    press(&mut wizard, KeyCode::Enter);
-    assert_same_plan(&wizard, &["reset", "--debug"]);
-    assert!(wizard.summary().join("\n").contains("Debug output: On"));
-    for index in [4, 6, 7] {
+    for index in [4, 6] {
         choose(&mut wizard, index);
         assert!(!wizard.entries().iter().any(|entry| matches!(
             entry.action,
@@ -1232,7 +1227,7 @@ fn hostname_prefill_keeps_explicit_values_and_target_drafts() {
 }
 
 #[test]
-fn all_eight_installation_routes_keep_their_indices_and_independent_drafts() {
+fn supported_routes_keep_independent_drafts() {
     let mut wizard = wizard();
     assert_eq!(wizard.entries().len(), 2);
     assert_eq!(wizard.drafts.len(), super::state::CHOICES.len());
@@ -1271,4 +1266,166 @@ fn all_eight_installation_routes_keep_their_indices_and_independent_drafts() {
         wizard.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
         Progress::Cancel
     ));
+}
+
+#[test]
+fn preflight_is_a_separate_stage_and_failed_checks_cannot_execute() {
+    let mut wizard = wizard();
+    choose(&mut wizard, 1);
+    credentials(&mut wizard);
+    press(&mut wizard, KeyCode::F(2));
+    assert!(matches!(
+        wizard.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Progress::Preflight(_)
+    ));
+    wizard.preflight_complete(Err("unsupported source network".into()));
+    assert!(matches!(
+        wizard.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Progress::Continue
+    ));
+    assert!(matches!(
+        wizard.view,
+        View::Preflight { success: false, .. }
+    ));
+    press(&mut wizard, KeyCode::Esc);
+    press(&mut wizard, KeyCode::F(2));
+    assert!(matches!(
+        wizard.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Progress::Preflight(_)
+    ));
+    wizard.preflight_complete(Ok("verified host; test-password".into()));
+    let View::Preflight { message, .. } = &wizard.view else {
+        panic!("preflight report")
+    };
+    assert!(!message.contains("test-password"));
+    assert!(matches!(
+        wizard.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Progress::Ready(_)
+    ));
+}
+
+#[test]
+fn repeat_and_release_events_cannot_submit_generate_or_delete() {
+    use crossterm::event::{KeyEventKind, KeyEventState};
+    let repeat = |code| KeyEvent {
+        code,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Repeat,
+        state: KeyEventState::NONE,
+    };
+    let mut wizard = wizard();
+    choose(&mut wizard, 1);
+    credentials(&mut wizard);
+    for view in [
+        View::Menu,
+        View::Review { scroll: 0 },
+        View::Preflight {
+            success: true,
+            message: "passed".into(),
+            scroll: 0,
+        },
+        View::Outcome {
+            success: false,
+            message: "failed".into(),
+            scroll: 0,
+        },
+    ] {
+        wizard.view = view;
+        assert!(matches!(
+            wizard.key(repeat(KeyCode::Enter)),
+            Progress::Continue
+        ));
+    }
+    wizard.view = View::Menu;
+    wizard
+        .draft_mut()
+        .keys
+        .push(super::editor::TextValue::new("ssh-ed25519 AAAA test"));
+    wizard.frames.push(MenuFrame {
+        page: Page::KeyActions(0),
+        selected: 0,
+        offset: 0,
+        baseline: None,
+    });
+    let delete = wizard
+        .entries()
+        .iter()
+        .position(|entry| matches!(entry.action, Action::DeleteKey(0)))
+        .unwrap();
+    wizard.frames.last_mut().unwrap().selected = delete;
+    assert!(matches!(
+        wizard.key(repeat(KeyCode::Enter)),
+        Progress::Continue
+    ));
+    assert_eq!(wizard.draft().keys.len(), 1);
+    press(&mut wizard, KeyCode::Enter);
+    assert!(wizard.draft().keys.is_empty());
+    wizard.view = View::Edit {
+        slot: EditSlot::Field(Field::Hostname),
+        input: Editor::new("abc", false),
+    };
+    assert!(matches!(
+        wizard.key(repeat(KeyCode::Backspace)),
+        Progress::Continue
+    ));
+    assert!(matches!(&wizard.view, View::Edit { input, .. } if input.value.0 == "ab"));
+    assert!(matches!(
+        wizard.key(repeat(KeyCode::Enter)),
+        Progress::Continue
+    ));
+    assert!(matches!(wizard.view, View::Edit { .. }));
+}
+
+#[test]
+fn invalid_numeric_field_stays_focused_and_review_returns_to_the_setting() {
+    let mut wizard = wizard();
+    choose(&mut wizard, 1);
+    credentials(&mut wizard);
+    wizard.view = View::Edit {
+        slot: EditSlot::Field(Field::Mtu),
+        input: Editor::new("10000", false),
+    };
+    press(&mut wizard, KeyCode::Enter);
+    assert!(wizard.error.contains("MTU"));
+    assert!(matches!(
+        wizard.view,
+        View::Edit {
+            slot: EditSlot::Field(Field::Mtu),
+            ..
+        }
+    ));
+    press(&mut wizard, KeyCode::Esc);
+    set(&mut wizard, Field::Mtu, "10000");
+    press(&mut wizard, KeyCode::F(2));
+    assert_eq!(wizard.page(), Page::Mtu);
+}
+
+#[test]
+fn directory_snapshots_share_unchanged_secrets_and_discard_only_the_edited_draft() {
+    use std::rc::Rc;
+    let mut wizard = wizard();
+    choose(&mut wizard, 1);
+    credentials(&mut wizard);
+    let before = Rc::clone(&wizard.drafts[wizard.choice]);
+    open(&mut wizard, Page::Host);
+    set(&mut wizard, Field::Hostname, "changed");
+    assert!(Rc::ptr_eq(
+        &before.values[Field::Password as usize],
+        &wizard.draft().values[Field::Password as usize]
+    ));
+    assert_ne!(
+        before.get(Field::Hostname),
+        wizard.draft().get(Field::Hostname)
+    );
+    assert!(matches!(
+        wizard.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+        Progress::Continue
+    ));
+    press(&mut wizard, KeyCode::Down);
+    press(&mut wizard, KeyCode::Enter);
+    assert_eq!(
+        wizard.draft().get(Field::Hostname),
+        before.get(Field::Hostname)
+    );
+    assert_eq!(wizard.draft().get(Field::Password), "test-password");
 }

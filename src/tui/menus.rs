@@ -1,7 +1,7 @@
 use super::fields::{Field, TCP_FIELDS};
 use super::state::{
-    Action, Authentication, CHOICES, DnsProvider, EditSlot, Entry, IsoMode, Page, Setting, Wizard,
-    boot_label, hold_label, iso_label, optional_label, yes_no,
+    Action, Authentication, CHOICES, DnsProvider, EditSlot, Entry, IsoMode, Page, Route, Setting,
+    Wizard, boot_label, hold_label, iso_label, optional_label, yes_no,
 };
 use rustaller::config::{AddressPreference, CongestionControl, Ipv6Policy, QueueDiscipline};
 use rustaller::config::{DnsMode, InstallProfile, RootFilesystem};
@@ -20,7 +20,7 @@ impl Wizard {
                 add("Quit".into(), Action::Quit);
             }
             Page::Targets => {
-                for (index, (label, _)) in CHOICES.iter().enumerate() {
+                for (index, (label, _, _)) in CHOICES.iter().enumerate() {
                     add((*label).into(), Action::Target(index));
                 }
             }
@@ -37,22 +37,14 @@ impl Wizard {
                     add("Network and DNS  ›".into(), Action::Open(Page::Network));
                     add("Target swapfile  ›".into(), Action::Open(Page::Swap));
                 }
-                if self.choice == 4 {
+                if self.route() == Route::LocalIso {
                     add("ISO media  ›".into(), Action::Open(Page::Iso));
                 }
-                if self.choice != 7 {
-                    add("Disk and boot  ›".into(), Action::Open(Page::Boot));
-                }
+                add("Disk and boot  ›".into(), Action::Open(Page::Boot));
                 if self.has_account() {
                     add(
                         "Resources and logs  ›".into(),
                         Action::Open(Page::Resources),
-                    );
-                }
-                if self.choice == 7 {
-                    add(
-                        format!("Debug output: {}", yes_no(draft.debug)),
-                        Action::ToggleDebug,
                     );
                 }
                 add("Review installation  >".into(), Action::Review);
@@ -189,7 +181,7 @@ impl Wizard {
                     format!(
                         "DNS provider: {}",
                         if draft.dns_mode == DnsMode::Auto {
-                            "Automatic / unchanged"
+                            "Automatic (DHCP/RA upstreams)"
                         } else {
                             draft.dns_provider.label()
                         }
@@ -257,7 +249,7 @@ impl Wizard {
                 add(
                     format!(
                         "MTU: {}",
-                        optional_label(draft.get(Field::Mtu), "Keep interface configuration")
+                        optional_label(draft.get(Field::Mtu), "Target defaults; not inherited")
                     ),
                     Action::Edit(EditSlot::Field(Field::Mtu)),
                 );
@@ -337,13 +329,13 @@ impl Wizard {
                         Action::Select(Setting::Hold),
                     );
                 }
-                if self.choice == 5 {
+                if self.route() == Route::Rescue {
                     add(
                         format!("Generic kernel: {}", yes_no(draft.generic_kernel)),
                         Action::ToggleGeneric,
                     );
                 }
-                if matches!(self.choice, 4 | 6) {
+                if self.route().media() {
                     add(
                         format!("Debug output: {}", yes_no(draft.debug)),
                         Action::ToggleDebug,
@@ -407,7 +399,7 @@ impl Wizard {
                 "minimal (trim documentation/cache)",
             ],
             Setting::DnsMode => vec![
-                "auto (automatic / unchanged DNS)",
+                "auto (DHCP/RA DNS)",
                 "Custom DNS (IPv4/IPv6 addresses)",
                 "Cloudflare (1.1.1.1 / 1.0.0.1)",
                 "Google (8.8.8.8 / 8.8.4.4)",
@@ -422,14 +414,9 @@ impl Wizard {
             }
             Setting::KeyType => vec!["ed25519", "rsa"],
             Setting::KeyCipher => ssh_keygen::CIPHERS.to_vec(),
-            Setting::Kernel => KernelChoice::choices_for(match self.choice {
-                0 => Target::Alpine,
-                1 => Target::Debian,
-                2 => Target::Arch,
-                _ => Target::Gentoo,
-            })
-            .split('/')
-            .collect(),
+            Setting::Kernel => KernelChoice::choices_for(self.route().target())
+                .split('/')
+                .collect(),
         }
     }
     pub(super) fn setting_index(&self, setting: Setting) -> usize {

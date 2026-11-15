@@ -60,8 +60,8 @@ BIOS and 64-bit EFI layouts; EFI uses removable/no-nvram fallback.
 `DeploymentManifest` separately records disk identity and validated source
 network facts. Handoff encoding is bounded and rejects incompatible versions.
 
-- `host/handoff.rs`: observe source addresses, authoritative network policy and
-  supported routing; refuse ambiguity before handoff.
+- `host/network.rs`: observe source addresses, applied policy and supported routing;
+  `host/handoff.rs` retains authenticated installation preparation and kexec.
 - `worker/initrd_network.rs`: restore connectivity in temporary Alpine Live.
 - `shared/network.rs`: pure final target rendering, kernel prerequisites, and
   publication of native interface/DNS/MTU/TCP/module/GAI configuration.
@@ -81,8 +81,13 @@ Systemd target files match MAC addresses directly and need no filename repair.
 Opt-in Arch CachyOS has a separate native first-boot full upgrade and
 initramfs/GRUB refresh; failure retains its pending marker for retry.
 
-ISO/netboot.xyz/reset models and validation components remain internal work in
-progress; their Rust execution paths are not connected. Unsupported source
+Reset execution is unavailable and hidden in the TUI. Netboot.xyz and Local ISO
+share `host/media.rs` for confirmed one-shot GRUB publication; ISO inspection
+and rendering remain in `host/iso.rs`. TUI routes are typed, with separate plan,
+read-only preflight, native confirmation and execution stages. `tui/draft.rs`
+owns shared snapshots and copy-on-write field values.
+
+Unsupported source
 network managers, complex routing, containers, ARM/Windows, Secure Boot and
 provider-controlled boot contracts are not assumed compatible. See
 [installation](INSTALLATION.md), [configuration](CONFIGURATION.md),

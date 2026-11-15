@@ -57,7 +57,7 @@ Run without arguments on an interactive terminal to open the English TUI.
 Choose a distribution, configure the account/SSH, target, network and optional
 settings, then review. Drafts are separate per selection. Save keeps a draft in
 memory; discard restores its entry snapshot. Returning from an error does not
-retry an action. `Ctrl-C` cancels editing. Credential fields are masked.
+retry an action. `Esc` cancels the current edit; `Ctrl-C` exits the application. Credential fields are masked.
 
 Example of read-only installation inspection:
 
@@ -90,8 +90,56 @@ enters the plan. Back up the private key to the client before erasing its disk.
 - `--minimal`, `--with-tools`, `--keep-docs` and `--keep-package-cache` control
   package policy; `--swapfile-mib` and `--swappiness` are opt-in target settings.
 
-See [configuration](CONFIGURATION.md) for ranges and compatibility. Local ISO,
-netboot.xyz and reset execution are not connected; menu/model presence does not
-make them supported installation routes. Installation failure retains Alpine
-Live rescue instead of requesting the final reboot. Actual first-boot network,
-kernel/filesystem and firmware acceptance remains listed in [testing](TESTING.md).
+See [configuration](CONFIGURATION.md) for ranges and compatibility. Installation
+failure retains Alpine Live rescue. Runtime acceptance remains listed in
+[testing](TESTING.md).
+
+## netboot.xyz and Local ISO
+
+These routes reboot through the existing GRUB without partitioning or formatting.
+They require Linux x86_64, root, supported BIOS/64-bit EFI with Secure Boot
+disabled, and one inspected GRUB under `/boot/grub` or `/boot/grub2`. Its
+1024-byte environment must be on plain ext2/3/4 without encryption/LVM/RAID;
+the generated configuration must load and clear `next_entry` and source adjacent
+`custom.cfg`. Required platform modules and native GRUB tools must exist.
+The operator must explicitly attest that this GRUB is the firmware's active
+bootloader; files alone cannot prove BIOS disk selection. Other loaders fail
+preflight. Firmware mode cannot be switched. No NVRAM writes are made.
+
+```console
+./rustaller netboot.xyz --inspect
+./rustaller iso --iso /root/linux.iso --inspect
+./rustaller iso --iso /root/linux.iso --iso-kernel /casper/vmlinuz \
+  --iso-initrd /casper/initrd --iso-cmdline 'boot=casper iso-scan/filename=%ISO_PATH%' --inspect
+```
+
+Review the output, then rerun without `--inspect`; noninteractive callers use
+`--confirm-handoff 'EXACT_BOOT-ONCE_TOKEN'`. This interrupts connectivity and
+reboots. `--confirm-erase` is reserved for installation. TUI routes use the
+same implementation, with read-only preflight before native confirmation.
+
+netboot.xyz downloads the official HTTPS iPXE artifact and checksum manifest,
+checks SHA-256 and the firmware-specific image format, then uses BIOS
+`linux16` or UEFI `chainloader`. iPXE needs its own working NIC/network/DHCP;
+source static networking is not transferred into iPXE.
+
+Local ISO reuses read-only loop inspection. Media must expose its own
+`/boot/grub/loopback.cfg` (or an explicit config path), or the supplied Linux
+kernel and initrd paths. Windows layouts, encrypted storage, unsafe paths and
+boot files escaping the mount are rejected. `%ISO_PATH%` and `%ISO_UUID%`
+are supported substitutions. Root must trust the ISO, including its GRUB code;
+the SHA-256 confirmation detects changes, not publisher authenticity. These
+are media-specific Linux boot contracts, not universal ISO compatibility.
+
+The original default entry is retained. The new entry is visible only when the
+one-shot default selects it. GRUB consumes `next_entry` before entering media.
+Preparation failures restore prior custom configuration/environment where writes
+occurred; rollback failures retain private backups and an explicit error.
+A killed process after arming can leave a one-shot request. From a rescue console,
+use the matching native `grub-editenv /boot/grub/grubenv unset next_entry`
+(adjust grub2 paths), read `rustaller-media/state.before` for original presence/modes, restore
+`custom.before` if originally present or remove
+the newly created custom file, and inspect/remove only the private
+`rustaller-media` directory. Do not remove an outstanding ISO mount recursively.
+Successful boots leave guarded staging/backups for manual cleanup after returning
+to the original OS. BIOS/UEFI media acceptance is still unverified.

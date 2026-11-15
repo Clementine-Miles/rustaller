@@ -27,7 +27,7 @@ continuation or reboot. Rendering tests are not native boot or connectivity test
 Fixture timezone files are compiled IANA public-domain data; they do not read the
 host timezone database. No test activates host swap or changes host networking.
 
-## Current verification
+## Previous consolidation evidence (5fbfaa1)
 
 The consolidation was checked with plan schema 7 and the matching runtime marker:
 
@@ -123,3 +123,34 @@ credentials/root SSH policy, swap allocation/activation and CachyOS ISA/upgrade
 retry. Failure scenarios include changed/ambiguous disk identity, mounted/active
 swap, read-only disks, low RAM, downloads/signatures, missing drivers and final
 SSH/GRUB validation. See [security](SECURITY.md) for code-level boundaries.
+
+## Boot integration and TUI verification
+
+The phased implementation adds Rust tests for firmware-specific netboot formats,
+checksum mismatch, exact reboot confirmation, unsupported GRUB prerequisites,
+state changes, publication/arming/reboot failures and restoration. Both ISO modes
+reach the shared publisher in mocked BIOS/UEFI cases. ISO tests inspect read-only
+mount/unmount behavior; digest changes block execution. TUI tests cover separate
+preflight, blocked execution, repeated keys, focused validation and shared secret
+snapshots. PTY tests include interruption during native ssh-keygen prompts.
+
+The retained VM harness now accepts `media` with `--target netboot.xyz|iso`,
+`--installer`, the normal disposable source/key/firmware options, and a required
+`--expect-serial TEXT` marker. ISO needs `--iso` and `--sha256`; optional
+`--iso-config`, `--iso-kernel`, `--iso-initrd`, `--iso-cmdline` mirror the CLI.
+It dispatches the real scoped confirmation inside a fresh guest, then requires
+one firmware reset and the requested marker in new serial output. This proves
+only the selected marker/boot scope; it is not distribution installation acceptance.
+The guest must satisfy the documented GRUB filesystem/module contract.
+
+QEMU and /dev/kvm are unavailable here. Netboot artifact GETs returned HTTP 403;
+upstream README/build recipes were reviewed via the official Git repository.
+No actual netboot or ISO BIOS/UEFI boot pass is established, including the new
+harness path. No development-host boot state was changed.
+
+For this implementation, formatting, strict all-target/all-feature Clippy,
+workspace tests, xtask check, static musl bundling with exact worker embedding,
+VM harness help, debug/static executable help and diff hygiene passed. CLI media
+inspection refused missing root privileges, and media --confirm-erase was rejected
+before preparation. Documentation link checks passed. These checks establish
+static/mocked behavior and terminal recovery, not real firmware boot success.

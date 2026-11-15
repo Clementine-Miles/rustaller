@@ -19,7 +19,7 @@ Installation requires root, successful preflight and the exact disk-identity
 confirmation. `--inspect` is read-only. Optional settings include XFS/ext4,
 distribution kernels, SSH/accounts, DNS/network policy and a target-only swapfile.
 The automatic path requires kexec and performs one final reboot; failure retains
-Live rescue. ISO/netboot.xyz/reset execution is not connected.
+Live rescue. netboot.xyz and Local ISO use a confirmed one-shot GRUB boot. Reset execution is unavailable. See installation requirements; real media boot acceptance remains unverified.
 
 Source network capture currently requires an applied explicit flat networkd
 profile; unsupported managers and routing stop preparation before erasure.

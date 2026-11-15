@@ -78,3 +78,24 @@ Package/initramfs/GRUB/SSH verification failures stop finalization. The final
 reboot is requested only after successful verification, unmount and sync; failed
 installation retains Alpine Live rescue. There is no automatic restoration of
 an already-erased disk.
+
+## One-shot media boots
+
+Media boots use a distinct BOOT-ONCE confirmation, with explicit active-GRUB
+attestation. Inspection is read-only apart from private temporary ISO mountpoints;
+mounts use ro,nosuid,nodev,noexec and are unmounted on inspection errors. SHA-256
+binds ISO content to confirmation. Official netboot HTTPS plus the same-origin
+checksum manifest provides transport authentication and integrity consistency;
+it is not an independently signed release. ISO GRUB configurations are trusted
+executable media content. These routes do not erase disks, but the launched
+installer may offer destructive actions under its own controls.
+
+Publication touches adjacent custom.cfg, private staging and the GRUB environment.
+The main grub.cfg, saved default and NVRAM are preserved. Files are individually
+replaced; this is not a multi-file atomic transaction. Recovery backups cover
+ordinary errors; SIGKILL/power loss can leave staging or an armed one-shot boot.
+Native GRUB environment persistence and firmware selection require VM acceptance.
+
+Media preparation assumes exclusive bootloader access; do not run concurrent GRUB
+maintenance. Private state.before records original custom-file presence and modes
+for interrupted-preparation recovery.

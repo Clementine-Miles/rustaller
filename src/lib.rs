@@ -11,6 +11,8 @@ pub mod host {
     pub mod hostname;
     pub mod initrd;
     pub mod iso;
+    pub mod media;
+    pub mod network;
     pub mod password;
     pub mod preflight;
     pub mod sources;
@@ -52,3 +54,7 @@ pub fn worker_bytes() -> &'static [u8] {
     // discard the complete worker from the release executable.
     std::hint::black_box(EMBEDDED_WORKER)
 }
+
+#[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+mod test_support;

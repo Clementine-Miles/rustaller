@@ -7,6 +7,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use rustaller::model::InstallPlan;
 use std::io;
 
+mod draft;
 mod editor;
 mod fields;
 mod menus;
@@ -15,7 +16,7 @@ mod render;
 mod state;
 use state::{Progress, Wizard};
 
-const PREVIEW: &str = "Review before applying. Installation erases the selected disk; SSH key generation writes local files.";
+const PREVIEW: &str = "Linux reinstallation and media boot. Installation erases disks; media boot reboots; SSH key generation writes files.";
 
 struct TerminalMode;
 impl Drop for TerminalMode {
@@ -30,7 +31,10 @@ impl Drop for TerminalMode {
     }
 }
 
-pub fn run(mut execute: impl FnMut(&InstallPlan) -> Result<(), String>) -> Result<(), String> {
+pub fn run(
+    mut preflight: impl FnMut(&InstallPlan) -> Result<String, String>,
+    mut execute: impl FnMut(&InstallPlan) -> Result<(), String>,
+) -> Result<(), String> {
     enable_raw_mode().map_err(|error| error.to_string())?;
     let _mode = TerminalMode;
     execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)
@@ -47,6 +51,10 @@ pub fn run(mut execute: impl FnMut(&InstallPlan) -> Result<(), String>) -> Resul
         match event::read().map_err(|error| error.to_string())? {
             Event::Key(key) if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) => {
                 match wizard.key(key) {
+                    Progress::Preflight(plan) => {
+                        let result = native_terminal(&mut terminal, || preflight(&plan))?;
+                        wizard.preflight_complete(result);
+                    }
                     Progress::Ready(plan) => {
                         native_terminal(&mut terminal, || {
                             execute_ready(&mut wizard, &mut execute, &plan)

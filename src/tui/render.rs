@@ -143,7 +143,29 @@ impl Wizard {
                     summary.join("\n"),
                     scroll,
                 );
-                "Enter: continue to confirmation  Esc: edit  Up/Down/PgUp/PgDn: scroll"
+                "Enter: read-only preflight  Esc: edit  Up/Down/PgUp/PgDn: scroll"
+            }
+            View::Preflight {
+                success,
+                message,
+                scroll,
+            } => {
+                render_text(
+                    frame,
+                    body,
+                    if *success {
+                        "Read-only preflight passed"
+                    } else {
+                        "Preflight blocked"
+                    },
+                    message.clone(),
+                    scroll,
+                );
+                if *success {
+                    "Enter: final confirmation  Esc: edit  Up/Down: scroll"
+                } else {
+                    "Esc: edit settings; execution blocked  Up/Down: scroll"
+                }
             }
             View::Outcome {
                 success,
@@ -254,7 +276,7 @@ impl Wizard {
             centered_title,
         );
         frame.render_widget(
-            Paragraph::new("RUSTALLER | Install or configure Linux")
+            Paragraph::new("RUSTALLER | Linux reinstallation and media boot")
                 .alignment(Alignment::Center)
                 .wrap(Wrap { trim: false }),
             subtitle,

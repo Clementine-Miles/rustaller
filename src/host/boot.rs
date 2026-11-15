@@ -1,7 +1,7 @@
 use std::fmt;
 
 const TTY_CMDLINE: &str = "console=ttyS0,115200n8 console=tty0";
-const GRUBENV_HELPER: &str = concat!(
+pub(crate) const GRUBENV_HELPER: &str = concat!(
     "if ! [ -s $prefix/grubenv ]; then\n",
     "    for dir in /boot/grub /boot/grub2 /grub /grub2; do\n",
     "        set grubenv=\"($root)$dir/grubenv\"\n",
@@ -148,7 +148,7 @@ fn is_path_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || b"._~:/-".contains(&byte)
 }
 
-fn valid_grub_path(path: &str) -> bool {
+pub(crate) fn valid_grub_path(path: &str) -> bool {
     path.starts_with('/')
         && path
             .bytes()

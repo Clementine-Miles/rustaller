@@ -30,7 +30,7 @@ fn run() -> Result<(), String> {
     if args.is_empty() {
         if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
             #[cfg(feature = "tui")]
-            return tui::run(run_plan);
+            return tui::run(preflight_plan, run_plan);
             #[cfg(not(feature = "tui"))]
             return Err("interactive TUI is not available in this development build".into());
         }
@@ -52,6 +52,37 @@ fn run() -> Result<(), String> {
     }
 }
 
+#[cfg(feature = "tui")]
+fn preflight_plan(plan: &InstallPlan) -> Result<String, String> {
+    let mut runner = SystemRunner;
+    if plan.target.is_automatic() {
+        let deployment = handoff::discover(&mut runner, plan).map_err(|e| e.to_string())?;
+        let mut report = format!(
+            "Linux x86_64; root privilege and host prerequisites passed.\nFirmware: {}\nDisk: {} ({} bytes)\nSerial: {} WWN: {} PTUUID: {}\nNative kexec/init and disk geometry checks passed.\n",
+            deployment.manifest.boot_mode.as_str(),
+            deployment.manifest.disk.device,
+            deployment.manifest.disk.size_bytes,
+            deployment.manifest.disk.serial,
+            deployment.manifest.disk.wwn,
+            deployment.manifest.disk.partition_table_id
+        );
+        for nic in &deployment.manifest.network {
+            report.push_str(&format!(
+                "{} MAC={} DHCPv4={} DHCPv6={} RA={}\n",
+                nic.name, nic.mac, nic.dhcp4, nic.dhcp6, nic.accept_ra
+            ));
+        }
+        report.push_str("Applied source policy, supported routing and target policy validated.\nNo disk writes, handoff staging or reboot performed. Execution repeats inspection and requires exact disk identity confirmation.");
+        Ok(report)
+    } else {
+        let boot = rustaller::host::media::discover(&mut runner, plan)?;
+        Ok(format!(
+            "Linux x86_64; root and host prerequisites passed.\nFirmware: {}\nGRUB filesystem, one-shot environment and loader modules checked.\n{}\nNo boot entries or NVRAM changed; kexec is not used.\nMedia owns its network setup; netboot.xyz needs working iPXE DHCP/network access.\nFinal confirmation must attest that the inspected GRUB is the active bootloader.\nBIOS/UEFI VM acceptance remains unverified.",
+            boot.firmware.as_str(),
+            boot.confirmation
+        ))
+    }
+}
 fn run_plan(plan: &InstallPlan) -> Result<(), String> {
     run_install(plan, None, false)
 }
@@ -61,8 +92,36 @@ fn run_install(
     provided_confirmation: Option<&str>,
     inspect: bool,
 ) -> Result<(), String> {
+    if matches!(
+        plan.target,
+        rustaller::model::Target::NetbootXyz | rustaller::model::Target::LocalIso
+    ) {
+        let mut runner = SystemRunner;
+        let boot = rustaller::host::media::discover(&mut runner, plan)?;
+        println!(
+            "One-shot {} GRUB boot: {}\nNo disk formatting. This reboots and interrupts connectivity.\nConfirmation: {}",
+            plan.target,
+            boot.firmware.as_str(),
+            boot.confirmation
+        );
+        if inspect {
+            return Ok(());
+        }
+        let confirmation = match provided_confirmation {
+            Some(value) => value.to_owned(),
+            None => {
+                if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+                    return Err("Use --inspect, then --confirm-handoff with the exact BOOT-ONCE token; confirm the installed GRUB is the active bootloader".into());
+                }
+                print!("Confirm active GRUB and reboot by typing the complete token: ");
+                io::stdout().flush().map_err(|e| e.to_string())?;
+                read_confirmation(&mut io::stdin().lock()).map_err(|e| e.to_string())?
+            }
+        };
+        return boot.execute(&mut runner, &confirmation);
+    }
     if !plan.target.is_automatic() {
-        return Err("This Rust handoff entry supports Alpine, Debian, Arch, Gentoo and Alpine Live rescue. Interactive media handoff is not connected.".into());
+        return Err("Reset execution is unavailable. Select an installation, rescue or supported media boot route.".into());
     }
     // Own the resolved plan: hostname discovery and a terminal root-password
     // prompt must be serialized before crossing into Live, never rediscovered there.

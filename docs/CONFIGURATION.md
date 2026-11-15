@@ -128,3 +128,7 @@ full allocation, 0600, regular-file identity and one fstab entry are checked.
 Existing files/swap are not adopted, resized or activated in source/Live. Target
 boot activates the file. Swap size is not reserved RAM and does not change RAM
 preflight floors. Runtime activation still requires [acceptance](TESTING.md).
+
+Media routes configure a one-shot host boot, not a future target system. They
+reject account, target networking, swap and installation options. See
+[installation](INSTALLATION.md) for ISO modes and boot confirmations.

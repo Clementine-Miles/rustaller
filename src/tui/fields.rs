@@ -120,9 +120,8 @@ impl Field {
             Self::Password | Self::Confirm | Self::RootPassword | Self::RootConfirm => {
                 "Hidden input. Leading/trailing spaces are preserved; both passwords must match."
             }
-            Self::SshPort | Self::WebPort => {
-                "Use a port from 1 to 65535. The installation default is 22."
-            }
+            Self::SshPort => "Use a port from 1 to 65535. SSH default: 22.",
+            Self::WebPort => "Use a port from 1 to 65535. Web-log default: 80.",
             Self::Hostname => {
                 "One ASCII label, 1-63 letters, digits or hyphens. Blank: use the existing hostname, then the target system name."
             }
@@ -152,7 +151,7 @@ impl Field {
                 "Optional: up to 6 ASCII domains, for example example.internal,lab.example. No protocol or path."
             }
             Self::Mtu => {
-                "Optional: 1280-9000 for non-loopback interfaces. Use the provider's supported MTU; no automatic probing."
+                "Optional: 1280-9000 for non-loopback interfaces. Use the provider's supported MTU; no automatic probing. Blank uses target defaults, not guaranteed source MTU inheritance."
             }
             Self::TcpBuffer => {
                 "Optional: 1-64 MiB maximum per-socket buffer, not reserved RAM. No performance improvement is guaranteed."

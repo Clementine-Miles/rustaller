@@ -264,7 +264,7 @@ mod iso {
             runner.calls()[3].args,
             [
                 "-o",
-                "loop,ro",
+                "loop,ro,nosuid,nodev,noexec",
                 image.to_str().unwrap(),
                 check_dir.to_str().unwrap()
             ]

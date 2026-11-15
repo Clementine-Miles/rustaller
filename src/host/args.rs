@@ -11,7 +11,6 @@ Targets:
   gentoo       Gentoo Linux
   netboot.xyz  Start the netboot.xyz installer
   iso          Boot a local Linux ISO without formatting disks
-  reset        Remove the previously installed rustaller boot entry
 
 Options:
   --username USERNAME           Target account name
@@ -57,9 +56,9 @@ Options:
   --iso-initrd PATH             Initrd path in the ISO
   --iso-cmdline TEXT            Kernel command line for custom ISO boot
   --debug, -x                   Enable debug diagnostics
-  --inspect                    Read-only disk identity and handoff inspection
+  --inspect                    Read-only target-specific compatibility inspection
   --confirm-erase TOKEN        Exact identity token from --inspect (no prompt)
-  --confirm-handoff TOKEN      Explicit handoff token (also supports Live rescue)
+  --confirm-handoff TOKEN      Exact handoff/BOOT-ONCE token from --inspect
   --help, -h                    Show this help
 
 Linux x86_64 hosts only. Automatic installation erases the selected disk.
@@ -123,6 +122,7 @@ where
     let mut target = None;
     let mut inspect = false;
     let mut confirmation = None;
+    let mut erase_confirmation = false;
     let mut dns_mode = None;
     let mut options = InstallPlan::new(Target::Reset);
     let mut iso_fields = IsoOptions {
@@ -165,6 +165,7 @@ where
                 index += 1;
             }
             "--confirm-erase" | "--confirm-handoff" => {
+                erase_confirmation = name == "--confirm-erase";
                 let (value, consumed) = take_value(&args, index, &name, inline_value)?;
                 if confirmation.is_some()
                     || value.len() > 4096
@@ -414,7 +415,15 @@ where
         iso.config = Some("/boot/grub/loopback.cfg".to_owned());
     }
     plan.validate().map_err(CliError::InvalidPlan)?;
-    if (inspect || confirmation.is_some()) && !plan.target.is_automatic() {
+    if erase_confirmation && !plan.target.is_automatic() {
+        return Err(CliError::InvalidValue(
+            "media boots require --confirm-handoff, not --confirm-erase".into(),
+        ));
+    }
+    if (inspect || confirmation.is_some())
+        && !plan.target.is_automatic()
+        && !matches!(plan.target, Target::NetbootXyz | Target::LocalIso)
+    {
         return Err(CliError::InvalidValue(
             "--inspect/--confirm-erase require automatic installation".into(),
         ));

@@ -1,169 +1,51 @@
 use super::editor::{Editor, TextValue};
 pub(super) use super::fields::Field;
 use super::fields::TCP_FIELDS;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use rustaller::config::{AddressPreference, CongestionControl, Ipv6Policy, QueueDiscipline};
-use rustaller::config::{DnsMode, InstallProfile, RootFilesystem};
-use rustaller::host::ssh_keygen::{self, GeneratedKey, KeyType, KeygenOptions};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use rustaller::config::DnsMode;
+use rustaller::config::{CongestionControl, QueueDiscipline};
+use rustaller::host::ssh_keygen::{self, GeneratedKey, KeygenOptions};
 use rustaller::model::{BootMode, InstallPlan, Target};
 use rustaller::postinstall::KernelChoice;
 
-pub(super) const CHOICES: [(&str, &str); 8] = [
-    ("Alpine Linux", "alpine"),
-    ("Debian minimal", "debian"),
-    ("Arch Linux", "arch"),
-    ("Gentoo", "gentoo"),
-    ("Local Linux ISO", "iso"),
-    ("Rescue: Alpine Live", "alpine"),
-    ("Tool: netboot.xyz", "netboot.xyz"),
-    ("Tool: remove installation boot entry", "reset"),
+pub(super) const CHOICES: [(&str, &str, Route); 7] = [
+    ("Alpine Linux", "alpine", Route::Automatic(Target::Alpine)),
+    ("Debian minimal", "debian", Route::Automatic(Target::Debian)),
+    ("Arch Linux", "arch", Route::Automatic(Target::Arch)),
+    ("Gentoo", "gentoo", Route::Automatic(Target::Gentoo)),
+    ("Local Linux ISO", "iso", Route::LocalIso),
+    ("Rescue: Alpine Live", "alpine", Route::Rescue),
+    ("Tool: netboot.xyz", "netboot.xyz", Route::NetbootXyz),
 ];
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub(super) enum Authentication {
-    Password,
-    PublicKeys,
+pub(super) enum Route {
+    Automatic(Target),
+    LocalIso,
+    Rescue,
+    NetbootXyz,
 }
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub(super) enum IsoMode {
-    Loopback,
-    Kernel,
-}
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub(super) enum DnsProvider {
-    Custom,
-    Cloudflare,
-    Google,
-    Quad9,
-}
-impl DnsProvider {
-    pub fn label(self) -> &'static str {
+impl Route {
+    pub fn target(self) -> Target {
         match self {
-            Self::Custom => "Custom",
-            Self::Cloudflare => "Cloudflare",
-            Self::Google => "Google",
-            Self::Quad9 => "Quad9",
+            Self::Automatic(target) => target,
+            Self::LocalIso => Target::LocalIso,
+            Self::Rescue => Target::Alpine,
+            Self::NetbootXyz => Target::NetbootXyz,
         }
+    }
+    pub fn automatic(self) -> bool {
+        matches!(self, Self::Automatic(_))
+    }
+    pub fn has_account(self) -> bool {
+        self.automatic() || self == Self::Rescue
+    }
+    pub fn media(self) -> bool {
+        matches!(self, Self::LocalIso | Self::NetbootXyz)
     }
 }
-#[derive(Clone, Eq, PartialEq)]
-pub(super) struct Draft {
-    pub values: Vec<TextValue>,
-    pub keys: Vec<TextValue>,
-    pub authentication: Authentication,
-    pub kernel: KernelChoice,
-    pub boot: Option<BootMode>,
-    pub hold: Option<u8>,
-    pub iso_mode: IsoMode,
-    pub generic_kernel: bool,
-    pub debug: bool,
-    pub profile: InstallProfile,
-    pub dns_mode: DnsMode,
-    pub dns_provider: DnsProvider,
-    pub root_filesystem: RootFilesystem,
-    pub with_tools: bool,
-    pub keep_docs: bool,
-    pub keep_package_cache: bool,
-    pub congestion: CongestionControl,
-    pub qdisc: QueueDiscipline,
-    pub ipv6: Ipv6Policy,
-    pub address_preference: AddressPreference,
-    pub swap_enabled: bool,
-    pub key_type: KeyType,
-    pub key_cipher: usize,
-}
-impl Draft {
-    fn new(comment: &str, key_path: &str) -> Self {
-        let mut draft = Self {
-            values: (0..=Field::KeyBits as usize)
-                .map(|_| TextValue::new(""))
-                .collect(),
-            keys: Vec::new(),
-            authentication: Authentication::Password,
-            kernel: KernelChoice::Auto,
-            boot: None,
-            hold: None,
-            iso_mode: IsoMode::Loopback,
-            generic_kernel: false,
-            debug: false,
-            profile: InstallProfile::Standard,
-            dns_mode: DnsMode::Auto,
-            dns_provider: DnsProvider::Custom,
-            root_filesystem: RootFilesystem::Xfs,
-            with_tools: false,
-            keep_docs: false,
-            keep_package_cache: false,
-            congestion: CongestionControl::Default,
-            qdisc: QueueDiscipline::Default,
-            ipv6: Ipv6Policy::Inherit,
-            address_preference: AddressPreference::Default,
-            swap_enabled: false,
-            key_type: KeyType::Ed25519,
-            key_cipher: 0,
-        };
-        for (field, value) in [
-            (Field::Username, "root"),
-            (Field::SshPort, "22"),
-            (Field::WebPort, "80"),
-            (Field::SwapSize, "2048"),
-            (Field::KeyPath, key_path),
-            (Field::KeyRounds, "512"),
-            (Field::KeyComment, comment),
-            (Field::KeyBits, "4096"),
-        ] {
-            draft.set(field, value.to_owned());
-        }
-        draft
-    }
-    pub fn get(&self, field: Field) -> &str {
-        &self.values[field as usize].0
-    }
-    pub fn set(&mut self, field: Field, value: String) {
-        self.values[field as usize].replace(value);
-    }
-    pub fn display(&self, field: Field) -> String {
-        let value = self.get(field);
-        let value = if matches!(
-            field,
-            Field::Password | Field::Confirm | Field::RootPassword | Field::RootConfirm
-        ) {
-            value
-        } else {
-            value.trim()
-        };
-        if value.is_empty() {
-            return "Not set".into();
-        }
-        if field.secret() {
-            return "Configured (hidden)".into();
-        }
-        clean(value)
-    }
-    pub fn dns_servers(&self) -> String {
-        let ipv6 = self.ipv6 != Ipv6Policy::Disable;
-        match self.dns_provider {
-            DnsProvider::Custom => self.get(Field::DnsServers).trim().to_owned(),
-            DnsProvider::Cloudflare => if ipv6 {
-                "1.1.1.1,1.0.0.1,2606:4700:4700::1111"
-            } else {
-                "1.1.1.1,1.0.0.1"
-            }
-            .into(),
-            DnsProvider::Google => if ipv6 {
-                "8.8.8.8,8.8.4.4,2001:4860:4860::8888"
-            } else {
-                "8.8.8.8,8.8.4.4"
-            }
-            .into(),
-            DnsProvider::Quad9 => if ipv6 {
-                "9.9.9.9,149.112.112.112,2620:fe::fe"
-            } else {
-                "9.9.9.9,149.112.112.112"
-            }
-            .into(),
-        }
-    }
-}
+pub(super) use super::draft::{Authentication, DnsProvider, Draft, IsoMode};
+use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Page {
@@ -194,7 +76,7 @@ impl Page {
         match self {
             Self::Home => "Home",
             Self::Targets => "Choose a system",
-            Self::Overview => "System configuration",
+            Self::Overview => "Installation and boot",
             Self::Account => "Account and SSH",
             Self::Auth => "Authentication",
             Self::Passwords => "Password settings",
@@ -220,7 +102,7 @@ pub(super) struct MenuFrame {
     pub page: Page,
     pub selected: usize,
     pub offset: usize,
-    pub baseline: Option<Draft>,
+    pub baseline: Option<Rc<Draft>>,
 }
 #[derive(Clone, Copy)]
 pub(super) enum EditSlot {
@@ -281,6 +163,11 @@ pub(super) enum View {
     Review {
         scroll: usize,
     },
+    Preflight {
+        success: bool,
+        message: String,
+        scroll: usize,
+    },
     Outcome {
         success: bool,
         message: String,
@@ -297,6 +184,7 @@ pub(super) enum View {
 }
 pub(super) enum Progress {
     Continue,
+    Preflight(Box<InstallPlan>),
     Ready(Box<InstallPlan>),
     GenerateKey(KeygenOptions),
     Cancel,
@@ -325,7 +213,7 @@ pub(super) struct Entry {
 }
 pub(super) struct Wizard {
     pub choice: usize,
-    pub drafts: Vec<Draft>,
+    pub drafts: Vec<Rc<Draft>>,
     pub frames: Vec<MenuFrame>,
     pub view: View,
     pub error: String,
@@ -339,7 +227,7 @@ impl Wizard {
             .enumerate()
         {
             if self.drafts[index].get(Field::Hostname).trim().is_empty() {
-                self.drafts[index].set(
+                Rc::make_mut(&mut self.drafts[index]).set(
                     Field::Hostname,
                     rustaller::host::hostname::default_hostname(target, root),
                 );
@@ -356,7 +244,7 @@ impl Wizard {
             .to_string_lossy()
             .into_owned();
         let drafts: Vec<_> = (0..CHOICES.len())
-            .map(|_| Draft::new(&comment, &key_path))
+            .map(|_| Rc::new(Draft::new(&comment, &key_path)))
             .collect();
         Self {
             choice: 0,
@@ -376,31 +264,32 @@ impl Wizard {
         &self.drafts[self.choice]
     }
     pub fn draft_mut(&mut self) -> &mut Draft {
-        &mut self.drafts[self.choice]
+        Rc::make_mut(&mut self.drafts[self.choice])
     }
     pub fn page(&self) -> Page {
         self.frames.last().expect("root menu").page
     }
+    pub fn route(&self) -> Route {
+        CHOICES[self.choice].2
+    }
     pub fn is_automatic(&self) -> bool {
-        self.choice < 4
+        self.route().automatic()
     }
     pub fn selected_target(&self) -> Option<Target> {
-        match self.choice {
-            0 | 5 => Some(Target::Alpine),
-            1 => Some(Target::Debian),
-            2 => Some(Target::Arch),
-            3 => Some(Target::Gentoo),
-            _ => None,
-        }
+        self.route().has_account().then(|| self.route().target())
     }
     pub fn context_label(&self) -> String {
         CHOICES[self.choice].0.into()
     }
     pub fn has_account(&self) -> bool {
-        self.choice < 4 || self.choice == 5
+        self.route().has_account()
     }
     pub fn kernel_label(&self) -> &'static str {
-        if self.choice < 3 && self.draft().kernel == KernelChoice::Auto {
+        if matches!(
+            self.route(),
+            Route::Automatic(Target::Alpine | Target::Debian | Target::Arch)
+        ) && self.draft().kernel == KernelChoice::Auto
+        {
             "standard"
         } else {
             self.draft().kernel.as_str()
@@ -414,7 +303,7 @@ impl Wizard {
             baseline: if matches!(page, Page::Home | Page::Targets) {
                 None
             } else {
-                Some(self.draft().clone())
+                Some(Rc::clone(&self.drafts[self.choice]))
             },
         });
     }
@@ -440,7 +329,7 @@ impl Wizard {
             .frames
             .last()
             .and_then(|frame| frame.baseline.as_ref())
-            .is_some_and(|baseline| baseline != self.draft())
+            .is_some_and(|baseline| baseline.as_ref() != self.draft())
         {
             self.view = View::Leaving {
                 selected: 0,
@@ -530,6 +419,10 @@ impl Wizard {
     }
     fn commit(&mut self, slot: EditSlot, input: &mut Editor) -> Result<(), String> {
         let value = &input.value.0;
+        if let EditSlot::Field(field) = slot {
+            self.validate_input(field, value)
+                .map_err(|error| format!("{}: {error}", field.label()))?;
+        }
         match slot {
             EditSlot::Field(Field::Username) if !valid_username(value.trim()) => {
                 return Err(
@@ -581,10 +474,60 @@ impl Wizard {
         }
         match self.build_plan() {
             Ok(_) => self.view = View::Review { scroll: 0 },
-            Err(error) => self.error = error,
+            Err(error) => {
+                if let Some(field) = self.invalid_field() {
+                    let page = match field {
+                        Field::Hostname | Field::Timezone => Page::Host,
+                        Field::Mtu => Page::Mtu,
+                        Field::SwapSize | Field::Swappiness => Page::Swap,
+                        Field::IsoPath | Field::IsoConfig | Field::IsoKernel | Field::IsoInitrd => {
+                            Page::Iso
+                        }
+                        Field::Disk => Page::Boot,
+                        Field::SshPort | Field::Username => Page::Account,
+                        _ => Page::Tcp,
+                    };
+                    self.open(page);
+                    self.activate(Action::Edit(EditSlot::Field(field)));
+                    self.error = format!("{}: {error}", field.label());
+                } else {
+                    self.error = error;
+                }
+            }
         }
     }
     pub fn key(&mut self, key: KeyEvent) -> Progress {
+        if key.kind != KeyEventKind::Press {
+            let editing = matches!(self.view, View::Edit { .. });
+            let repeatable = if editing {
+                matches!(
+                    key.code,
+                    KeyCode::Char(_)
+                        | KeyCode::Backspace
+                        | KeyCode::Delete
+                        | KeyCode::Left
+                        | KeyCode::Right
+                        | KeyCode::Home
+                        | KeyCode::End
+                )
+            } else {
+                matches!(
+                    key.code,
+                    KeyCode::Up
+                        | KeyCode::Down
+                        | KeyCode::Tab
+                        | KeyCode::BackTab
+                        | KeyCode::Home
+                        | KeyCode::End
+                        | KeyCode::PageUp
+                        | KeyCode::PageDown
+                        | KeyCode::Char('j' | 'k')
+                )
+            };
+            if key.kind != KeyEventKind::Repeat || !repeatable {
+                return Progress::Continue;
+            }
+        }
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Progress::Cancel;
         }
@@ -664,7 +607,7 @@ impl Wizard {
             View::Review { mut scroll } => match key.code {
                 KeyCode::Esc | KeyCode::Left => {}
                 KeyCode::Enter => match self.build_plan() {
-                    Ok(plan) => return Progress::Ready(plan),
+                    Ok(plan) => return Progress::Preflight(plan),
                     Err(error) => {
                         self.error = error;
                         self.view = View::Review { scroll };
@@ -681,6 +624,27 @@ impl Wizard {
                         _ => {}
                     };
                     self.view = View::Review { scroll };
+                }
+            },
+            View::Preflight {
+                success,
+                message,
+                mut scroll,
+            } => match key.code {
+                KeyCode::Esc | KeyCode::Left => {}
+                KeyCode::Enter if success => match self.build_plan() {
+                    Ok(plan) => return Progress::Ready(plan),
+                    Err(error) => {
+                        self.error = error;
+                    }
+                },
+                _ => {
+                    scroll_text(key.code, &mut scroll);
+                    self.view = View::Preflight {
+                        success,
+                        message,
+                        scroll,
+                    };
                 }
             },
             View::Outcome {
@@ -738,6 +702,22 @@ impl Wizard {
                 Ok(()) => self.error.clear(),
                 Err(error) => self.error = error.into(),
             }
+        }
+    }
+    pub fn preflight_complete(&mut self, result: Result<String, String>) {
+        self.complete_message(result);
+        let view = std::mem::replace(&mut self.view, View::Menu);
+        if let View::Outcome {
+            success,
+            message,
+            scroll,
+        } = view
+        {
+            self.view = View::Preflight {
+                success,
+                message,
+                scroll,
+            };
         }
     }
     pub fn complete(&mut self, result: Result<(), String>) {

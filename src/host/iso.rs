@@ -5,7 +5,7 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
-const GRUBENV_HELPER: &str = "if ! [ -s $prefix/grubenv ]; then\n    for dir in /boot/grub /boot/grub2 /grub /grub2; do\n        set grubenv=\"($root)$dir/grubenv\"\n        if [ -s $grubenv ]; then\n            load_env --file $grubenv\n            if [ \"${next_entry}\" ]; then\n                set default=\"${next_entry}\"\n                set next_entry=\n                save_env --file $grubenv next_entry\n            else\n                set default=\"0\"\n            fi\n            return\n        fi\n    done\nfi\n";
+use super::boot::GRUBENV_HELPER;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ValidatedIsoOptions {
@@ -213,7 +213,11 @@ pub fn prepare_local_iso<R: CommandRunner>(
         return Err(IsoError::InvalidPath);
     }
 
-    if !check_dir.starts_with(managed_tmp) || has_symlink(check_dir) || has_symlink(managed_tmp) {
+    if check_dir == managed_tmp
+        || !check_dir.starts_with(managed_tmp)
+        || has_symlink(check_dir)
+        || has_symlink(managed_tmp)
+    {
         return Err(IsoError::ProtectedSource);
     }
     fs::create_dir_all(check_dir).map_err(IsoError::Filesystem)?;
@@ -221,7 +225,7 @@ pub fn prepare_local_iso<R: CommandRunner>(
         "mount",
         [
             "-o",
-            "loop,ro",
+            "loop,ro,nosuid,nodev,noexec",
             image.to_str().ok_or(IsoError::InvalidPath)?,
             check_dir.to_str().ok_or(IsoError::InvalidPath)?,
         ],
@@ -372,15 +376,14 @@ fn inspect_iso_contents(check_dir: &Path, options: &ValidatedIsoOptions) -> Resu
             return Err(IsoError::InvalidFilesystemLayout);
         }
     }
+    let contained_file = |path: &str| {
+        let file = check_dir.join(path.trim_start_matches('/'));
+        fs::canonicalize(&file).is_ok_and(|actual| actual.starts_with(check_dir))
+            && fs::metadata(file).is_ok_and(|meta| meta.is_file() && meta.len() > 0)
+    };
     let boot_files = match (&options.kernel, &options.initrd) {
-        (Some(kernel), Some(initrd)) => {
-            check_dir.join(kernel.trim_start_matches('/')).is_file()
-                && check_dir.join(initrd.trim_start_matches('/')).is_file()
-        }
-        _ => options
-            .config
-            .as_deref()
-            .is_some_and(|config| check_dir.join(config.trim_start_matches('/')).is_file()),
+        (Some(kernel), Some(initrd)) => contained_file(kernel) && contained_file(initrd),
+        _ => options.config.as_deref().is_some_and(contained_file),
     };
     if boot_files {
         Ok(())

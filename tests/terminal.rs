@@ -273,39 +273,18 @@ mod ui_terminal {
         std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
         let path = directory.join("client-key");
         let path_bytes = path.to_str().unwrap().as_bytes();
-        let input: Vec<(&[u8], Option<&str>)> = vec![
-            (b"\r", None), // Home -> choose a system
-            (b"\r", None),
-            (b"\r", None),
-            (b"\x1b[B", None),
-            (b"\r", None), // account/auth
-            (b"\r", None),
-            (b"\x1b[B", None),
-            (b"\r", None), // public key method
-            (b"\x1b[B", None),
-            (b"\r", None),
-            (b"\r", None), // keys/keygen
-            (b"\x1b[B", None),
-            (b"\r", None),
-            (b"\x15", None),
-            (b"1", None),
-            (b"\r", None), // test-only fast KDF
-            (b"\x1b[B", None),
-            (b"\x1b[B", None),
-            (b"\r", None),
-            (b"\x15", None),
-            (path_bytes, None),
-            (b"\r", None),
-            (b"\x1b[F", None),
-            (b"\x1b[A", None), // Last item is Back; generation is immediately above it.
-            (b"\r", Some("Enter passphrase")),
+        let mut input = keygen_input(path_bytes);
+        input.extend([
             (
-                b"NATIVE-PASSPHRASE-SENTINEL\r",
+                b"NATIVE-PASSPHRASE-SENTINEL\r".as_slice(),
                 Some("Enter same passphrase again"),
             ),
-            (b"NATIVE-PASSPHRASE-SENTINEL\r", Some("client-key.pub")),
-            (b"\x03", None),
-        ];
+            (
+                b"NATIVE-PASSPHRASE-SENTINEL\r".as_slice(),
+                Some("client-key.pub"),
+            ),
+            (b"\x03".as_slice(), None),
+        ]);
         let output = run_in_terminal(&input);
         assert!(!output.contains("NATIVE-PASSPHRASE-SENTINEL"));
         assert_eq!(
@@ -334,7 +313,50 @@ mod ui_terminal {
         );
         std::fs::remove_dir_all(directory).unwrap();
     }
+    fn keygen_input(path_bytes: &[u8]) -> Vec<(&[u8], Option<&str>)> {
+        vec![
+            (b"\r", None), // Home -> choose a system
+            (b"\r", None),
+            (b"\r", None),
+            (b"\x1b[B", None),
+            (b"\r", None), // account/auth
+            (b"\r", None),
+            (b"\x1b[B", None),
+            (b"\r", None), // public key method
+            (b"\x1b[B", None),
+            (b"\r", None),
+            (b"\r", None), // keys/keygen
+            (b"\x1b[B", None),
+            (b"\r", None),
+            (b"\x15", None),
+            (b"1", None),
+            (b"\r", None), // test-only fast KDF
+            (b"\x1b[B", None),
+            (b"\x1b[B", None),
+            (b"\r", None),
+            (b"\x15", None),
+            (path_bytes, None),
+            (b"\r", None),
+            (b"\x1b[F", None),
+            (b"\x1b[A", None), // Last item is Back; generation is immediately above it.
+            (b"\r", Some("Enter passphrase")),
+        ]
+    }
+    #[test]
+    fn interrupted_native_keygen_leaves_the_terminal_restored() {
+        let scratch = crate::support::Scratch::new("keygen-interrupt");
+        let path = scratch.0.join("client-key");
+        let path = path.to_str().unwrap();
+        let mut input = keygen_input(path.as_bytes());
+        input.push((b"\x03", None));
+        run_in_terminal_with_signal(&input, true);
+        assert!(!std::path::Path::new(path).exists());
+    }
     fn run_in_terminal(input: &[(&[u8], Option<&str>)]) -> String {
+        run_in_terminal_with_signal(input, false)
+    }
+    fn run_in_terminal_with_signal(input: &[(&[u8], Option<&str>)], allow_sigint: bool) -> String {
+        use std::os::unix::process::ExitStatusExt;
         let mut master_fd = -1;
         let mut slave_fd = -1;
         let size = libc::winsize {
@@ -445,7 +467,10 @@ mod ui_terminal {
         drop(writer);
         let output = String::from_utf8_lossy(&reader.join().unwrap()).into_owned();
         assert!(
-            ready && steps_ready && status.is_some_and(|status| status.success()),
+            ready
+                && steps_ready
+                && status.is_some_and(|status| status.success()
+                    || allow_sigint && status.signal() == Some(libc::SIGINT)),
             "{output}"
         );
         assert!(output.contains("\x1b[?1049h"));

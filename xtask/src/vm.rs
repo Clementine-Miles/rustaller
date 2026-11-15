@@ -14,7 +14,7 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const HELP: &str = "Usage: cargo xtask vm-acceptance ACTION [OPTIONS]\n\nActions:\n  smoke           BIOS/UEFI Alpine Live boot smoke, not an installation test\n  prepare-source  Provision a disposable Debian Cloud source for kexec tests\n  install         Reinstall disposable source overlays and verify target boots\n\nCommon options:\n  --tools PATH       Extracted Debian QEMU/OVMF/xorriso root\n  --output PATH      New private result directory (must not exist)\n  --firmware MODE    bios|efi|both (default both)\n  --timeout SECONDS  Per-case deadline (default 1800)\n\nSmoke: --iso FILE --sha256 HEX\nSource/install: --base FILE --sha512 HEX --key FILE --public-key FILE\n  --disk-bus BUS     virtio-blk|virtio-scsi|sata|nvme|pvscsi (default virtio-blk)\nInstall: --installer STATIC_ELF --target alpine|debian|arch|gentoo|all\n\nAll disk files and EFI variables are fresh disposable copies. No host devices,\nnetwork-policy changes, host reboot, or privileged mounts are used.\n";
+const HELP: &str = "Usage: cargo xtask vm-acceptance ACTION [OPTIONS]\n\nActions:\n  smoke           BIOS/UEFI Alpine Live boot smoke, not an installation test\n  prepare-source  Provision a disposable Debian Cloud source for kexec tests\n  install         Reinstall disposable source overlays and verify target boots\n  media           Confirmed netboot.xyz/ISO boots on disposable source overlays\n\nCommon options:\n  --tools PATH       Extracted Debian QEMU/OVMF/xorriso root\n  --output PATH      New private result directory (must not exist)\n  --firmware MODE    bios|efi|both (default both)\n  --timeout SECONDS  Per-case deadline (default 1800)\n\nSmoke: --iso FILE --sha256 HEX\nSource/install: --base FILE --sha512 HEX --key FILE --public-key FILE\n  --disk-bus BUS     virtio-blk|virtio-scsi|sata|nvme|pvscsi (default virtio-blk)\nInstall: --installer STATIC_ELF --target alpine|debian|arch|gentoo|all\nMedia: --installer STATIC_ELF --target netboot.xyz|iso --expect-serial TEXT\n  ISO additionally needs --iso FILE --sha256 HEX; optional --iso-config,\n  --iso-kernel, --iso-initrd and --iso-cmdline mirror the host CLI.\n\nAll disk files and EFI variables are fresh disposable copies. No host devices,\nnetwork-policy changes, host reboot, or privileged mounts are used.\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Firmware {
@@ -71,7 +71,10 @@ struct Options {
 impl Options {
     fn parse(args: &[String]) -> Result<Self, String> {
         let action = args.first().cloned().ok_or("missing acceptance action")?;
-        if !matches!(action.as_str(), "smoke" | "prepare-source" | "install") {
+        if !matches!(
+            action.as_str(),
+            "smoke" | "prepare-source" | "install" | "media"
+        ) {
             return Err("unknown acceptance action".into());
         }
         let mut values = BTreeMap::new();
@@ -93,6 +96,11 @@ impl Options {
                     | "--installer"
                     | "--target"
                     | "--disk-bus"
+                    | "--expect-serial"
+                    | "--iso-config"
+                    | "--iso-kernel"
+                    | "--iso-initrd"
+                    | "--iso-cmdline"
             ) {
                 return Err(format!("unknown acceptance option: {flag}"));
             }
@@ -231,6 +239,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let result = match options.action.as_str() {
         "smoke" => smoke(&tools, &options, &output, &modes, timeout),
         "prepare-source" => prepare_source(&tools, &options, &output, timeout),
+        "media" => media_matrix(&tools, &options, &output, &modes, timeout),
         "install" => install_matrix(&tools, &options, &output, &modes, timeout),
         _ => unreachable!(),
     };
@@ -422,6 +431,160 @@ fn prepare_source(
         b"Debian Cloud source provisioning: PASS\nNo target installation was executed.\n",
     )?;
     println!("Prepared disposable source: {}", prepared.display());
+    Ok(())
+}
+
+fn media_arguments(options: &Options) -> Result<Vec<String>, String> {
+    let target = options.value("--target")?;
+    if !matches!(target, "iso" | "netboot.xyz") {
+        return Err("media target must be iso or netboot.xyz".into());
+    }
+    let marker = options.value("--expect-serial")?;
+    if marker.len() < 4 || marker.len() > 256 || marker.chars().any(char::is_control) {
+        return Err("media needs a distinct 4-256 character serial marker".into());
+    }
+    let mut args = vec!["/var/tmp/rustaller".into(), target.into()];
+    if target == "iso" {
+        args.push("--iso=/root/rustaller-media.iso".into());
+        for key in [
+            "--iso-config",
+            "--iso-kernel",
+            "--iso-initrd",
+            "--iso-cmdline",
+        ] {
+            if let Some(value) = options.values.get(key) {
+                args.push(format!("{key}={value}"));
+            }
+        }
+    }
+    rustaller::host::args::parse_args(&args[1..]).map_err(|e| e.to_string())?;
+    Ok(args)
+}
+fn media_matrix(
+    tools: &Tools,
+    options: &Options,
+    output: &Path,
+    modes: &[Firmware],
+    timeout: Duration,
+) -> Result<(), String> {
+    let arguments = media_arguments(options)?;
+    let base = options.path("--base")?;
+    verify_hash(&base, options.value("--sha512")?, "sha512sum", 128)?;
+    check_base(tools, &base, output)?;
+    let installer = options.path("--installer")?;
+    regular(&installer)?;
+    let key = options.path("--key")?;
+    regular(&key)?;
+    let public = public_key(&options.path("--public-key")?)?;
+    let iso = if options.value("--target")? == "iso" {
+        let iso = options.path("--iso")?;
+        verify_hash(&iso, options.value("--sha256")?, "sha256sum", 64)?;
+        Some(iso)
+    } else {
+        None
+    };
+    let transport = Transport::new()?;
+    let relay = Relay::start()?;
+    for &mode in modes {
+        let case = output.join(format!("media-{}", mode.label()));
+        private_directory(&case)?;
+        let seed = create_seed(tools, &case, &public, &transport, &relay)?;
+        let disk = create_overlay(tools, &base, &case)?;
+        let port = free_port()?;
+        let mut guest = start_disk_guest(
+            tools,
+            &case,
+            &disk,
+            &seed,
+            mode,
+            port,
+            "media",
+            options.disk_bus()?,
+        )?;
+        let ssh = Ssh {
+            port,
+            key: key.clone(),
+            known: case.join("known-source"),
+        };
+        let deadline = Instant::now() + timeout;
+        ssh.wait_ready(&mut guest, deadline)?;
+        ssh.checked(
+            &["cloud-init", "status", "--wait"],
+            &case.join("cloud-init.log"),
+            remaining(deadline)?,
+        )?;
+        ssh.copy(
+            &installer,
+            "/var/tmp/rustaller",
+            &case.join("copy-installer.log"),
+        )?;
+        ssh.checked(
+            &["chmod", "700", "/var/tmp/rustaller"],
+            &case.join("chmod.log"),
+            Duration::from_secs(20),
+        )?;
+        if let Some(iso) = &iso {
+            ssh.copy(iso, "/root/rustaller-media.iso", &case.join("copy-iso.log"))?;
+        }
+        let mut inspect = arguments.clone();
+        inspect.push("--inspect".into());
+        let result = ssh.capture_owned(&inspect, remaining(deadline)?)?;
+        write_private(&case.join("inspect.log"), &result.stdout)?;
+        if !result.success {
+            return Err("guest media preflight failed; inspect.log contains evidence".into());
+        }
+        let text = String::from_utf8(result.stdout).map_err(|_| "invalid guest inspection")?;
+        let tokens: Vec<_> = text
+            .lines()
+            .filter_map(|v| v.strip_prefix("Confirmation: "))
+            .collect();
+        if tokens.len() != 1 || !tokens[0].starts_with("BOOT-ONCE ") {
+            return Err("missing scoped media confirmation".into());
+        }
+        let offset = read_log(&case.join("serial.log")).len();
+        let reset_before = guest.resets.load(Ordering::Relaxed);
+        let mut confirmed = arguments.clone();
+        confirmed.extend(["--confirm-handoff".into(), tokens[0].into()]);
+        let mut command = ssh.command_owned(&confirmed);
+        command
+            .stdout(private_file(&case.join("boot.stdout"))?)
+            .stderr(private_file(&case.join("boot.stderr"))?);
+        let mut dispatch = command.spawn().map_err(|e| e.to_string())?;
+        let accepted = loop {
+            let serial = read_log(&case.join("serial.log"));
+            let resets = guest
+                .resets
+                .load(Ordering::Relaxed)
+                .saturating_sub(reset_before);
+            if resets == 1
+                && serial
+                    .get(offset..)
+                    .is_some_and(|v| v.contains(options.value("--expect-serial").unwrap()))
+            {
+                break true;
+            }
+            if Instant::now() >= deadline
+                || resets > 1
+                || guest.child.try_wait().map_err(|e| e.to_string())?.is_some()
+            {
+                break false;
+            }
+            if let Some(status) = dispatch.try_wait().map_err(|e| e.to_string())?
+                && !matches!(status.code(), Some(0 | 255))
+            {
+                break false;
+            }
+            thread::sleep(Duration::from_millis(250));
+        };
+        let _ = dispatch.kill();
+        let _ = dispatch.wait();
+        if !accepted {
+            return Err(
+                "media did not reach its post-reset serial marker; see serial/QMP/boot logs".into(),
+            );
+        }
+        write_private(&case.join("accepted.txt"), b"PASS: one reset and requested media serial marker. This is not distribution installation acceptance.\n")?;
+    }
     Ok(())
 }
 
@@ -1380,6 +1543,52 @@ fn yaml(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn media_routes_validate_iso_modes_and_require_an_observable_boot_marker() {
+        for target in ["netboot.xyz", "iso"] {
+            let options = Options::parse(
+                &[
+                    "media",
+                    "--target",
+                    target,
+                    "--expect-serial",
+                    "DISTINCT-LINUX-BOOT",
+                ]
+                .map(str::to_owned),
+            )
+            .unwrap();
+            let args = media_arguments(&options).unwrap();
+            assert_eq!(args[1], target);
+            assert!(
+                !args
+                    .iter()
+                    .any(|arg| arg.contains("confirm-erase") || arg.contains("target-disk"))
+            );
+        }
+        let invalid = Options::parse(
+            &["media", "--target", "debian", "--expect-serial", "boot"].map(str::to_owned),
+        )
+        .unwrap();
+        assert!(media_arguments(&invalid).is_err());
+        let missing =
+            Options::parse(&["media", "--target", "netboot.xyz"].map(str::to_owned)).unwrap();
+        assert!(media_arguments(&missing).is_err());
+        let incomplete = Options::parse(
+            &[
+                "media",
+                "--target",
+                "iso",
+                "--expect-serial",
+                "boot",
+                "--iso-kernel",
+                "/vmlinuz",
+            ]
+            .map(str::to_owned),
+        )
+        .unwrap();
+        assert!(media_arguments(&incomplete).is_err());
+    }
     #[test]
     fn rejects_device_paths_and_duplicate_or_unknown_flags() {
         assert!(

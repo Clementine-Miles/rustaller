@@ -84,3 +84,10 @@ Git history retains earlier revisions; no additional reference snapshots are kep
 
 The test `UTC`/`New_York` TZif fixtures come from Debian tzdata 2026b-0+deb13u1
 (`Etc/UTC`, `America/New_York`); IANA timezone data is public domain.
+
+The netboot artifact contract was reviewed against the official
+[netboot.xyz README](https://github.com/netbootxyz/netboot.xyz/blob/670f279645091994d39c3b63e27b20f72a8c3486/README.md)
+and its build checksum/EFI recipes (release 3.0.3). Downloads use
+https://boot.netboot.xyz/ipxe/ and netboot.xyz-sha256-checksums.txt. BIOS uses
+netboot.xyz.lkrn; x86_64 UEFI uses netboot.xyz.efi. Network-loaded menus and OS
+payloads remain under upstream iPXE policy after handoff.

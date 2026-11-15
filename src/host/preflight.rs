@@ -38,7 +38,7 @@ impl fmt::Display for PreflightError {
             Self::UnsupportedArchitecture => f.write_str("Only Linux x86_64 hosts are supported."),
             Self::RootRequired => f.write_str("Please run as root."),
             Self::LiveRoot => {
-                f.write_str("Cannot run this script when the root filesystem is tmpfs.")
+                f.write_str("Cannot prepare a host boot from a tmpfs root filesystem.")
             }
             Self::ContainerUnsupported => {
                 f.write_str("Installation from a container is unsupported.")
