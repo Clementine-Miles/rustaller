@@ -4,7 +4,7 @@ use super::state::{
     boot_label, hold_label, optional_label, yes_no,
 };
 use rustaller::config::{AddressPreference, CongestionControl, Ipv6Policy, QueueDiscipline};
-use rustaller::config::{DnsMode, InstallProfile, RootFilesystem};
+use rustaller::config::{DnsMode, GentooInit, InstallProfile, RootFilesystem};
 use rustaller::host::ssh_keygen::{self, KeyType};
 use rustaller::model::{BootMode, Target};
 use rustaller::postinstall::KernelChoice;
@@ -145,6 +145,15 @@ impl Wizard {
                     format!("Kernel: {}", self.kernel_label()),
                     Action::Select(Setting::Kernel),
                 );
+                if self.selected_target() == Some(Target::Gentoo) {
+                    add(
+                        format!(
+                            "Gentoo init (amd64-nomultilib): {}",
+                            draft.gentoo_init.as_str()
+                        ),
+                        Action::Select(Setting::GentooInit),
+                    );
+                }
             }
             Page::Installation => {
                 if draft.root_filesystem == RootFilesystem::Btrfs {
@@ -367,6 +376,7 @@ impl Wizard {
     pub fn choices(&self, setting: Setting) -> Vec<&'static str> {
         match setting {
             Setting::Authentication => vec!["Password", "SSH public keys"],
+            Setting::GentooInit => vec!["openrc", "systemd"],
             Setting::Boot => vec!["Auto-detect", "Expect BIOS", "Expect UEFI"],
             Setting::Hold => vec![
                 "Default behavior",
@@ -404,6 +414,7 @@ impl Wizard {
             Setting::Authentication => {
                 usize::from(draft.authentication == Authentication::PublicKeys)
             }
+            Setting::GentooInit => usize::from(draft.gentoo_init == GentooInit::Systemd),
             Setting::Boot => match draft.boot {
                 None => 0,
                 Some(BootMode::Bios) => 1,
@@ -461,6 +472,13 @@ impl Wizard {
         };
         let draft = self.draft_mut();
         match setting {
+            Setting::GentooInit => {
+                draft.gentoo_init = if index == 0 {
+                    GentooInit::Openrc
+                } else {
+                    GentooInit::Systemd
+                };
+            }
             Setting::Congestion => {
                 draft.congestion = CongestionControl::ALL[index];
                 if draft.congestion == CongestionControl::Bbr {
@@ -505,11 +523,7 @@ impl Wizard {
                 };
             }
             Setting::RootFilesystem => {
-                draft.root_filesystem = if index == 0 {
-                    RootFilesystem::Xfs
-                } else {
-                    RootFilesystem::Ext4
-                }
+                draft.root_filesystem = RootFilesystem::ALL[index];
             }
             Setting::Authentication => {
                 draft.authentication = if index == 0 {

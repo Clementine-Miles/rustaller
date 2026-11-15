@@ -127,6 +127,9 @@ impl Wizard {
                 args.push(format!("--dns-search={domain}"));
             }
             args.push(format!("--kernel={}", draft.kernel.as_str()));
+            if self.selected_target() == Some(rustaller::model::Target::Gentoo) {
+                args.push(format!("--gentoo-init={}", draft.gentoo_init.as_str()));
+            }
             args.push(format!("--filesystem={}", draft.root_filesystem.as_str()));
             args.push(format!("--profile={}", draft.profile.as_str()));
             args.push(format!("--dns-mode={}", draft.dns_mode.as_str()));
@@ -286,7 +289,7 @@ impl Wizard {
                 ),
                 format!("DNS policy: {}", draft.dns_mode.as_str()),
                 format!("Root filesystem: {}", draft.root_filesystem.as_str()),
-                format!("Target bootloader: Limine {}; FAT32 at /efi; /boot on root",rustaller::targets::limine::VERSION),
+                format!("Target bootloader: Limine {}; FAT32 at /boot",rustaller::targets::limine::VERSION),
                 format!("Boot partition: {} MiB", optional_label(draft.get(Field::BootSize), "512")),
                 format!("Btrfs: {}", if draft.root_filesystem == rustaller::config::RootFilesystem::Btrfs { format!("@ root; zstd level {} (0=off)", optional_label(draft.get(Field::Compression), "3")) } else { "not selected".into() }),
                 format!(
@@ -297,7 +300,8 @@ impl Wizard {
                     "Timezone: {}",
                     optional_label(draft.get(Field::Timezone), "Installer default")
                 ),
-                format!("Kernel: {}", self.kernel_label()),
+                format!("Kernel choice: {}", self.kernel_label()),
+                format!("Kernel package: {}", self.kernel_package_label()),
                 format!(
                     "Target disk: {}",
                     optional_label(draft.get(Field::Disk), "Auto-detect (not scanned yet)")
@@ -331,6 +335,25 @@ impl Wizard {
                     optional_label(draft.get(Field::Mtu), "Target defaults; not inherited")
                 ),
             ]);
+            if self.selected_target() == Some(rustaller::model::Target::Gentoo) {
+                lines.extend([
+                    format!("Stage3: {}", draft.gentoo_init.stage3_variant()),
+                    format!("Init: {}", draft.gentoo_init.as_str()),
+                    "ABI: amd64, no-multilib (64-bit only)".into(),
+                ]);
+            } else {
+                lines.push(format!(
+                    "Init: {}",
+                    if self.selected_target() == Some(rustaller::model::Target::Alpine) {
+                        "OpenRC"
+                    } else {
+                        "systemd"
+                    }
+                ));
+            }
+            if draft.root_filesystem == rustaller::config::RootFilesystem::Btrfs {
+                lines.push("Btrfs snapshots exclude FAT32 /boot; restore matching kernels and initramfs separately.".into());
+            }
             for field in TCP_FIELDS {
                 if !draft.get(*field).trim().is_empty() {
                     lines.push(format!("{}: {}", field.label(), draft.display(*field)));
@@ -381,6 +404,23 @@ impl Wizard {
             "BIOS/UEFI acceptance status is reported separately; unit tests do not prove boot compatibility.".into(),
         ]);
         lines
+    }
+
+    fn kernel_package_label(&self) -> String {
+        use rustaller::model::Target;
+        use rustaller::postinstall::{KernelChoice, PostInstallConfig};
+        let target = self.route().target();
+        let draft = self.draft();
+        if target == Target::Debian && draft.kernel == KernelChoice::Auto {
+            return "automatic: linux-image-amd64 or linux-image-cloud-amd64 (host selection pending)".into();
+        }
+        PostInstallConfig {
+            kernel: draft.kernel,
+            ..Default::default()
+        }
+        .kernel_package(target, false, false)
+        .map(|kernel| kernel.package.to_owned())
+        .unwrap_or_else(|_| "Unavailable (invalid target/kernel combination)".into())
     }
 }
 

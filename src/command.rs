@@ -4,6 +4,7 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 /// Common native Live defaults. Callers retain distro-specific environment,
 /// errors and retries.
@@ -72,6 +73,7 @@ pub struct CommandSpec {
     pub stderr_mode: OutputMode,
     // Only the target swapfile allocator can grant this exact mkswap invocation.
     target_swapfile: Option<PathBuf>,
+    inspection_limits: bool,
 }
 
 impl CommandSpec {
@@ -93,6 +95,7 @@ impl CommandSpec {
             stdout_mode: OutputMode::Stream,
             stderr_mode: OutputMode::Stream,
             target_swapfile: None,
+            inspection_limits: false,
         }
     }
 
@@ -124,6 +127,16 @@ impl CommandSpec {
 
     pub fn stderr_mode(mut self, mode: OutputMode) -> Self {
         self.stderr_mode = mode;
+        self
+    }
+
+    /// Optional diagnostics must never inherit terminal input, stream private
+    /// output, allocate unbounded buffers, or delay the installer indefinitely.
+    pub fn inspection_limits(mut self) -> Self {
+        self.inspection_limits = true;
+        self.stdin = CommandInput::Null;
+        self.stdout_mode = OutputMode::Capture;
+        self.stderr_mode = OutputMode::Discard;
         self
     }
 
@@ -180,6 +193,21 @@ pub struct PipelineOutput {
 pub trait CommandRunner {
     fn run(&mut self, command: &CommandSpec) -> io::Result<CommandOutput>;
     fn run_pipeline(&mut self, commands: &[CommandSpec]) -> io::Result<PipelineOutput>;
+}
+
+/// Apply diagnostic limits even when reusing strict inventory collectors.
+pub struct InspectionRunner<'a, R>(pub &'a mut R);
+
+impl<R: CommandRunner> CommandRunner for InspectionRunner<'_, R> {
+    fn run(&mut self, command: &CommandSpec) -> io::Result<CommandOutput> {
+        self.0.run(&command.clone().inspection_limits())
+    }
+    fn run_pipeline(&mut self, _: &[CommandSpec]) -> io::Result<PipelineOutput> {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "inspection pipelines are unsupported",
+        ))
+    }
 }
 
 #[derive(Debug)]
@@ -334,8 +362,91 @@ fn reject_swap_mutation(command: &CommandSpec) -> io::Result<()> {
 #[derive(Default)]
 pub struct SystemRunner;
 
+fn run_inspection(spec: &CommandSpec) -> io::Result<CommandOutput> {
+    const LIMIT: usize = 64 * 1024;
+    let mut command = Command::new(&spec.program);
+    command.args(&spec.args).envs(&spec.env);
+    if let Some(cwd) = &spec.cwd {
+        command.current_dir(cwd);
+    }
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = command.spawn()?;
+    let mut pipe = child
+        .stdout
+        .take()
+        .ok_or_else(|| io::Error::other("missing inspection pipe"))?;
+    let overflow = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let reader_overflow = overflow.clone();
+    let reader = thread::spawn(move || {
+        let mut captured = Vec::new();
+        let mut buffer = [0; 4096];
+        loop {
+            let count = pipe.read(&mut buffer)?;
+            if count == 0 {
+                return Ok(captured);
+            }
+            let keep = count.min(LIMIT.saturating_sub(captured.len()));
+            captured.extend_from_slice(&buffer[..keep]);
+            if keep < count {
+                reader_overflow.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+    });
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let result = loop {
+        if overflow.load(std::sync::atomic::Ordering::Relaxed) {
+            break Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "inspection output exceeds limit",
+            ));
+        }
+        if Instant::now() >= deadline {
+            break Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "inspection command timed out",
+            ));
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status.code()),
+            Ok(None) => thread::sleep(Duration::from_millis(10)),
+            Err(error) => break Err(error),
+        }
+    };
+    // A diagnostic utility may have forked. Kill its private process group so
+    // inherited output descriptors cannot keep the reader alive after timeout.
+    #[cfg(unix)]
+    unsafe {
+        unsafe extern "C" {
+            fn kill(pid: i32, signal: i32) -> i32;
+        }
+        kill(-(child.id() as i32), 9);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    let stdout = finish_reader(Some(reader))?;
+    let status = result?;
+    if overflow.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "inspection output exceeds limit",
+        ));
+    }
+    Ok(CommandOutput::new(status, stdout, Vec::new()))
+}
+
 impl CommandRunner for SystemRunner {
     fn run(&mut self, spec: &CommandSpec) -> io::Result<CommandOutput> {
+        if spec.inspection_limits {
+            return run_inspection(spec);
+        }
         let mut command = Command::new(&spec.program);
         command.args(&spec.args).envs(&spec.env);
         if let Some(cwd) = &spec.cwd {
@@ -368,6 +479,12 @@ impl CommandRunner for SystemRunner {
     }
 
     fn run_pipeline(&mut self, specs: &[CommandSpec]) -> io::Result<PipelineOutput> {
+        if specs.iter().any(|spec| spec.inspection_limits) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "inspection commands cannot run in a pipeline",
+            ));
+        }
         if specs.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,

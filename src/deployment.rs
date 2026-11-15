@@ -1,6 +1,6 @@
 //! Private, bounded host-to-Live deployment facts. No login secrets belong here.
 use crate::fsutil::effective_uid;
-use crate::host::sources::{GENTOO_ARCHIVE, GentooStage3};
+use crate::host::sources::GentooStage3;
 use crate::model::BootMode;
 use std::fs::{self, File};
 use std::io::{self, Read};
@@ -105,6 +105,27 @@ impl From<io::Error> for DeploymentError {
 
 impl DeploymentManifest {
     pub fn validate(&self) -> Result<(), DeploymentError> {
+        self.validate_inventory()?;
+        let fail = DeploymentError::Invalid;
+        if !valid_branch(&self.alpine_branch) {
+            return Err(fail("Alpine repository branch"));
+        }
+        if !self.debian_codename.is_empty()
+            && !self.debian_codename.bytes().all(|b| b.is_ascii_lowercase())
+        {
+            return Err(fail("Debian stable codename"));
+        }
+        if let Some(stage) = &self.gentoo_stage3 {
+            stage.init_system().map_err(|_| {
+                fail("Gentoo source is not the official selected nomultilib stage3")
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Offline facts alone cannot authorize a deployment: `validate` also
+    /// requires authenticated-source identities before encoding or installation.
+    pub fn validate_inventory(&self) -> Result<(), DeploymentError> {
         let fail = DeploymentError::Invalid;
         if !self.disk.device.starts_with("/dev/")
             || self.disk.device[5..].is_empty()
@@ -129,32 +150,6 @@ impl DeploymentManifest {
             && self.disk.partition_table_id.is_empty()
         {
             return Err(fail("no stable disk identifier"));
-        }
-        if !valid_branch(&self.alpine_branch) {
-            return Err(fail("Alpine repository branch"));
-        }
-        if !self.debian_codename.is_empty()
-            && !self.debian_codename.bytes().all(|b| b.is_ascii_lowercase())
-        {
-            return Err(fail("Debian stable codename"));
-        }
-        if let Some(stage) = &self.gentoo_stage3 {
-            let timestamp = &stage.timestamp;
-            if timestamp.len() != 16
-                || timestamp.as_bytes()[8] != b'T'
-                || timestamp.as_bytes()[15] != b'Z'
-                || timestamp
-                    .bytes()
-                    .enumerate()
-                    .any(|(i, b)| i != 8 && i != 15 && !b.is_ascii_digit())
-                || stage.size == 0
-                || stage.filename != format!("stage3-amd64-systemd-{timestamp}.tar.xz")
-                || stage.url != format!("{GENTOO_ARCHIVE}/{timestamp}/{}", stage.filename)
-                || stage.digests_url != format!("{}.DIGESTS", stage.url)
-                || stage.signature_url != format!("{}.asc", stage.url)
-            {
-                return Err(fail("Gentoo source is not the official selected stage3"));
-            }
         }
         if self.network.is_empty() || self.network.len() > 16 {
             return Err(fail("network interface count"));

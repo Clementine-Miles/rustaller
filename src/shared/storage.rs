@@ -330,7 +330,7 @@ pub fn render_fstab(
         0
     };
     Ok(format!(
-        "UUID={root_uuid} / {} {options} 0 {pass}\nUUID={boot_uuid} /efi vfat fmask=0177,dmask=0077 0 2\n",
+        "UUID={root_uuid} / {} {options} 0 {pass}\nUUID={boot_uuid} /boot vfat fmask=0177,dmask=0077,quiet 0 2\n",
         filesystem.as_str()
     ))
 }
@@ -423,7 +423,11 @@ pub fn create_partitions<R: CommandRunner>(
         let efi = layout.boot_partition();
         checked(
             runner,
-            &command("mkfs.fat", ["-F", "32", "-s", "1", &efi], "live-format-efi"),
+            &command(
+                "mkfs.fat",
+                ["-F", "32", "-s", "1", &efi],
+                "live-format-boot",
+            ),
         )?;
     }
     let root = layout.root_partition();
@@ -663,7 +667,7 @@ pub fn mount_target<R: CommandRunner>(
     }
     {
         let efi = layout.boot_partition();
-        let efi_root = root.join("efi");
+        let efi_root = root.join("boot");
         validate_root(&efi_root)?;
         fs::create_dir_all(&efi_root)?;
         checked(
@@ -674,12 +678,14 @@ pub fn mount_target<R: CommandRunner>(
                     std::ffi::OsStr::new("-t"),
                     "vfat".as_ref(),
                     "-o".as_ref(),
-                    // Match atomic publication mode: FAT cannot represent arbitrary chmod.
-                    "fmask=0177,dmask=0077".as_ref(),
+                    // FAT masks are authoritative. quiet lets native package chmod/chown
+                    // requests succeed without pretending FAT stores Unix metadata.
+                    // Symlink creation is separately disabled in distro kernel policy.
+                    "fmask=0177,dmask=0077,quiet".as_ref(),
                     efi.as_ref(),
                     efi_root.as_os_str(),
                 ],
-                "live-mount-efi",
+                "live-mount-boot",
             ),
         )?;
     }

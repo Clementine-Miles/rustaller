@@ -2,8 +2,8 @@ use super::editor::TextValue;
 use super::fields::Field;
 use super::state::clean;
 use rustaller::config::{
-    AddressPreference, CongestionControl, DnsMode, InstallProfile, Ipv6Policy, QueueDiscipline,
-    RootFilesystem,
+    AddressPreference, CongestionControl, DnsMode, GentooInit, InstallProfile, Ipv6Policy,
+    QueueDiscipline, RootFilesystem,
 };
 use rustaller::host::ssh_keygen::KeyType;
 use rustaller::model::BootMode;
@@ -37,6 +37,7 @@ pub(super) struct Draft {
     pub keys: Vec<TextValue>,
     pub authentication: Authentication,
     pub kernel: KernelChoice,
+    pub gentoo_init: GentooInit,
     pub boot: Option<BootMode>,
     pub hold: Option<u8>,
     pub generic_kernel: bool,
@@ -65,6 +66,7 @@ impl Draft {
             keys: Vec::new(),
             authentication: Authentication::Password,
             kernel: KernelChoice::Auto,
+            gentoo_init: GentooInit::Openrc,
             boot: None,
             hold: None,
             generic_kernel: false,

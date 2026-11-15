@@ -35,7 +35,7 @@ pub mod targets {
     pub mod rolling;
 }
 
-pub const RUNTIME_VERSION: &str = "RUSTALLER-CONFIG-20261115-08";
+pub const RUNTIME_VERSION: &str = "RUSTALLER-CONFIG-20261115-09";
 pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub mod worker {
     pub mod args;

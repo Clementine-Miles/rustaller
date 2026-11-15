@@ -306,10 +306,12 @@ fn install_mounted<R: CommandRunner>(
     assets: &install::PreparedAssets,
     layout: &DiskLayout,
 ) -> Result<(), LiveInstallError> {
-    install::bootstrap(runner, root, plan, manifest, assets, layout)?;
-    mount_pseudo(runner, root)?;
     let root_uuid = filesystem_uuid(runner, &layout.root_partition())?;
     let efi_uuid = filesystem_uuid(runner, &layout.boot_partition())?;
+    crate::targets::limine::verify_mount(runner, root, &efi_uuid)
+        .map_err(|_| LiveInstallError::Invalid("target FAT32 /boot mount identity changed"))?;
+    install::bootstrap(runner, root, plan, manifest, assets, layout)?;
+    mount_pseudo(runner, root)?;
     install::configure(
         runner, root, plan, manifest, assets, layout, &root_uuid, &efi_uuid,
     )?;
@@ -525,17 +527,17 @@ fn unmount_target<R: CommandRunner>(runner: &mut R, root: &Path) -> Result<(), L
         }
     }
     {
-        let path = root.join("efi");
+        let path = root.join("boot");
         let mountpoint = path.to_string_lossy();
         if capture(
             runner,
             "findmnt",
             ["-nro", "TARGET", "--mountpoint", &mountpoint],
-            "target-check-owned-efi-mount",
+            "target-check-owned-boot-mount",
         )
         .is_ok_and(|text| !text.trim().is_empty())
         {
-            checked(runner, "umount", [path.as_os_str()], "target-unmount-efi")?;
+            checked(runner, "umount", [path.as_os_str()], "target-unmount-boot")?;
         }
     }
     checked(runner, "umount", [root.as_os_str()], "target-unmount-root")?;
@@ -625,5 +627,60 @@ impl InstallLock {
 impl Drop for InstallLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::command::{CommandOutput, MockRunner};
+
+    #[test]
+    fn cleanup_unmounts_owned_pseudo_trees_then_fat_boot_before_root() {
+        let root = Path::new("/target-rustaller-test");
+        let mut responses = Vec::new();
+        for name in ["sys", "proc", "dev", "boot"] {
+            responses.push(CommandOutput::new(
+                Some(0),
+                format!("{}\n", root.join(name).display()).into_bytes(),
+                vec![],
+            ));
+            responses.push(CommandOutput::new(Some(0), vec![], vec![]));
+        }
+        responses.push(CommandOutput::new(Some(0), vec![], vec![]));
+        let mut runner = MockRunner::new(responses);
+        unmount_target(&mut runner, root).unwrap();
+        let unmounts: Vec<_> = runner
+            .calls()
+            .iter()
+            .filter(|c| c.program == "umount")
+            .collect();
+        assert_eq!(unmounts.len(), 5);
+        assert_eq!(unmounts[3].args, [root.join("boot").as_os_str()]);
+        assert_eq!(unmounts[4].args, [root.as_os_str()]);
+        assert!(unmounts[..3].iter().all(|c| c.args[0] == "--recursive"));
+        assert!(
+            !runner
+                .calls()
+                .iter()
+                .any(|c| c.args.iter().any(|a| a == root.join("efi").as_os_str()))
+        );
+    }
+
+    #[test]
+    fn cleanup_skips_absent_boot_and_pseudo_mounts_after_bootstrap_failure() {
+        let mut runner = MockRunner::new(
+            [1, 1, 1, 1, 0].map(|status| CommandOutput::new(Some(status), vec![], vec![])),
+        );
+        unmount_target(&mut runner, Path::new("/target-rustaller-test")).unwrap();
+        assert_eq!(
+            runner
+                .calls()
+                .iter()
+                .filter(|c| c.program == "umount")
+                .count(),
+            1
+        );
+        assert_eq!(runner.calls().last().unwrap().phase, "target-unmount-root");
     }
 }

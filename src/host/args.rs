@@ -20,10 +20,16 @@ Options:
   --frpc-config PATH            frpc configuration
   --target-disk /dev/DISK       Target disk for automatic installation
   --filesystem xfs|ext4|btrfs   Target root filesystem (default: xfs)
-  --boot-size-mib MIB          FAT32 /efi size, 512-4096 MiB (default: 512)
+  --boot-size-mib MIB          FAT32 /boot size, 512-4096 MiB (default: 512)
   --btrfs-compression LEVEL    Btrfs zstd 1-15, 0=off (default: 3)
   --no-cloud-kernel             Select the non-cloud kernel
-  --kernel CHOICE               auto/standard/lts/virt/cloud/generic/cachyos
+  --kernel CHOICE               Target-specific kernel (aliases accepted)
+    Arch: standard/linux, lts/linux-lts, hardened/linux-hardened,
+          zen/linux-zen, cachyos (existing supported hardware policy)
+    Debian: standard/generic/linux-image-amd64, cloud/linux-image-cloud-amd64
+    Alpine: standard/lts/linux-lts, virt/linux-virt (cloud alias retained)
+    Gentoo: auto/standard/gentoo-kernel-bin
+  --gentoo-init openrc|systemd   Gentoo amd64-nomultilib stage3 (default: openrc)
   --hostname NAME               Set target hostname (one ASCII label)
   --timezone ZONE               Set target timezone, e.g. Etc/UTC
   --profile standard|minimal    Select target installation footprint
@@ -118,6 +124,7 @@ where
     let mut inspect = false;
     let mut confirmation = None;
     let mut dns_mode = None;
+    let mut kernel_value = None;
     let mut options = InstallPlan::new(Target::Reset);
     let mut options_ended = false;
     let mut index = 0;
@@ -229,6 +236,7 @@ where
                 index += 1;
             }
             "--profile"
+            | "--gentoo-init"
             | "--filesystem"
             | "--boot-size-mib"
             | "--btrfs-compression"
@@ -238,6 +246,9 @@ where
                 let (value, consumed) = take_value(&args, index, &name, inline_value)?;
                 let invalid = || CliError::InvalidValue(name.clone());
                 match name.as_str() {
+                    "--gentoo-init" => {
+                        options.system.gentoo_init = Some(value.parse().map_err(|_| invalid())?)
+                    }
                     "--profile" => options.system.profile = value.parse().map_err(|_| invalid())?,
                     "--boot-size-mib" => {
                         options.system.boot_size_mib = Some(value.parse().map_err(|_| invalid())?)
@@ -288,9 +299,7 @@ where
                 let (value, consumed) = take_value(&args, index, &name, inline_value)?;
                 match name.as_str() {
                     "--kernel" => {
-                        options.post_install.kernel = value
-                            .parse()
-                            .map_err(|_| CliError::InvalidValue(name.clone()))?
+                        kernel_value = Some(value);
                     }
                     "--hostname" => options.post_install.hostname = Some(value),
                     "--timezone" => options.post_install.timezone = Some(value),
@@ -378,7 +387,15 @@ where
     plan.target_disk = options.target_disk;
     plan.no_cloud_kernel = options.no_cloud_kernel;
     plan.post_install = options.post_install;
+    if let Some(value) = kernel_value {
+        plan.post_install.kernel =
+            crate::postinstall::KernelChoice::parse_for_target(&value, target)
+                .map_err(|error| CliError::InvalidPlan(PlanError::PostInstall(error)))?;
+    }
     plan.system = options.system;
+    if target == Target::Gentoo && plan.system.gentoo_init.is_none() && options.hold != Some(1) {
+        plan.system.gentoo_init = Some(crate::config::GentooInit::Openrc);
+    }
     plan.system.dns.mode = dns_mode.unwrap_or({
         if plan.system.dns.servers.is_empty() && plan.system.dns.search_domains.is_empty() {
             DnsMode::Auto

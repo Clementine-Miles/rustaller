@@ -95,7 +95,10 @@ pub fn prepare_swapfile<R: CommandRunner>(
     if plan.system.swap.swappiness.is_some() {
         validate_planned_file(&swappiness)?;
     }
-    let links = if plan.target == crate::model::Target::Alpine {
+    let links = if plan.target == crate::model::Target::Alpine
+        || (plan.target == crate::model::Target::Gentoo
+            && plan.system.gentoo_init == Some(crate::config::GentooInit::Openrc))
+    {
         let mut services = vec!["swap"];
         if plan.system.swap.swappiness.is_some() {
             services.push("sysctl");

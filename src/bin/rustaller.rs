@@ -45,33 +45,55 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         CliOutcome::Plan(plan) => run_plan(&plan),
-        CliOutcome::Inspect(plan) => run_install(&plan, None, true),
-        CliOutcome::ConfirmedPlan { plan, confirmation } => {
-            run_install(&plan, Some(&confirmation), false)
+        CliOutcome::Inspect(plan) => {
+            let (report, confirmation) = inspect_plan(&plan);
+            println!("{}", report.text());
+            if let Some(confirmation) = confirmation {
+                println!("Confirmation token: {confirmation}");
+            }
+            Ok(())
         }
+        CliOutcome::ConfirmedPlan { plan, confirmation } => run_install(&plan, Some(&confirmation)),
     }
 }
 
 #[cfg(feature = "tui")]
 fn preflight_plan(plan: &InstallPlan) -> Result<rustaller::host::inspect::PreflightReport, String> {
-    let mut runner = SystemRunner;
-    let deployment = handoff::discover(&mut runner, plan).map_err(|e| e.to_string())?;
-    Ok(rustaller::host::inspect::report(
-        &mut runner,
-        std::path::Path::new("/"),
-        plan,
-        &deployment.manifest,
-    ))
-}
-fn run_plan(plan: &InstallPlan) -> Result<(), String> {
-    run_install(plan, None, false)
+    Ok(inspect_plan(plan).0)
 }
 
-fn run_install(
-    plan: &InstallPlan,
-    provided_confirmation: Option<&str>,
-    inspect: bool,
-) -> Result<(), String> {
+fn inspect_plan(plan: &InstallPlan) -> (rustaller::host::inspect::PreflightReport, Option<String>) {
+    let mut runner = SystemRunner;
+    let root = std::path::Path::new("/");
+    match handoff::inspect_inventory(&mut runner, plan) {
+        Ok(manifest) => {
+            let confirmation = handoff::confirmation_for_plan(plan, &manifest.disk);
+            let mut report = rustaller::host::inspect::report(&mut runner, root, plan, &manifest);
+            report.warning.push_str("\nOffline inventory checked. Source authentication, kexec readiness and package availability are checked during installation preparation.");
+            (report, Some(confirmation))
+        }
+        Err(error) => {
+            let current = rustaller::host::inspect::collect(&mut runner, root).render_current();
+            let target = rustaller::host::inspect::planned_target(plan, None);
+            (
+                rustaller::host::inspect::PreflightReport {
+                    current,
+                    target,
+                    warning: format!(
+                        "Installation compatibility: blocked — {error}\nDiagnostic facts do not authorize installation."
+                    ),
+                    blocked: true,
+                },
+                None,
+            )
+        }
+    }
+}
+fn run_plan(plan: &InstallPlan) -> Result<(), String> {
+    run_install(plan, None)
+}
+
+fn run_install(plan: &InstallPlan, provided_confirmation: Option<&str>) -> Result<(), String> {
     if !plan.target.is_automatic() {
         return Err(
             "Reset execution is unavailable. Select an installation or Alpine Live rescue route."
@@ -105,9 +127,6 @@ fn run_install(
     );
     println!("Firmware: {}", deployment.manifest.boot_mode.as_str());
     println!("Confirmation token: {}", deployment.confirmation);
-    if inspect {
-        return Ok(());
-    }
     if plan.hold != Some(1)
         && plan.username.as_deref().unwrap_or("root") != "root"
         && plan.root_password.is_none()

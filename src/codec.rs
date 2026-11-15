@@ -1,7 +1,7 @@
 use crate::config::NetworkConfig;
 use crate::config::SwapConfig;
 use crate::config::{
-    DnsConfig, DnsMode, InstallProfile, RootFilesystem, SystemConfig, SystemConfigError,
+    DnsConfig, DnsMode, GentooInit, InstallProfile, RootFilesystem, SystemConfig, SystemConfigError,
 };
 use crate::model::{
     BootMode, CURRENT_SCHEMA_VERSION, InstallPlan, PlanError, SecretString, Target,
@@ -81,6 +81,11 @@ pub fn encode_plan(plan: &InstallPlan) -> Result<Vec<u8>, PlanCodecError> {
         Some(BootMode::Efi) => 2,
     });
     output.push(u8::from(plan.debug));
+    output.push(match plan.system.gentoo_init {
+        None => 0,
+        Some(GentooInit::Openrc) => 1,
+        Some(GentooInit::Systemd) => 2,
+    });
     put_u32(&mut output, plan.system.boot_size_mib.unwrap_or(0));
     put_optional_u8(&mut output, plan.system.btrfs_compression);
     output.push(match plan.system.root_filesystem {
@@ -148,6 +153,8 @@ pub fn encode_plan(plan: &InstallPlan) -> Result<Vec<u8>, PlanCodecError> {
         KernelChoice::Standard => 4,
         KernelChoice::Virt => 5,
         KernelChoice::Cachyos => 6,
+        KernelChoice::Hardened => 7,
+        KernelChoice::Zen => 8,
     });
     put_optional_string(&mut output, plan.post_install.hostname.as_deref())?;
     put_optional_string(&mut output, plan.post_install.timezone.as_deref())?;
@@ -210,6 +217,12 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
         _ => return Err(PlanCodecError::InvalidTag),
     };
     let debug = reader.read_bool()?;
+    let gentoo_init = match reader.read_u8()? {
+        0 => None,
+        1 => Some(GentooInit::Openrc),
+        2 => Some(GentooInit::Systemd),
+        _ => return Err(PlanCodecError::InvalidTag),
+    };
     let boot_size_mib = match reader.read_u32()? {
         0 => None,
         n => Some(n),
@@ -291,6 +304,7 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
         swappiness: reader.read_optional_u8()?,
     };
     let system = SystemConfig {
+        gentoo_init,
         boot_size_mib,
         btrfs_compression,
         root_filesystem,
@@ -315,6 +329,8 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
             4 => KernelChoice::Standard,
             5 => KernelChoice::Virt,
             6 => KernelChoice::Cachyos,
+            7 => KernelChoice::Hardened,
+            8 => KernelChoice::Zen,
             _ => return Err(PlanCodecError::InvalidTag),
         },
         hostname: reader.read_optional_string()?,

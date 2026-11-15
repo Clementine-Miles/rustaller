@@ -11,8 +11,9 @@ mod sources {
     const SHA256: &str = "0228553464c9588ffeb63ec04d26abb5f79405006b74574034394199af47dab4";
     const ALPINE: &str = "---\n-\n  version: 3.24.3\n  flavor: alpine-minirootfs\n-\n  branch: v3.24\n  arch: x86_64\n  version: 3.24.3\n  flavor: alpine-netboot\n  file: alpine-netboot-3.24.3-x86_64.tar.gz\n  iso: alpine-netboot-3.24.3-x86_64.tar.gz\n  sha256: 0228553464c9588ffeb63ec04d26abb5f79405006b74574034394199af47dab4\n";
     const DEBIAN: &str = "Origin: Debian\nSuite: stable\nVersion: 13.7\nCodename: trixie\nArchitectures: all amd64 arm64\n";
-    const STAGE3_PATH: &str = "20261018T124555Z/stage3-amd64-systemd-20261018T124555Z.tar.xz";
-    const STAGE3_FILENAME: &str = "stage3-amd64-systemd-20261018T124555Z.tar.xz";
+    const STAGE3_PATH: &str =
+        "20261018T124555Z/stage3-amd64-nomultilib-openrc-20261018T124555Z.tar.xz";
+    const STAGE3_FILENAME: &str = "stage3-amd64-nomultilib-openrc-20261018T124555Z.tar.xz";
 
     // Deliberately not a cryptographic signature: these parsers only inspect armor.
     fn armored(body: &str) -> String {
@@ -27,7 +28,7 @@ mod sources {
             (Target::Alpine, SourceKind::NetbootArchive),
             (Target::Debian, SourceKind::DebianArchive),
             (Target::Arch, SourceKind::PackageRepository),
-            (Target::Gentoo, SourceKind::SystemdStage3),
+            (Target::Gentoo, SourceKind::NomultilibStage3),
         ] {
             assert_eq!(source_kind(target, "x86_64").unwrap(), kind);
             assert!(source_kind(target, "aarch64").is_err());
@@ -141,7 +142,7 @@ mod sources {
     }
 
     #[test]
-    fn gentoo_selects_systemd_stage3_and_sha512_for_the_exact_archive() {
+    fn gentoo_selects_default_openrc_nomultilib_stage3_and_sha512_for_the_exact_archive() {
         let source = parse_gentoo_stage3(
             &armored(&format!("# latest\n{STAGE3_PATH} 297255400")),
             "x86_64",
@@ -172,7 +173,7 @@ mod sources {
             format!("../{STAGE3_PATH} 297255400"),
             format!("https://untrusted.example/{STAGE3_PATH} 297255400"),
             format!("{} 297255400", STAGE3_PATH.replace("amd64", "arm64")),
-            format!("{} 297255400", STAGE3_PATH.replace("systemd", "openrc")),
+            format!("{} 297255400", STAGE3_PATH.replace("openrc", "systemd")),
             format!(
                 "{} 297255400",
                 STAGE3_PATH.replacen("20261018", "../..foo", 1)
@@ -191,6 +192,49 @@ mod sources {
         );
     }
 
+    #[test]
+    fn gentoo_variants_are_bound_to_exact_init_and_nomultilib_identity() {
+        use rustaller::config::GentooInit;
+        use rustaller::host::sources::{gentoo_stage3_index_url, parse_gentoo_stage3_for_init};
+        for init in [GentooInit::Openrc, GentooInit::Systemd] {
+            let path = format!(
+                "20261018T124555Z/stage3-{}-20261018T124555Z.tar.xz",
+                init.stage3_variant()
+            );
+            let source =
+                parse_gentoo_stage3_for_init(&armored(&format!("{path} 1234")), "x86_64", init)
+                    .unwrap();
+            assert_eq!(source.init_system().unwrap(), init);
+            assert!(source.validate_for_init(init).is_ok());
+            let other = if init == GentooInit::Openrc {
+                GentooInit::Systemd
+            } else {
+                GentooInit::Openrc
+            };
+            assert!(source.validate_for_init(other).is_err());
+            assert!(
+                parse_gentoo_stage3_for_init(&armored(&format!("{path} 1234")), "x86_64", other)
+                    .is_err()
+            );
+            assert!(
+                gentoo_stage3_index_url(init)
+                    .ends_with(&format!("latest-stage3-{}.txt", init.stage3_variant()))
+            );
+            for bad in [
+                path.replace("nomultilib-", ""),
+                path.replace("nomultilib", "musl"),
+                path.replace("amd64", "x32"),
+            ] {
+                assert!(
+                    parse_gentoo_stage3_for_init(&armored(&format!("{bad} 1234")), "x86_64", init)
+                        .is_err()
+                );
+            }
+            let mut tampered = source.clone();
+            tampered.url = "https://untrusted.example/stage3.tar.xz".into();
+            assert!(tampered.init_system().is_err());
+        }
+    }
     #[test]
     fn gentoo_digest_requires_one_correctly_named_sha512_in_signed_metadata() {
         let source =

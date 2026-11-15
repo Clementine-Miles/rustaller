@@ -125,6 +125,7 @@ impl EditSlot {
 pub(super) enum Setting {
     Authentication,
     Kernel,
+    GentooInit,
     Boot,
     Hold,
     Profile,
@@ -698,13 +699,14 @@ impl Wizard {
         result: Result<rustaller::host::inspect::PreflightReport, String>,
     ) {
         self.report = None;
-        let result = result.map(|mut report| {
+        let result = result.and_then(|mut report| {
             report.current = self.redact(report.current);
             report.target = self.redact(report.target);
             report.warning = self.redact(report.warning);
             let text = report.text();
+            let blocked = report.blocked;
             self.report = Some(report);
-            text
+            if blocked { Err(text) } else { Ok(text) }
         });
         self.complete_message(result);
         let view = std::mem::replace(&mut self.view, View::Menu);

@@ -1114,7 +1114,7 @@ fn filesystem_and_new_kernel_choices_reach_the_plan_and_stay_target_scoped() {
     for (index, kernels) in [
         (0, vec!["standard", "virt", "lts"]),
         (1, vec!["standard", "cloud", "generic"]),
-        (2, vec!["standard", "lts", "cachyos"]),
+        (2, vec!["standard", "lts", "hardened", "zen", "cachyos"]),
         (3, vec!["auto", "standard"]),
     ] {
         choose(&mut wizard, index);
@@ -1122,7 +1122,11 @@ fn filesystem_and_new_kernel_choices_reach_the_plan_and_stay_target_scoped() {
         assert_eq!(wizard.choices(Setting::Kernel), kernels);
         for (selected, kernel) in kernels.into_iter().enumerate() {
             wizard.select(Setting::Kernel, selected);
-            for (fs_index, fs) in [(0, RootFilesystem::Xfs), (1, RootFilesystem::Ext4)] {
+            for (fs_index, fs) in [
+                (0, RootFilesystem::Xfs),
+                (1, RootFilesystem::Ext4),
+                (2, RootFilesystem::Btrfs),
+            ] {
                 wizard.select(Setting::RootFilesystem, fs_index);
                 let plan = wizard.build_plan().unwrap();
                 assert_eq!(plan.post_install.kernel.as_str(), kernel);
@@ -1358,8 +1362,9 @@ fn current_and_target_panels_are_responsive_private_and_render_without_probing()
     choose(&mut wizard, 1);
     credentials(&mut wizard);
     wizard.preflight_complete(Ok(PreflightReport{
+        blocked:false,
         current:"OS: Debian (simulated)\nCPU: virtual CPU\nFirmware: bios\nDisk: /dev/vda\nUnknown: unknown\nSECRET test-password".into(),
-        target:"Distribution: Debian\nBootloader: Limine 9.6.5\nRoot: btrfs @\nFAT32: 512 MiB at /efi".into(),
+        target:"Distribution: Debian\nBootloader: Limine 9.6.5\nRoot: btrfs @\nFAT32: 512 MiB at /boot".into(),
         warning:"ERASE ALL PARTITIONS ON /dev/vda".into(),
     }));
     for (width, height) in [(120, 40), (60, 40), (48, 25)] {
@@ -1412,4 +1417,85 @@ fn btrfs_and_boot_size_tui_fields_share_cli_validation_and_target_drafts() {
         set(&mut wizard, Field::BootSize, "511");
         assert_eq!(wizard.invalid_field(), Some(Field::BootSize));
     }
+}
+
+#[test]
+fn gentoo_init_menu_is_target_specific_and_preserves_both_typed_plans() {
+    use rustaller::config::GentooInit;
+    let mut wizard = wizard();
+    choose(&mut wizard, 3);
+    credentials(&mut wizard);
+    open(&mut wizard, Page::Host);
+    assert!(
+        wizard
+            .entries()
+            .iter()
+            .any(|entry| matches!(entry.action, Action::Select(Setting::GentooInit)))
+    );
+    assert_eq!(wizard.choices(Setting::GentooInit), ["openrc", "systemd"]);
+    for (index, init) in [GentooInit::Openrc, GentooInit::Systemd]
+        .into_iter()
+        .enumerate()
+    {
+        wizard.select(Setting::GentooInit, index);
+        assert_eq!(wizard.build_plan().unwrap().system.gentoo_init, Some(init));
+        assert!(
+            wizard
+                .summary()
+                .iter()
+                .any(|line| line.contains(init.stage3_variant()))
+        );
+        assert!(
+            wizard
+                .summary()
+                .iter()
+                .any(|line| line == "ABI: amd64, no-multilib (64-bit only)")
+        );
+    }
+    choose(&mut wizard, 2);
+    credentials(&mut wizard);
+    open(&mut wizard, Page::Host);
+    assert!(
+        !wizard
+            .entries()
+            .iter()
+            .any(|entry| matches!(entry.action, Action::Select(Setting::GentooInit)))
+    );
+    assert_eq!(wizard.build_plan().unwrap().system.gentoo_init, None);
+    choose(&mut wizard, 3);
+    assert_eq!(
+        wizard.build_plan().unwrap().system.gentoo_init,
+        Some(GentooInit::Systemd)
+    );
+}
+
+#[test]
+fn blocked_diagnostic_report_keeps_panels_and_cannot_dispatch_installation() {
+    let mut wizard = wizard();
+    choose(&mut wizard, 1);
+    credentials(&mut wizard);
+    wizard.preflight_complete(Ok(rustaller::host::inspect::PreflightReport {
+        current: "System\nOS: Debian\nCPU and ISA\nMicroarch Level: Unknown".into(),
+        target: "Distribution: Debian\nFAT32 /boot".into(),
+        warning: "Installation compatibility: BLOCKED: unsupported source network".into(),
+        blocked: true,
+    }));
+    assert!(matches!(
+        wizard.view,
+        View::Preflight { success: false, .. }
+    ));
+    for width in [60, 120] {
+        let text = render(&mut wizard, width, 40);
+        assert!(text.contains("CURRENT SYSTEM") && text.contains("TARGET SYSTEM"));
+        assert!(text.contains("Microarch Level"));
+        assert!(text.contains("BLOCKED"));
+    }
+    assert!(matches!(
+        wizard.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Progress::Continue
+    ));
+    assert!(matches!(
+        wizard.view,
+        View::Preflight { success: false, .. }
+    ));
 }

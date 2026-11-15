@@ -77,16 +77,21 @@ fn audit_arch<R: CommandRunner>(runner: &mut R) -> Result<String, String> {
 }
 
 fn audit_gentoo<R: CommandRunner>(runner: &mut R) -> Result<String, String> {
-    let index = get(runner, sources::GENTOO_STAGE3_INDEX_URL)?;
-    let source = sources::parse_gentoo_stage3(&index, "x86_64").map_err(source_error)?;
-    let digests = get(runner, &source.digests_url)?;
-    let sha512 = sources::parse_gentoo_sha512(&source, &digests).map_err(source_error)?;
-    head(runner, &source.url)?;
-    head(runner, &source.signature_url)?;
-    Ok(format!(
-        "amd64 systemd stage3 {} reachable (index size {} bytes); selected SHA512 parsed: {}\n  {}\n  clearsigned index/DIGESTS parsed; signatures NOT verified; stage3 NOT downloaded or hashed.",
-        source.timestamp, source.size, sha512, source.url,
-    ))
+    let mut reports = Vec::new();
+    for init in [
+        rustaller::config::GentooInit::Openrc,
+        rustaller::config::GentooInit::Systemd,
+    ] {
+        let index = get(runner, &sources::gentoo_stage3_index_url(init))?;
+        let source =
+            sources::parse_gentoo_stage3_for_init(&index, "x86_64", init).map_err(source_error)?;
+        let digests = get(runner, &source.digests_url)?;
+        let sha512 = sources::parse_gentoo_sha512(&source, &digests).map_err(source_error)?;
+        head(runner, &source.url)?;
+        head(runner, &source.signature_url)?;
+        reports.push(format!("{} stage3 {} reachable (index size {} bytes); selected SHA512 parsed: {}\n  {}\n  clearsigned index/DIGESTS parsed; signatures NOT verified; stage3 NOT downloaded or hashed.", init.stage3_variant(), source.timestamp, source.size, sha512, source.url));
+    }
+    Ok(reports.join("\n  "))
 }
 
 fn source_error(error: SourceError) -> String {

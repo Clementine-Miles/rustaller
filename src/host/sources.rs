@@ -2,6 +2,7 @@
 //! does not authenticate it; callers must verify trusted signatures and payloads
 //! before extracting or executing downloaded content.
 
+use crate::config::GentooInit;
 use crate::model::Target;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -14,15 +15,21 @@ pub const DEBIAN_ARCHIVE: &str = "https://deb.debian.org/debian";
 pub const DEBIAN_SECURITY_ARCHIVE: &str = "https://security.debian.org/debian-security";
 pub const ARCH_MIRROR: &str = "https://geo.mirror.pkgbuild.com";
 pub const GENTOO_ARCHIVE: &str = "https://distfiles.gentoo.org/releases/amd64/autobuilds";
-pub const GENTOO_STAGE3_INDEX_URL: &str =
-    "https://distfiles.gentoo.org/releases/amd64/autobuilds/latest-stage3-amd64-systemd.txt";
+pub const GENTOO_STAGE3_INDEX_URL: &str = "https://distfiles.gentoo.org/releases/amd64/autobuilds/latest-stage3-amd64-nomultilib-openrc.txt";
+
+pub fn gentoo_stage3_index_url(init: GentooInit) -> String {
+    format!(
+        "{GENTOO_ARCHIVE}/latest-stage3-{}.txt",
+        init.stage3_variant()
+    )
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SourceKind {
     NetbootArchive,
     DebianArchive,
     PackageRepository,
-    SystemdStage3,
+    NomultilibStage3,
 }
 
 pub fn source_kind(target: Target, architecture: &str) -> Result<SourceKind, SourceError> {
@@ -31,7 +38,7 @@ pub fn source_kind(target: Target, architecture: &str) -> Result<SourceKind, Sou
         Target::Alpine => Ok(SourceKind::NetbootArchive),
         Target::Debian => Ok(SourceKind::DebianArchive),
         Target::Arch => Ok(SourceKind::PackageRepository),
-        Target::Gentoo => Ok(SourceKind::SystemdStage3),
+        Target::Gentoo => Ok(SourceKind::NomultilibStage3),
         _ => Err(SourceError("target has no automatic installation source")),
     }
 }
@@ -240,6 +247,14 @@ pub fn parse_gentoo_stage3(
     metadata: &str,
     architecture: &str,
 ) -> Result<GentooStage3, SourceError> {
+    parse_gentoo_stage3_for_init(metadata, architecture, GentooInit::Openrc)
+}
+
+pub fn parse_gentoo_stage3_for_init(
+    metadata: &str,
+    architecture: &str,
+    init: GentooInit,
+) -> Result<GentooStage3, SourceError> {
     require_x86_64(architecture)?;
     let lines: Vec<_> = clearsigned_payload(metadata)?
         .lines()
@@ -257,11 +272,11 @@ pub fn parse_gentoo_stage3(
         .split_once('/')
         .ok_or(SourceError("invalid Gentoo stage3 path"))?;
     if !valid_timestamp(timestamp)
-        || filename != format!("stage3-amd64-systemd-{timestamp}.tar.xz")
+        || filename != format!("stage3-{}-{timestamp}.tar.xz", init.stage3_variant())
         || !fields[1].bytes().all(|byte| byte.is_ascii_digit())
     {
         return Err(SourceError(
-            "Gentoo stage3 must be a timestamped amd64 systemd archive",
+            "Gentoo stage3 must match the selected timestamped amd64 nomultilib init variant",
         ));
     }
     let size = fields[1]
@@ -278,6 +293,37 @@ pub fn parse_gentoo_stage3(
         signature_url: format!("{url}.asc"),
         url,
     })
+}
+
+impl GentooStage3 {
+    /// Infer only from the complete official archive identity; never guess an ABI
+    /// from the host CPU or accept a multilib/musl/x32 fallback.
+    pub fn init_system(&self) -> Result<GentooInit, SourceError> {
+        for init in [GentooInit::Openrc, GentooInit::Systemd] {
+            if valid_timestamp(&self.timestamp)
+                && self.size > 0
+                && self.filename
+                    == format!("stage3-{}-{}.tar.xz", init.stage3_variant(), self.timestamp)
+                && self.url == format!("{GENTOO_ARCHIVE}/{}/{}", self.timestamp, self.filename)
+                && self.digests_url == format!("{}.DIGESTS", self.url)
+                && self.signature_url == format!("{}.asc", self.url)
+            {
+                return Ok(init);
+            }
+        }
+        Err(SourceError(
+            "Gentoo source is not an official amd64 nomultilib stage3",
+        ))
+    }
+
+    pub fn validate_for_init(&self, selected: GentooInit) -> Result<(), SourceError> {
+        if self.init_system()? != selected {
+            return Err(SourceError(
+                "Gentoo stage3 init system differs from the installation plan",
+            ));
+        }
+        Ok(())
+    }
 }
 
 pub fn parse_gentoo_sha512(source: &GentooStage3, metadata: &str) -> Result<String, SourceError> {

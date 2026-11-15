@@ -6,6 +6,7 @@
 //! Portage verifies repository and binary-package signatures independently.
 use super::install::VerifiedStage3;
 use crate::command::{CommandError, CommandRunner, CommandSpec, OutputMode, run_checked};
+use crate::config::GentooInit;
 use crate::host::sources::{ALPINE_ARCHIVE, ARCH_MIRROR};
 use crate::model::{BootMode, PlanError, Target};
 use crate::shared::configure::{ConfigurationError, validate_root};
@@ -24,7 +25,7 @@ pub enum RollingError {
     InvalidRoute,
     InvalidInput(&'static str),
     MissingGentooSigningKeys,
-    MissingSystemdProfile,
+    MissingNomultilibProfile,
     Plan(PlanError),
     Configuration(ConfigurationError),
     Command(CommandError),
@@ -42,9 +43,9 @@ impl fmt::Display for RollingError {
             Self::MissingGentooSigningKeys => f.write_str(
                 "Verified Gentoo stage3 does not contain the native release signing-key package",
             ),
-            Self::MissingSystemdProfile => {
-                f.write_str("Gentoo repository contains no stable amd64 systemd profile")
-            }
+            Self::MissingNomultilibProfile => f.write_str(
+                "Gentoo repository contains no matching stable amd64 no-multilib init profile",
+            ),
             Self::Plan(e) => e.fmt(f),
             Self::Configuration(e) => e.fmt(f),
             Self::Command(e) => e.fmt(f),
@@ -182,6 +183,9 @@ pub(super) fn configure_arch<R: CommandRunner>(
     write_target(root, "etc/locale.gen", b"en_US.UTF-8 UTF-8\n")?;
     write_target(root, "etc/locale.conf", b"LANG=C.UTF-8\n")?;
     chroot_checked(runner, root, ["locale-gen"], "arch-target-locale")?;
+    packages::verify_kernel_available(runner, root, plan.plan()).map_err(|_| {
+        RollingError::InvalidInput("selected kernel package or dependencies unavailable")
+    })?;
     run_checked(
         runner,
         &packages::kernel_install_command_for_plan(plan.plan(), root)?.env("LANG", "C.UTF-8"),
@@ -246,7 +250,7 @@ pub(super) fn extract_gentoo<R: CommandRunner>(
     )
 }
 
-/// Configure the signed systemd stage3 after pseudo-filesystems and resolver are
+/// Configure the signed no-multilib stage3 after pseudo-filesystems and resolver are
 /// mounted/provided by the Live driver. Keep Portage/Python/toolchain intact.
 pub(super) fn configure_gentoo<R: CommandRunner>(
     runner: &mut R,
@@ -276,7 +280,12 @@ pub(super) fn configure_gentoo<R: CommandRunner>(
     write_target(root, "etc/portage/repos.conf/gentoo.conf", b"[gentoo]\nlocation = /var/db/repos/gentoo\nsync-type = webrsync\nsync-uri = https://distfiles.gentoo.org/snapshots\nsync-webrsync-verify-signature = true\nsync-openpgp-key-path = /usr/share/openpgp-keys/gentoo-release.asc\nsync-openpgp-key-refresh = false\n")?;
     let make_conf = root.join("etc/portage/make.conf");
     validate_planned_file(&make_conf)?;
-    let extra = "MAKEOPTS=\"-j1\"\nGENTOO_MIRRORS=\"https://distfiles.gentoo.org\"\nFEATURES=\"${FEATURES} getbinpkg binpkg-request-signature\"\n".to_owned();
+    let init = plan
+        .plan()
+        .system
+        .gentoo_init
+        .ok_or(RollingError::InvalidInput("Gentoo init system"))?;
+    let extra = "ABI_X86=\"64\"\nMAKEOPTS=\"-j1\"\nGENTOO_MIRRORS=\"https://distfiles.gentoo.org\"\nFEATURES=\"${FEATURES} getbinpkg binpkg-request-signature\"\n".to_owned();
     let text = replace_managed_block(
         &read_config(&make_conf)?,
         &extra,
@@ -289,6 +298,23 @@ pub(super) fn configure_gentoo<R: CommandRunner>(
         root,
         "etc/portage/package.use/rustaller-installkernel",
         b"sys-kernel/installkernel dracut -systemd -systemd-boot -uki -ukify -efistub -grub -refind\n",
+    )?;
+    // Both PID 1 variants use the legacy installkernel backend: it installs
+    // versioned regular files. Disable kernel-install layouts and UKIs explicitly;
+    // static symlinks cannot be created on the FAT32 /boot filesystem.
+    write_target(
+        root,
+        "etc/kernel/install.conf",
+        b"layout=compat\ninitrd_generator=dracut\nuki_generator=none\n",
+    )?;
+    write_target(
+        root,
+        "etc/kernel/install.d/90-zz-update-static.install",
+        b"#!/bin/sh\n# FAT32 /boot has no static symlinks; versioned regular files only.\nexit 0\n",
+    )?;
+    fs::set_permissions(
+        root.join("etc/kernel/install.d/90-zz-update-static.install"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
     )?;
     let btrfs = plan.plan().system.root_filesystem == crate::config::RootFilesystem::Btrfs;
     let flags = if btrfs { " rootflags=subvol=@" } else { "" };
@@ -318,15 +344,36 @@ pub(super) fn configure_gentoo<R: CommandRunner>(
         runner,
         root,
         ["eselect", "profile", "list"],
-        "gentoo-list-systemd-profiles",
+        "gentoo-list-nomultilib-profiles",
     )?;
-    let profile = select_systemd_profile(&profiles).ok_or(RollingError::MissingSystemdProfile)?;
+    let profile =
+        select_nomultilib_profile(&profiles, init).ok_or(RollingError::MissingNomultilibProfile)?;
     chroot_checked(
         runner,
         root,
         ["eselect", "profile", "set", &profile],
-        "gentoo-select-systemd-profile",
+        "gentoo-select-nomultilib-profile",
     )?;
+    let selected = chroot_capture(
+        runner,
+        root,
+        ["eselect", "profile", "show"],
+        "gentoo-verify-nomultilib-profile",
+    )?;
+    if !selected.split_whitespace().any(|name| name == profile) {
+        return Err(RollingError::MissingNomultilibProfile);
+    }
+    let abi = chroot_capture(
+        runner,
+        root,
+        ["portageq", "envvar", "ABI_X86"],
+        "gentoo-verify-64-bit-abi",
+    )?;
+    if abi.trim() != "64" {
+        return Err(RollingError::InvalidInput(
+            "Gentoo no-multilib ABI_X86 must be 64",
+        ));
+    }
     chroot_checked(runner, root, ["locale-gen"], "gentoo-target-locale")?;
     chroot_checked(runner, root, ["env-update"], "gentoo-target-environment")?;
     let mut packages = packages::emerge_package_set_for_plan(
@@ -345,6 +392,9 @@ pub(super) fn configure_gentoo<R: CommandRunner>(
             packages.push(atom.into());
         }
     }
+    packages::verify_kernel_available(runner, root, plan.plan()).map_err(|_| {
+        RollingError::InvalidInput("selected kernel package or dependencies unavailable")
+    })?;
     run_checked(runner, &{
         let mut args = vec![
             root.as_os_str().to_owned(),
@@ -411,7 +461,7 @@ fn validate_packages(packages: &[String]) -> Result<(), RollingError> {
     }
     Ok(())
 }
-fn select_systemd_profile(output: &str) -> Option<String> {
+fn select_nomultilib_profile(output: &str, init: GentooInit) -> Option<String> {
     let candidates = output
         .lines()
         .filter(|line| line.contains("(stable)"))
@@ -422,8 +472,9 @@ fn select_systemd_profile(output: &str) -> Option<String> {
                 .map(|name| (name, rest.split_whitespace().any(|word| word == "*")))
         })
         .filter(|(name, _)| {
-            name.split('/').any(|part| part == "systemd")
-                && name.split('/').any(|part| part == "amd64")
+            name.starts_with("default/linux/amd64/")
+                && name.split('/').any(|part| part == "no-multilib")
+                && name.split('/').any(|part| part == "systemd") == (init == GentooInit::Systemd)
                 && name.split('/').all(|part| {
                     !part.is_empty()
                         && part != "."
@@ -434,7 +485,7 @@ fn select_systemd_profile(output: &str) -> Option<String> {
                 })
         })
         .collect::<Vec<_>>();
-    // Preserve the selected stable systemd profile in the authenticated stage3
+    // Preserve the selected matching stable profile in the authenticated stage3
     // rather than replacing its ABI/merged-usr selection with a shorter name.
     candidates
         .iter()
@@ -559,14 +610,25 @@ mod tests {
         }
     }
     #[test]
-    fn stable_systemd_selection_excludes_openrc_experimental_and_other_architectures() {
-        let text = "Available profile symlink targets:\n [1] default/linux/amd64/23.0 (stable)\n [2] default/linux/amd64/23.0/systemd (stable) *\n [3] default/linux/amd64/23.0/desktop/systemd (stable)\n [4] default/linux/arm64/23.0/systemd (stable)\n [5] default/linux/amd64/experimental/systemd (exp)\n";
+    fn stable_profile_selection_requires_nomultilib_and_exact_init() {
+        let text = "Available profile symlink targets:\n [1] default/linux/amd64/23.0 (stable)\n [2] default/linux/amd64/23.0/systemd (stable) *\n [3] default/linux/amd64/23.0/no-multilib (stable)\n [4] default/linux/amd64/23.0/no-multilib/systemd (stable)\n [5] default/linux/arm64/23.0/no-multilib (stable)\n [6] default/linux/amd64/experimental/no-multilib/systemd (exp)\n";
         assert_eq!(
-            select_systemd_profile(text).as_deref(),
-            Some("default/linux/amd64/23.0/systemd")
+            select_nomultilib_profile(text, GentooInit::Openrc).as_deref(),
+            Some("default/linux/amd64/23.0/no-multilib")
         );
-        assert!(select_systemd_profile("[1] default/linux/amd64/23.0 (stable)\n").is_none());
-        assert_eq!(select_systemd_profile("[1] default/linux/amd64/23.0/systemd (stable)\n[2] default/linux/amd64/23.0/split-usr/systemd (stable) *\n").as_deref(),Some("default/linux/amd64/23.0/split-usr/systemd"));
+        assert_eq!(
+            select_nomultilib_profile(text, GentooInit::Systemd).as_deref(),
+            Some("default/linux/amd64/23.0/no-multilib/systemd")
+        );
+        assert!(select_nomultilib_profile("[1] default/linux/amd64/23.0 (stable)\n[2] default/linux/amd64/23.0/systemd (stable)\n", GentooInit::Openrc).is_none());
+        assert!(
+            select_nomultilib_profile(
+                "[1] default/linux/amd64/23.0/no-multilib (stable)\n",
+                GentooInit::Systemd
+            )
+            .is_none()
+        );
+        assert_eq!(select_nomultilib_profile("[1] default/linux/amd64/23.0/no-multilib (stable)\n[2] default/linux/amd64/23.0/split-usr/no-multilib (stable) *\n", GentooInit::Openrc).as_deref(), Some("default/linux/amd64/23.0/split-usr/no-multilib"));
     }
     #[test]
     fn arch_rootfs_uses_signed_native_keyring_and_does_not_copy_a_missing_live_mirrorlist() {
@@ -612,7 +674,7 @@ mod tests {
     fn arch_kernel_hooks_are_separate_from_rootfs_bootstrap() {
         let scratch = Scratch::new();
         let root = scratch.0.join("root");
-        let mut runner = successful_calls(4);
+        let mut runner = successful_calls(5);
         configure_arch(&mut runner, &root, &arch_plan()).unwrap();
         assert_eq!(
             runner
@@ -620,9 +682,85 @@ mod tests {
                 .iter()
                 .map(|spec| spec.args[1].to_str().unwrap())
                 .collect::<Vec<_>>(),
-            ["pacman-key", "locale-gen", "pacman", "mkinitcpio"]
+            ["pacman-key", "locale-gen", "pacman", "pacman", "mkinitcpio"]
         );
+        assert!(runner.calls()[2].args.iter().any(|arg| arg == "-Syp"));
         assert!(runner.calls()[2].args.iter().any(|arg| arg == "linux"));
-        assert!(runner.calls()[3].args.iter().any(|arg| arg == "-P"));
+        assert!(runner.calls()[3].args.iter().any(|arg| arg == "linux"));
+        assert!(runner.calls()[4].args.iter().any(|arg| arg == "-P"));
+    }
+    #[test]
+    fn both_gentoo_variants_enforce_nomultilib_profile_abi_and_fat_kernel_policy() {
+        for init in [GentooInit::Openrc, GentooInit::Systemd] {
+            let scratch = Scratch::new();
+            let root = scratch.0.join("root");
+            let key = root.join("usr/share/openpgp-keys/gentoo-release.asc");
+            fs::create_dir_all(key.parent().unwrap()).unwrap();
+            fs::write(key, b"authenticated stage3 fixture").unwrap();
+            let mut p = InstallPlan::new(Target::Gentoo);
+            p.system.gentoo_init = Some(init);
+            let plan =
+                validate_live_plan_with_uid(p, "x86_64", 4096, crate::RUNTIME_VERSION, 0).unwrap();
+            let profile = format!(
+                "default/linux/amd64/23.0/no-multilib{}",
+                if init == GentooInit::Systemd {
+                    "/systemd"
+                } else {
+                    ""
+                }
+            );
+            let mut runner = MockRunner::new((0..11).map(|index| {
+                let text = match index {
+                    2 => format!("[1] {profile} (stable) *\n"),
+                    4 => format!("Current /etc/portage/make.profile symlink:\n  {profile}\n"),
+                    5 => "64\n".into(),
+                    _ => String::new(),
+                };
+                CommandOutput::new(Some(0), text.into_bytes(), vec![])
+            }));
+            configure_gentoo(
+                &mut runner,
+                &root,
+                &plan,
+                BootMode::Bios,
+                &[],
+                "00112233-4455-6677-8899-aabbccddeeff",
+            )
+            .unwrap();
+            assert!(
+                runner.calls()[3]
+                    .args
+                    .iter()
+                    .any(|arg| arg == profile.as_str())
+            );
+            assert!(runner.calls()[8].args.iter().any(|arg| arg == "--pretend"));
+            assert!(
+                runner.calls()[10]
+                    .args
+                    .iter()
+                    .any(|arg| arg == "--regenerate-all")
+            );
+            assert!(
+                fs::read_to_string(root.join("etc/portage/make.conf"))
+                    .unwrap()
+                    .contains("ABI_X86=\"64\"")
+            );
+            let policy =
+                fs::read_to_string(root.join("etc/portage/package.use/rustaller-installkernel"))
+                    .unwrap();
+            assert!(policy.contains("-systemd -systemd-boot -uki -ukify -efistub -grub"));
+            assert_eq!(
+                fs::read_to_string(root.join("etc/kernel/install.conf")).unwrap(),
+                "layout=compat\ninitrd_generator=dracut\nuki_generator=none\n"
+            );
+            let static_hook = root.join("etc/kernel/install.d/90-zz-update-static.install");
+            assert!(fs::symlink_metadata(&static_hook).unwrap().is_file());
+            assert!(
+                std::os::unix::fs::PermissionsExt::mode(
+                    &fs::metadata(static_hook).unwrap().permissions()
+                ) & 0o111
+                    != 0
+            );
+        }
     }
 }

@@ -1,5 +1,7 @@
 //! Shared package planning and native package-manager policies.
-use crate::command::{CommandInput, CommandSpec, OutputMode};
+use crate::command::{
+    CommandError, CommandInput, CommandRunner, CommandSpec, OutputMode, run_checked,
+};
 use crate::config::InstallProfile;
 use crate::model::{BootMode, InstallPlan, PlanError, Target};
 use crate::postinstall::ConfigurationPlan;
@@ -44,7 +46,7 @@ pub enum RootfsMethod {
     AlpineApk,
     DebianMinbase,
     ArchPacstrap,
-    GentooSystemdStage3,
+    GentooNomultilibStage3,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -124,11 +126,11 @@ pub fn package_plan(
             (
                 RootfsMethod::ArchPacstrap,
                 base,
-                vec![configuration.kernel.package.into()],
+                vec![configuration.kernel.package.into(), "mkinitcpio".into()],
             )
         }
         Target::Gentoo => (
-            RootfsMethod::GentooSystemdStage3,
+            RootfsMethod::GentooNomultilibStage3,
             vec![],
             emerge_package_set_for_plan(
                 plan,
@@ -194,6 +196,7 @@ pub fn kernel_install_command_for_plan(
         "-Syu".into(),
         "--noconfirm".into(),
         configuration.kernel.package.into(),
+        "mkinitcpio".into(),
     ];
     args.extend(configuration.extra_packages.into_iter().map(Into::into));
     Ok(CommandSpec::new("chroot", args)
@@ -202,6 +205,87 @@ pub fn kernel_install_command_for_plan(
         .stdout_mode(OutputMode::Stream)
         .stderr_mode(OutputMode::Stream))
 }
+
+/// Native repository resolution runs inside the target before the kernel
+/// transaction. It checks the selected package and dependency closure without
+/// installing a second kernel or relying on a hard-coded release availability.
+/// The target adapters must first initialize their authenticated repositories.
+pub fn verify_kernel_available<R: CommandRunner>(
+    runner: &mut R,
+    root: &Path,
+    plan: &InstallPlan,
+) -> Result<(), KernelAvailabilityError> {
+    let configuration =
+        configuration_for_plan(plan, plan.target, false).map_err(KernelAvailabilityError::Plan)?;
+    let mut args = vec![root.as_os_str().to_owned()];
+    let native: Vec<&str> = match plan.target {
+        Target::Alpine => vec![
+            "apk",
+            "add",
+            "--simulate",
+            "--no-cache",
+            configuration.kernel.package,
+        ],
+        Target::Arch => vec![
+            "pacman",
+            "-Syp",
+            "--noconfirm",
+            "--print-format",
+            "%n",
+            configuration.kernel.package,
+            "mkinitcpio",
+        ],
+        Target::Gentoo => vec![
+            "emerge",
+            "--pretend",
+            "--getbinpkg",
+            "--usepkg",
+            "--noreplace",
+            configuration.kernel.package,
+            "sys-kernel/dracut",
+            "sys-kernel/installkernel",
+        ],
+        Target::Debian => vec![
+            "apt-get",
+            "--simulate",
+            "install",
+            "--no-install-recommends",
+            configuration.kernel.package,
+            "initramfs-tools",
+        ],
+        Target::Reset => {
+            return Err(KernelAvailabilityError::Plan(PlanError::UnexpectedOption(
+                "automatic-install",
+            )));
+        }
+    };
+    args.extend(native.into_iter().map(Into::into));
+    run_checked(
+        runner,
+        &crate::command::target_command("chroot", args, "target-kernel-availability")
+            .env("LC_ALL", "C")
+            .env("DEBIAN_FRONTEND", "noninteractive"),
+    )
+    .map_err(KernelAvailabilityError::Command)
+}
+
+#[derive(Debug)]
+pub enum KernelAvailabilityError {
+    Plan(PlanError),
+    Command(CommandError),
+}
+impl std::fmt::Display for KernelAvailabilityError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Plan(error) => error.fmt(f),
+            Self::Command(error) => write!(
+                f,
+                "Selected target kernel package or dependencies are unavailable: {error}"
+            ),
+        }
+    }
+}
+impl std::error::Error for KernelAvailabilityError {}
 
 pub fn emerge_package_set(
     _boot_mode: BootMode,
@@ -241,7 +325,227 @@ pub fn emerge_package_set_for_plan(
         firmware_packages,
     );
     packages.extend(configuration.extra_packages.into_iter().map(str::to_owned));
+    packages.extend(
+        ["sys-kernel/dracut", "sys-kernel/installkernel"]
+            .into_iter()
+            .map(str::to_owned),
+    );
+    if plan.system.gentoo_init == Some(crate::config::GentooInit::Openrc) {
+        packages.extend(
+            [
+                "sys-apps/openrc",
+                "net-misc/netifrc",
+                "net-misc/dhcpcd",
+                "net-dns/openresolv",
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        );
+    }
     Ok(packages)
+}
+
+/// Verify every installed kernel has the selected filesystem and storage/network
+/// drivers needed by this guest. This uses authenticated package-owned module
+/// inventories, not the capabilities of the Alpine Live kernel.
+pub fn verify_boot_driver_support(
+    root: &Path,
+    filesystem: &str,
+    disk_device: &str,
+    interfaces: &[crate::deployment::NetworkInterface],
+) -> Result<(), String> {
+    use std::collections::BTreeSet;
+    use std::fs;
+    validate_root(root).map_err(|e| e.to_string())?;
+    if !matches!(filesystem, "xfs" | "ext4" | "btrfs") {
+        return Err("unsupported target root filesystem".into());
+    }
+    let mut required = BTreeSet::from([filesystem.to_owned(), "vfat".to_owned()]);
+    let disk = Path::new(disk_device)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("invalid target disk name")?;
+    let storage = visible_device_modules(&Path::new("/sys/class/block").join(disk));
+    required.extend(storage.iter().cloned());
+    // Standard guest device names still establish the frontend when optional
+    // sysfs driver/module links are absent (including built-in Live drivers).
+    let needs_scsi = disk.starts_with("sd");
+    if disk.starts_with("vd") {
+        required.insert("virtio_blk".into());
+    } else if disk.starts_with("xvd") {
+        required.insert("xen_blkfront".into());
+    } else if disk.starts_with("nvme") {
+        required.insert("nvme".into());
+    } else if needs_scsi {
+        required.insert("sd_mod".into());
+    }
+    for interface in interfaces {
+        if !crate::deployment::valid_interface_name(&interface.name) {
+            return Err("invalid target network interface".into());
+        }
+        required.extend(visible_device_modules(
+            &Path::new("/sys/class/net").join(&interface.name),
+        ));
+    }
+    let canonical_root = fs::canonicalize(root).map_err(|e| e.to_string())?;
+    let modules = fs::canonicalize(root.join("lib/modules"))
+        .map_err(|_| "target kernel module inventory is missing")?;
+    if !modules.starts_with(&canonical_root) {
+        return Err("kernel modules escape target root".into());
+    }
+    let releases = fs::read_dir(&modules)
+        .map_err(|e| e.to_string())?
+        .take(17)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    if releases.is_empty() || releases.len() > 16 {
+        return Err("require 1-16 installed kernel module releases".into());
+    }
+    let mut checked_releases = 0;
+    for release in releases {
+        if !release.file_type().map_err(|e| e.to_string())?.is_dir() {
+            continue;
+        }
+        checked_releases += 1;
+        let mut present = BTreeSet::new();
+        for (file, dependency) in [("modules.builtin", false), ("modules.dep", true)] {
+            let path = release.path().join(file);
+            let metadata = fs::symlink_metadata(&path)
+                .map_err(|_| format!("missing {file} for installed kernel"))?;
+            if !metadata.is_file() || metadata.len() > 8 * 1024 * 1024 {
+                return Err("invalid kernel module inventory".into());
+            }
+            let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            for line in text.lines().filter(|line| !line.is_empty()) {
+                let path = if dependency {
+                    line.split_once(':').ok_or("invalid modules.dep")?.0
+                } else {
+                    line
+                };
+                let path = Path::new(path);
+                if path
+                    .components()
+                    .any(|part| !matches!(part, std::path::Component::Normal(_)))
+                {
+                    return Err("unsafe module inventory path".into());
+                }
+                let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                    return Err("invalid module inventory filename".into());
+                };
+                let name = name
+                    .strip_suffix(".xz")
+                    .or_else(|| name.strip_suffix(".zst"))
+                    .or_else(|| name.strip_suffix(".gz"))
+                    .unwrap_or(name);
+                let Some(name) = name.strip_suffix(".ko") else {
+                    return Err("invalid module inventory extension".into());
+                };
+                let name = name.replace('-', "_");
+                // Built-ins need no external payload. Required loadable drivers
+                // must actually exist inside the target, not just in a stale depmod file.
+                if dependency && required.contains(&name) {
+                    let actual = fs::canonicalize(release.path().join(path))
+                        .map_err(|_| format!("required module {name} has no payload"))?;
+                    if !actual.starts_with(&canonical_root) || !actual.is_file() {
+                        return Err("required module escapes target root".into());
+                    }
+                }
+                present.insert(name);
+            }
+        }
+        if let Some(missing) = required.iter().find(|name| !present.contains(*name)) {
+            return Err(format!(
+                "installed kernel {} lacks required driver {missing}",
+                release.file_name().to_string_lossy()
+            ));
+        }
+        // SCSI frontend names do not identify their controller. If sysfs could
+        // not identify one, require a supported controller in the installed image.
+        if needs_scsi
+            && !storage.iter().any(|name| {
+                matches!(
+                    name.as_str(),
+                    "virtio_scsi"
+                        | "vmw_pvscsi"
+                        | "hv_storvsc"
+                        | "ahci"
+                        | "mptspi"
+                        | "mpt3sas"
+                        | "megaraid_sas"
+                )
+            })
+            && ![
+                "virtio_scsi",
+                "vmw_pvscsi",
+                "hv_storvsc",
+                "ahci",
+                "mptspi",
+                "mpt3sas",
+                "megaraid_sas",
+            ]
+            .iter()
+            .any(|name| present.contains(*name))
+        {
+            return Err("installed kernel has no supported SCSI disk controller".into());
+        }
+    }
+    if checked_releases == 0 {
+        return Err("target has no installed kernel module releases".into());
+    }
+    Ok(())
+}
+
+fn visible_device_modules(device: &Path) -> std::collections::BTreeSet<String> {
+    use std::{collections::BTreeSet, fs};
+    let mut modules = BTreeSet::new();
+    let Ok(mut device) = fs::canonicalize(device) else {
+        return modules;
+    };
+    for _ in 0..24 {
+        if !device.starts_with("/sys/devices") {
+            break;
+        }
+        if let Ok(module) = fs::canonicalize(device.join("driver/module"))
+            .or_else(|_| fs::canonicalize(device.join("driver")))
+            && let Some(name) = module.file_name().and_then(|name| name.to_str())
+            && let name = match name {
+                "sd" => "sd_mod".to_owned(),
+                "vbd" => "xen_blkfront".to_owned(),
+                "vif" => "xen_netfront".to_owned(),
+                name => name.replace('-', "_"),
+            }
+            && matches!(
+                name.as_str(),
+                "virtio_blk"
+                    | "virtio_scsi"
+                    | "virtio_pci"
+                    | "sd_mod"
+                    | "vmw_pvscsi"
+                    | "hv_storvsc"
+                    | "xen_blkfront"
+                    | "nvme"
+                    | "nvme_core"
+                    | "ahci"
+                    | "mptspi"
+                    | "mpt3sas"
+                    | "megaraid_sas"
+                    | "virtio_net"
+                    | "xen_netfront"
+                    | "hv_netvsc"
+                    | "vmxnet3"
+                    | "e1000"
+                    | "e1000e"
+                    | "ena"
+                    | "gve"
+            )
+        {
+            modules.insert(name);
+        }
+        if !device.pop() {
+            break;
+        }
+    }
+    modules
 }
 
 pub const PRESERVED_ROOTS: &[&str] = &[

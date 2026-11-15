@@ -2,6 +2,39 @@
 use crate::model::Target;
 use std::{fmt, net::IpAddr, str::FromStr};
 
+/// Gentoo's init selection is independent of the guest CPU's ISA level.
+/// Both supported variants are amd64 glibc, with a 64-bit-only ABI.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum GentooInit {
+    #[default]
+    Openrc,
+    Systemd,
+}
+impl GentooInit {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Openrc => "openrc",
+            Self::Systemd => "systemd",
+        }
+    }
+    pub const fn stage3_variant(self) -> &'static str {
+        match self {
+            Self::Openrc => "amd64-nomultilib-openrc",
+            Self::Systemd => "amd64-nomultilib-systemd",
+        }
+    }
+}
+impl FromStr for GentooInit {
+    type Err = SystemConfigError;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "openrc" => Ok(Self::Openrc),
+            "systemd" => Ok(Self::Systemd),
+            _ => Err(SystemConfigError::InvalidGentooInit),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum InstallProfile {
     #[default]
@@ -172,6 +205,7 @@ impl FromStr for RootFilesystem {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SystemConfig {
+    pub gentoo_init: Option<GentooInit>,
     pub boot_size_mib: Option<u32>,
     pub btrfs_compression: Option<u8>,
     pub root_filesystem: RootFilesystem,
@@ -188,7 +222,18 @@ impl SystemConfig {
         self == &Self::default()
     }
     pub fn validate(&self, target: Target, hold: Option<u8>) -> Result<(), SystemConfigError> {
-        if !self.is_default() && (!target.is_automatic() || hold == Some(1)) {
+        if self.gentoo_init.is_some() && target != Target::Gentoo {
+            return Err(SystemConfigError::UnexpectedGentooInit);
+        }
+        // A Gentoo plan carries its default init variant even if switched to
+        // rescue later. It is not an applied target setting in hold=1 mode.
+        let route_default = target == Target::Gentoo
+            && self
+                == &Self {
+                    gentoo_init: self.gentoo_init,
+                    ..Self::default()
+                };
+        if !self.is_default() && !route_default && (!target.is_automatic() || hold == Some(1)) {
             return Err(SystemConfigError::UnexpectedRoute);
         }
         if self
@@ -251,6 +296,9 @@ impl SystemConfig {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SystemConfigError {
+    InvalidGentooInit,
+    UnexpectedGentooInit,
+    MissingGentooInit,
     InvalidFilesystem,
     InvalidBootSize,
     InvalidCompression,
@@ -275,6 +323,11 @@ impl fmt::Display for SystemConfigError {
             return error.fmt(f);
         }
         f.write_str(match self {
+            Self::InvalidGentooInit => "Gentoo init must be openrc or systemd",
+            Self::UnexpectedGentooInit => "--gentoo-init requires a Gentoo installation target",
+            Self::MissingGentooInit => {
+                "Gentoo installation requires an explicit typed init selection"
+            }
             Self::InvalidFilesystem => "Root filesystem must be xfs, ext4 or btrfs",
             Self::InvalidBootSize => "FAT32 boot partition must be 512-4096 MiB",
             Self::InvalidCompression => {

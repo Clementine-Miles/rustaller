@@ -38,6 +38,18 @@ mod command {
     }
 
     #[test]
+    fn inspection_deadline_also_closes_descendant_output_pipes() {
+        let start = std::time::Instant::now();
+        // Controlled local fixture: the descendant inherits stdout. Killing
+        // only the shell would leave the bounded-output reader waiting on it.
+        let error = SystemRunner
+            .run(&CommandSpec::new("sh", ["-c", "sleep 30 & wait"]).inspection_limits())
+            .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    #[test]
     fn captured_pipeline_drains_output_while_writing_more_than_pipe_capacity() {
         let bytes = vec![b'x'; 2 * 1024 * 1024];
         let first = CommandSpec::new("cat", [] as [&str; 0])
@@ -49,6 +61,26 @@ mod command {
         let output = SystemRunner.run_pipeline(&[first, last]).unwrap();
         assert_eq!(output.statuses, [Some(0), Some(0)]);
         assert_eq!(output.stdout, bytes);
+    }
+
+    #[test]
+    fn optional_inspection_bounds_output_and_wait_time() {
+        let start = std::time::Instant::now();
+        let error = SystemRunner
+            .run(&CommandSpec::new("sleep", ["30"]).inspection_limits())
+            .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+        let error = SystemRunner
+            .run(&CommandSpec::new("head", ["-c", "1048576", "/dev/zero"]).inspection_limits())
+            .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        let output = SystemRunner
+            .run(&CommandSpec::new("cat", [] as [&str; 0]).inspection_limits())
+            .unwrap();
+        assert_eq!(output.status, Some(0));
+        assert!(output.stdout.is_empty());
+        assert!(output.stderr.is_empty());
     }
 
     #[test]

@@ -62,6 +62,7 @@ mod debian {
                 "xfsprogs",
                 "linux-image-cloud-amd64",
                 "dosfstools",
+                "initramfs-tools",
                 "sudo",
                 "firmware-linux"
             ]
@@ -75,30 +76,77 @@ mod debian {
                 "openssh-server",
                 "xfsprogs",
                 "linux-image-amd64",
-                "dosfstools"
+                "dosfstools",
+                "initramfs-tools"
             ]
         );
 
         let scratch = Scratch::new("debian");
-        let mut runner = MockRunner::new(success_outputs(2));
+        let mut runner = MockRunner::new(success_outputs(3));
         install_apt_packages(
             &mut runner,
             &scratch.0,
             &apt_package_list(false, BootMode::Efi, "admin", &firmware),
         )
         .unwrap();
-        assert_eq!(runner.calls().len(), 2);
+        assert_eq!(runner.calls().len(), 3);
         assert_eq!(runner.calls()[0].args[1..], ["apt-get", "update"]);
         assert_eq!(
-            runner.calls()[1].args[1..5],
+            runner.calls()[1].args[1..4],
+            ["apt-get", "--simulate", "install"]
+        );
+        assert_eq!(
+            runner.calls()[2].args[1..5],
             ["apt-get", "install", "-y", "--no-install-recommends"]
         );
-        assert_eq!(runner.calls()[1].args[5], "ca-certificates");
+        assert_eq!(runner.calls()[2].args[5], "ca-certificates");
         assert_eq!(
             runner.calls()[0]
                 .env
                 .get(std::ffi::OsStr::new("DEBIAN_FRONTEND")),
             Some(&std::ffi::OsString::from("noninteractive"))
+        );
+    }
+
+    #[test]
+    fn fat32_kernel_policy_disables_symlinks_and_keeps_unrelated_settings() {
+        let scratch = Scratch::new("debian-fat32");
+        fs::create_dir_all(scratch.0.join("etc")).unwrap();
+        fs::write(
+            scratch.0.join("etc/kernel-img.conf"),
+            "do_symlinks = yes\nlink_in_boot=yes\ndo_initrd = yes\n",
+        )
+        .unwrap();
+        rustaller::targets::debian::configure_fat32_boot(&scratch.0).unwrap();
+        rustaller::targets::debian::configure_fat32_boot(&scratch.0).unwrap();
+        let text = fs::read_to_string(scratch.0.join("etc/kernel-img.conf")).unwrap();
+        assert!(text.contains("do_initrd = yes"));
+        assert_eq!(text.matches("do_symlinks = no").count(), 1);
+        assert_eq!(text.matches("link_in_boot = no").count(), 1);
+        assert!(!text.contains("= yes\nlink_in_boot"));
+    }
+
+    #[test]
+    fn unavailable_selected_kernel_stops_before_installation() {
+        let scratch = Scratch::new("debian-unavailable");
+        let mut runner = MockRunner::new([
+            CommandOutput::new(Some(0), vec![], vec![]),
+            CommandOutput::new(Some(100), vec![], b"No candidate".to_vec()),
+        ]);
+        assert!(
+            install_apt_packages(
+                &mut runner,
+                &scratch.0,
+                &apt_package_list(false, BootMode::Bios, "root", &[])
+            )
+            .is_err()
+        );
+        assert_eq!(runner.calls().len(), 2);
+        assert!(
+            runner
+                .calls()
+                .iter()
+                .all(|call| call.phase != "debian-apt-install")
         );
     }
 
@@ -170,7 +218,22 @@ mod target_config {
                     &[]
                 )
                 .unwrap(),
-                packages::emerge_package_set(boot_mode, "ext4", "root", &[])
+                {
+                    let mut expected = packages::emerge_package_set(boot_mode, "ext4", "root", &[]);
+                    expected.extend(
+                        [
+                            "sys-kernel/dracut",
+                            "sys-kernel/installkernel",
+                            "sys-apps/openrc",
+                            "net-misc/netifrc",
+                            "net-misc/dhcpcd",
+                            "net-dns/openresolv",
+                        ]
+                        .into_iter()
+                        .map(str::to_owned),
+                    );
+                    expected
+                }
             );
         }
         let command = packages::kernel_install_command_for_plan(
@@ -181,7 +244,14 @@ mod target_config {
         assert_eq!(command.program, "chroot");
         assert_eq!(
             command.args,
-            ["/os", "pacman", "-Syu", "--noconfirm", "linux"]
+            [
+                "/os",
+                "pacman",
+                "-Syu",
+                "--noconfirm",
+                "linux",
+                "mkinitcpio"
+            ]
         );
         assert_eq!(command.stdin, CommandInput::Null);
         assert_eq!(command.stdout_mode, OutputMode::Stream);
@@ -226,6 +296,7 @@ mod target_config {
                 "-Syu",
                 "--noconfirm",
                 "linux-lts",
+                "mkinitcpio",
                 "tzdata"
             ]
         );
@@ -248,7 +319,11 @@ mod target_config {
                 .count(),
             1
         );
-        assert_eq!(packages.last().unwrap(), "sys-libs/timezone-data");
+        assert!(
+            packages
+                .iter()
+                .any(|package| package == "sys-libs/timezone-data")
+        );
     }
 
     #[test]
@@ -325,6 +400,163 @@ mod target_config {
             packages::pacstrap_packages(BootMode::Bios, "xfs", "root", &[]),
             ["base", "dosfstools", "openssh", "xfsprogs"]
         );
+    }
+
+    #[test]
+    fn kernel_availability_resolves_only_the_selected_native_family() {
+        use rustaller::command::{CommandOutput, MockRunner};
+        for (target, kernel, package, native) in [
+            (Target::Alpine, KernelChoice::Lts, "linux-lts", "apk"),
+            (Target::Alpine, KernelChoice::Virt, "linux-virt", "apk"),
+            (
+                Target::Debian,
+                KernelChoice::Generic,
+                "linux-image-amd64",
+                "apt-get",
+            ),
+            (
+                Target::Debian,
+                KernelChoice::Cloud,
+                "linux-image-cloud-amd64",
+                "apt-get",
+            ),
+            (Target::Arch, KernelChoice::Standard, "linux", "pacman"),
+            (Target::Arch, KernelChoice::Lts, "linux-lts", "pacman"),
+            (
+                Target::Arch,
+                KernelChoice::Hardened,
+                "linux-hardened",
+                "pacman",
+            ),
+            (Target::Arch, KernelChoice::Zen, "linux-zen", "pacman"),
+            (
+                Target::Arch,
+                KernelChoice::Cachyos,
+                "linux-cachyos",
+                "pacman",
+            ),
+            (
+                Target::Gentoo,
+                KernelChoice::Standard,
+                "sys-kernel/gentoo-kernel-bin",
+                "emerge",
+            ),
+        ] {
+            let mut plan = InstallPlan::new(target);
+            plan.post_install.kernel = kernel;
+            let mut runner = MockRunner::new([CommandOutput::new(Some(0), vec![], vec![])]);
+            packages::verify_kernel_available(&mut runner, Path::new("/os"), &plan).unwrap();
+            let args = &runner.calls()[0].args;
+            assert_eq!(args[1], native);
+            assert_eq!(args.iter().filter(|arg| *arg == package).count(), 1);
+            assert!(
+                args.iter()
+                    .any(|arg| matches!(arg.to_str(), Some("--simulate" | "-Syp" | "--pretend")))
+            );
+            let mut unavailable = MockRunner::new([CommandOutput::new(Some(1), vec![], vec![])]);
+            assert!(
+                packages::verify_kernel_available(&mut unavailable, Path::new("/os"), &plan)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn all_installed_kernels_need_filesystem_and_guest_storage_drivers() {
+        use crate::support::Scratch;
+        use std::fs;
+        let scratch = Scratch::new("kernel-drivers");
+        for release in ["6.18-test", "6.19-test"] {
+            let path = scratch.0.join("lib/modules").join(release);
+            fs::create_dir_all(&path).unwrap();
+            fs::write(path.join("modules.dep"), "").unwrap();
+            fs::write(path.join("modules.builtin"), "kernel/fs/btrfs/btrfs.ko\nkernel/fs/fat/vfat.ko\nkernel/drivers/block/virtio_blk.ko\n").unwrap();
+        }
+        packages::verify_boot_driver_support(&scratch.0, "btrfs", "/dev/vd-rustaller-test", &[])
+            .unwrap();
+        assert!(
+            packages::verify_boot_driver_support(&scratch.0, "xfs", "/dev/vd-rustaller-test", &[])
+                .is_err()
+        );
+        fs::write(
+            scratch.0.join("lib/modules/6.19-test/modules.builtin"),
+            "kernel/fs/btrfs/btrfs.ko\nkernel/fs/fat/vfat.ko\n",
+        )
+        .unwrap();
+        assert!(
+            packages::verify_boot_driver_support(
+                &scratch.0,
+                "btrfs",
+                "/dev/vd-rustaller-test",
+                &[]
+            )
+            .is_err()
+        );
+        fs::write(
+            scratch.0.join("lib/modules/6.19-test/modules.dep"),
+            "kernel/drivers/block/virtio_blk.ko.zst:\n",
+        )
+        .unwrap();
+        assert!(
+            packages::verify_boot_driver_support(
+                &scratch.0,
+                "btrfs",
+                "/dev/vd-rustaller-test",
+                &[]
+            )
+            .is_err()
+        );
+        let module = scratch
+            .0
+            .join("lib/modules/6.19-test/kernel/drivers/block/virtio_blk.ko.zst");
+        fs::create_dir_all(module.parent().unwrap()).unwrap();
+        fs::write(&module, "module").unwrap();
+        packages::verify_boot_driver_support(&scratch.0, "btrfs", "/dev/vd-rustaller-test", &[])
+            .unwrap();
+        fs::write(
+            scratch.0.join("lib/modules/6.19-test/modules.dep"),
+            "../escape.ko:\n",
+        )
+        .unwrap();
+        assert!(
+            packages::verify_boot_driver_support(
+                &scratch.0,
+                "btrfs",
+                "/dev/vd-rustaller-test",
+                &[]
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn gentoo_init_variants_share_binary_kernel_but_only_openrc_needs_netifrc() {
+        use rustaller::config::GentooInit;
+        for init in [GentooInit::Openrc, GentooInit::Systemd] {
+            let mut plan = InstallPlan::new(Target::Gentoo);
+            plan.system.gentoo_init = Some(init);
+            let selected =
+                packages::emerge_package_set_for_plan(&plan, BootMode::Bios, "btrfs", &[]).unwrap();
+            for atom in [
+                "sys-kernel/gentoo-kernel-bin",
+                "sys-kernel/dracut",
+                "sys-kernel/installkernel",
+                "sys-fs/btrfs-progs",
+            ] {
+                assert_eq!(selected.iter().filter(|item| *item == atom).count(), 1);
+            }
+            for atom in [
+                "sys-apps/openrc",
+                "net-misc/netifrc",
+                "net-misc/dhcpcd",
+                "net-dns/openresolv",
+            ] {
+                assert_eq!(
+                    selected.iter().any(|item| item == atom),
+                    init == GentooInit::Openrc
+                );
+            }
+        }
     }
 
     #[test]

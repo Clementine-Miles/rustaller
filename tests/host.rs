@@ -812,7 +812,7 @@ mod inspection_preview {
         d.write("proc/sys/kernel/osrelease", "6.12-source\n");
         d.write(
             "proc/cpuinfo",
-            "processor: 0\nmodel name: Virtual CPU\nprocessor: 1\n",
+            "processor: 0\nmodel name: Virtual CPU\n\nprocessor: 1\nmodel name: Virtual CPU\n",
         );
         d.write(
             "proc/meminfo",
@@ -838,9 +838,13 @@ mod inspection_preview {
         plan.password = Some(rustaller::model::SecretString::new("PRIVATE-SENTINEL"));
         let mut runner = MockRunner::new(
             [
+                "glibc 2.40",
                 "kvm",
-                "512 dos",
-                "/dev/vda 3T disk\n/dev/vda1 3T part ext4",
+                "KNAME=\"vda\" TYPE=\"disk\" SIZE=\"3298534883328\" MODEL=\"Virtual Disk\" SERIAL=\"DISK-A\" TRAN=\"virtio\" LOG-SEC=\"512\" PHY-SEC=\"4096\" PTTYPE=\"dos\" ROTA=\"0\" DISC-MAX=\"1048576\"\nKNAME=\"vda1\" TYPE=\"part\" FSTYPE=\"ext4\" PKNAME=\"vda\"",
+                "Filesystem 1-blocks Used Available Capacity Mounted on\n/dev/vda1 3221225472 1048576 3220176896 1% /",
+                "2: eth0 inet 192.0.2.4/24 scope global eth0",
+                "default via 192.0.2.1 dev eth0",
+                "default via 2001:db8::1 dev eth0",
                 "port 2222\npasswordauthentication no\nprivate-field hidden",
             ]
             .map(|v| CommandOutput::new(Some(0), v.as_bytes().to_vec(), vec![])),
@@ -848,16 +852,33 @@ mod inspection_preview {
         let report = rustaller::host::inspect::report(&mut runner, &d.0, &plan, &manifest);
         assert!(
             report.current.contains("Source Linux")
-                && report.current.contains("vCPU: 2")
+                && report.current.contains("Logical CPUs: 2")
                 && report.current.contains("6.12-source")
         );
-        assert!(report.current.contains("Current bootloader: unknown"));
+        assert!(report.current.contains("Current bootloader: Unknown"));
         assert!(
             report.target.contains("count: 3")
                 && report.target.contains("Limine")
                 && report.target.contains("@; zstd level 3")
         );
         assert!(report.warning.contains("ERASE ALL PARTITIONS ON /dev/vda"));
+        assert!(!report.blocked);
+        assert!(report.current.contains("port 2222"));
+        assert!(report.current.contains("transport virtio"));
+        assert!(report.current.contains("FS ext4"));
+        assert!(
+            report
+                .current
+                .contains("Default IPv4: via 192.0.2.1 dev eth0")
+        );
+        assert!(report.target.contains("MiB at /boot"));
+        assert!(report.target.contains("outside root snapshots"));
+        assert!(
+            runner
+                .calls()
+                .iter()
+                .all(|call| call.phase == "host-inspection")
+        );
         assert!(
             !report.text().contains("PRIVATE-SENTINEL") && !report.text().contains("private-field")
         );
@@ -868,7 +889,46 @@ mod inspection_preview {
                 .iter()
                 .map(|c| c.program.to_str().unwrap())
                 .collect::<Vec<_>>(),
-            ["systemd-detect-virt", "lsblk", "lsblk", "sshd"]
+            [
+                "getconf",
+                "systemd-detect-virt",
+                "lsblk",
+                "df",
+                "ip",
+                "ip",
+                "ip",
+                "sshd"
+            ]
         );
+    }
+    #[test]
+    fn offline_inventory_cannot_be_serialized_as_an_installation_deployment() {
+        let manifest = DeploymentManifest {
+            disk: DiskIdentity {
+                device: "/dev/vda".into(),
+                size_bytes: 8 * 1024_u64.pow(3),
+                serial: "offline-id".into(),
+                wwn: String::new(),
+                partition_table_id: String::new(),
+            },
+            boot_mode: BootMode::Bios,
+            alpine_branch: String::new(),
+            debian_codename: String::new(),
+            gentoo_stage3: None,
+            network: vec![rustaller::deployment::NetworkInterface {
+                name: "eth0".into(),
+                mac: "52:54:00:12:34:56".into(),
+                ipv4_addresses: vec!["192.0.2.4/24".into()],
+                ipv4_gateway: Some("192.0.2.1".into()),
+                ipv6_addresses: vec![],
+                ipv6_gateway: None,
+                dhcp4: true,
+                dhcp6: false,
+                accept_ra: false,
+            }],
+        };
+        manifest.validate_inventory().unwrap();
+        assert!(manifest.validate().is_err());
+        assert!(rustaller::deployment::encode_manifest(&manifest).is_err());
     }
 }

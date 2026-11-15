@@ -192,6 +192,18 @@ pub fn prepare<R: CommandRunner>(
     }
     let stage3 = match &manifest.gentoo_stage3 {
         Some(stage) if plan.plan().target == Target::Gentoo => {
+            stage
+                .validate_for_init(
+                    plan.plan()
+                        .system
+                        .gentoo_init
+                        .ok_or(InstallError::Invalid("Gentoo init system is missing"))?,
+                )
+                .map_err(|_| {
+                    InstallError::Invalid(
+                        "Gentoo stage3 differs from selected no-multilib init variant",
+                    )
+                })?;
             Some(verify_gentoo_stage3(runner, stage, work)?)
         }
         None if plan.plan().target == Target::Gentoo => {
@@ -283,6 +295,22 @@ pub fn validate_install_options(
     }
     if plan.target == Target::Debian {
         super::debian::validate_codename(&manifest.debian_codename)?;
+    }
+    if plan.target == Target::Gentoo {
+        manifest
+            .gentoo_stage3
+            .as_ref()
+            .ok_or(InstallError::Invalid("Gentoo release metadata is missing"))?
+            .validate_for_init(
+                plan.system
+                    .gentoo_init
+                    .ok_or(InstallError::Invalid("Gentoo init system is missing"))?,
+            )
+            .map_err(|_| {
+                InstallError::Invalid(
+                    "Gentoo stage3 differs from selected no-multilib init variant",
+                )
+            })?;
     }
     crate::shared::network::validate_network_policy(plan, manifest)?;
     if let Some(path) = &plan.frpc_config {
@@ -405,6 +433,7 @@ pub fn configure<R: CommandRunner>(
     let runner = &mut transport;
     // Native kernel/initramfs hooks must see the target root and ESP UUIDs,
     // not infer the installed root from the Alpine Live environment.
+    super::limine::verify_mount(runner, root, efi_uuid).map_err(InstallError::Boot)?;
     write_fstab(root, layout, root_uuid, efi_uuid)?;
     crate::targets::packages::apply_package_policy(root, plan)?;
     prevent_package_service_start(root, plan.plan().target)?;
@@ -413,6 +442,11 @@ pub fn configure<R: CommandRunner>(
             Target::Alpine => {
                 let packages =
                     super::packages::package_plan(plan.plan(), layout.boot_mode(), true, &[])?;
+                super::packages::verify_kernel_available(runner, root, plan.plan()).map_err(
+                    |_| {
+                        InstallError::Invalid("selected kernel package or dependencies unavailable")
+                    },
+                )?;
                 let mut args = vec![OsString::from("apk"), "add".into()];
                 if !plan.plan().system.keep_package_cache {
                     args.push("--no-cache".into());
@@ -478,6 +512,17 @@ pub fn configure<R: CommandRunner>(
             }
             _ => return Err(InstallError::Invalid("automatic target required")),
         }
+        super::packages::verify_boot_driver_support(
+            root,
+            layout.root_filesystem().as_str(),
+            &manifest.disk.device,
+            &manifest.network,
+        )
+        .map_err(|_| {
+            InstallError::Invalid(
+                "selected target kernel lacks required filesystem or guest storage/network drivers",
+            )
+        })?;
         configure_accounts(runner, root, plan)?;
         let hostname = target_hostname(plan.plan());
         if plan.plan().post_install.hostname.is_none() {
@@ -505,9 +550,9 @@ pub fn configure<R: CommandRunner>(
                 println!("Target swapfile: {done}/{total} MiB");
             }
         })?;
-        enable_services(runner, root, plan.plan().target)?;
+        enable_services(runner, root, plan.plan(), manifest)?;
         if let Some(frp) = &assets.frp {
-            install_frpc(root, plan.plan().target, frp)?;
+            install_frpc(root, plan.plan(), frp)?;
         }
         super::limine::install(runner, root, layout, &assets.work, root_uuid, efi_uuid)
             .map_err(InstallError::Boot)?;
@@ -690,8 +735,10 @@ fn configure_accounts<R: CommandRunner>(
 fn enable_services<R: CommandRunner>(
     runner: &mut R,
     root: &Path,
-    target: Target,
+    plan: &crate::model::InstallPlan,
+    manifest: &DeploymentManifest,
 ) -> Result<(), InstallError> {
+    let target = plan.target;
     if target == Target::Alpine {
         for (name, level) in [
             ("devfs", "sysinit"),
@@ -712,6 +759,61 @@ fn enable_services<R: CommandRunner>(
                 root,
                 ["rc-update", "add", name, level],
                 "alpine-enable-native-services",
+            )?;
+        }
+    } else if target == Target::Gentoo
+        && plan.system.gentoo_init == Some(crate::config::GentooInit::Openrc)
+    {
+        let hostname = target_hostname(plan);
+        write_target(
+            root,
+            "etc/conf.d/hostname",
+            format!("hostname=\"{hostname}\"\n").as_bytes(),
+            0o644,
+        )?;
+        for (name, level) in [
+            ("udev", "sysinit"),
+            ("udev-trigger", "sysinit"),
+            ("hostname", "boot"),
+            ("hwclock", "boot"),
+            ("modules", "boot"),
+            ("sysctl", "boot"),
+            ("sshd", "default"),
+            ("local", "default"),
+        ] {
+            chroot_checked(
+                runner,
+                root,
+                ["rc-update", "add", name, level],
+                "gentoo-enable-openrc-services",
+            )?;
+        }
+        let net_lo = root.join("etc/init.d/net.lo");
+        validate_planned_file(&net_lo)?;
+        let net_meta = fs::symlink_metadata(&net_lo)?;
+        if !net_meta.is_file() || net_meta.permissions().mode() & 0o111 == 0 {
+            return Err(InstallError::Invalid(
+                "Gentoo netifrc init script is missing",
+            ));
+        }
+        for nic in &manifest.network {
+            let service = format!("net.{}", nic.name);
+            let path = root.join("etc/init.d").join(&service);
+            crate::shared::configure::validate_planned_parent(&path)?;
+            if let Ok(metadata) = fs::symlink_metadata(&path) {
+                if !metadata.is_symlink() || fs::read_link(&path)? != Path::new("net.lo") {
+                    return Err(InstallError::Invalid(
+                        "unexpected existing Gentoo network service",
+                    ));
+                }
+            } else {
+                symlink("net.lo", &path)?;
+            }
+            chroot_checked(
+                runner,
+                root,
+                ["rc-update", "add", &service, "default"],
+                "gentoo-enable-netifrc-interface",
             )?;
         }
     } else {
@@ -1060,7 +1162,7 @@ fn verify_installed_target<R: CommandRunner>(
     runner: &mut R,
     root: &Path,
 ) -> Result<(), InstallError> {
-    for path in ["etc/os-release", "etc/fstab", "efi/limine.conf"] {
+    for path in ["etc/os-release", "etc/fstab", "boot/limine.conf"] {
         let path = root.join(path);
         if !path.is_file() || fs::metadata(path)?.len() == 0 {
             return Err(InstallError::Invalid(
@@ -1159,13 +1261,20 @@ fn prepare_frpc<R: CommandRunner>(runner: &mut R, work: &Path) -> Result<FrpPayl
     probe_frpc_portability(runner, work, &payload)?;
     Ok(payload)
 }
-fn install_frpc(root: &Path, target: Target, frp: &FrpPayload) -> Result<(), InstallError> {
+fn install_frpc(
+    root: &Path,
+    plan: &crate::model::InstallPlan,
+    frp: &FrpPayload,
+) -> Result<(), InstallError> {
     write_target(root, "opt/rustaller/frp/frpc", &frp.binary, 0o755)?;
     if let Some(loader) = &frp.loader {
         write_target(root, "opt/rustaller/frp/ld-musl-x86_64.so.1", loader, 0o755)?;
     }
     write_target(root, "etc/frp/frpc.toml", &frp.configuration, 0o600)?;
-    if target == Target::Alpine {
+    if plan.target == Target::Alpine
+        || (plan.target == Target::Gentoo
+            && plan.system.gentoo_init == Some(crate::config::GentooInit::Openrc))
+    {
         let mut arguments = frp.launch.arguments();
         arguments.extend(["-c", "/etc/frp/frpc.toml"]);
         let service = format!(
@@ -1446,6 +1555,9 @@ pub fn verify_gentoo_stage3<R: CommandRunner>(
     source: &GentooStage3,
     work: &Path,
 ) -> Result<VerifiedStage3, InstallError> {
+    source
+        .init_system()
+        .map_err(|_| InstallError::Invalid("invalid Gentoo no-multilib source identity"))?;
     let gpg = work.join("gpg");
     fs::create_dir(&gpg)?;
     fs::set_permissions(&gpg, fs::Permissions::from_mode(0o700))?;
@@ -1515,6 +1627,30 @@ pub fn verify_gentoo_stage3<R: CommandRunner>(
     if !valid_gentoo_signature(&status) {
         return Err(InstallError::Invalid(
             "Gentoo archive signature is not bound to the pinned release primary key",
+        ));
+    }
+    // Authenticate the signed metadata as well as the archive signature. Parsing
+    // OpenPGP armor alone provides no authenticity for its SHA-512 value.
+    let digest_verify = command(
+        "gpg",
+        [
+            OsStr::new("--batch"),
+            "--homedir".as_ref(),
+            gpg.as_os_str(),
+            "--no-default-keyring".as_ref(),
+            "--keyring".as_ref(),
+            keyring.as_os_str(),
+            "--status-fd=1".as_ref(),
+            "--verify".as_ref(),
+            digests.as_os_str(),
+        ],
+        "gentoo-verify-signed-digests",
+    )
+    .stdout_mode(OutputMode::Capture)
+    .stderr_mode(OutputMode::Capture);
+    if !valid_gentoo_signature(&capture(runner, &digest_verify)?) {
+        return Err(InstallError::Invalid(
+            "Gentoo digest signature is not bound to the pinned release primary key",
         ));
     }
     let digest_text = fs::read_to_string(&digests)?;
@@ -2212,6 +2348,7 @@ mod runtime_tests {
             (Target::Alpine, FrpLaunch::Static),
             (Target::Debian, FrpLaunch::Static),
             (Target::Arch, FrpLaunch::Musl),
+            (Target::Gentoo, FrpLaunch::Musl),
         ] {
             let scratch = Scratch::new();
             let payload = FrpPayload {
@@ -2224,12 +2361,19 @@ mod runtime_tests {
                 configuration: b"private test config".to_vec(),
                 launch,
             };
-            install_frpc(&scratch.0, target, &payload).unwrap();
-            let service = fs::read_to_string(scratch.0.join(if target == Target::Alpine {
-                "etc/init.d/rustaller-frpc"
-            } else {
-                "etc/systemd/system/rustaller-frpc.service"
-            }))
+            install_frpc(
+                &scratch.0,
+                &crate::model::InstallPlan::new(target),
+                &payload,
+            )
+            .unwrap();
+            let service = fs::read_to_string(scratch.0.join(
+                if matches!(target, Target::Alpine | Target::Gentoo) {
+                    "etc/init.d/rustaller-frpc"
+                } else {
+                    "etc/systemd/system/rustaller-frpc.service"
+                },
+            ))
             .unwrap();
             assert_eq!(
                 service.contains("ld-musl-x86_64.so.1"),
@@ -2243,6 +2387,83 @@ mod runtime_tests {
                     & 0o777,
                 0o600
             );
+        }
+    }
+    #[test]
+    fn gentoo_services_follow_selected_init_without_cross_init_commands() {
+        let manifest = DeploymentManifest {
+            disk: crate::deployment::DiskIdentity {
+                device: "/dev/vda".into(),
+                size_bytes: 8 * 1024u64.pow(3),
+                serial: "fixture".into(),
+                wwn: String::new(),
+                partition_table_id: String::new(),
+            },
+            boot_mode: crate::model::BootMode::Bios,
+            alpine_branch: "v3.24".into(),
+            debian_codename: String::new(),
+            gentoo_stage3: None,
+            network: vec![crate::deployment::NetworkInterface {
+                name: "ens3".into(),
+                mac: "52:54:00:11:22:33".into(),
+                ipv4_addresses: vec![],
+                ipv4_gateway: None,
+                ipv6_addresses: vec![],
+                ipv6_gateway: None,
+                dhcp4: true,
+                dhcp6: false,
+                accept_ra: false,
+            }],
+        };
+        for init in [
+            crate::config::GentooInit::Openrc,
+            crate::config::GentooInit::Systemd,
+        ] {
+            let scratch = Scratch::new();
+            scratch.write("etc/init.d/net.lo", b"#!/sbin/openrc-run\n");
+            fs::set_permissions(
+                scratch.0.join("etc/init.d/net.lo"),
+                fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+            let mut plan = crate::model::InstallPlan::new(Target::Gentoo);
+            plan.system.gentoo_init = Some(init);
+            let mut runner = crate::command::MockRunner::new(
+                (0..16).map(|_| crate::command::CommandOutput::new(Some(0), vec![], vec![])),
+            );
+            enable_services(&mut runner, &scratch.0, &plan, &manifest).unwrap();
+            let openrc = init == crate::config::GentooInit::Openrc;
+            assert_eq!(
+                runner
+                    .calls()
+                    .iter()
+                    .any(|call| call.args.iter().any(|arg| arg == "rc-update")),
+                openrc
+            );
+            assert_eq!(
+                runner
+                    .calls()
+                    .iter()
+                    .any(|call| call.args.iter().any(|arg| arg == "systemctl")),
+                !openrc
+            );
+            if openrc {
+                assert_eq!(
+                    fs::read_link(scratch.0.join("etc/init.d/net.ens3")).unwrap(),
+                    Path::new("net.lo")
+                );
+                assert!(
+                    runner
+                        .calls()
+                        .iter()
+                        .any(|call| call.args.iter().any(|arg| arg == "sshd"))
+                );
+                assert!(
+                    fs::read_to_string(scratch.0.join("etc/conf.d/hostname"))
+                        .unwrap()
+                        .contains("hostname=\"gentoo\"")
+                );
+            }
         }
     }
     #[test]

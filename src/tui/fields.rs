@@ -108,7 +108,9 @@ impl Field {
             }
             Self::SshPort => "Use a port from 1 to 65535. SSH default: 22.",
             Self::WebPort => "Use a port from 1 to 65535. Web-log default: 80.",
-            Self::BootSize => "512-4096 MiB; blank uses 512. Mounted at /efi.",
+            Self::BootSize => {
+                "512-4096 MiB; blank uses 512. FAT32 mounted at /boot; generations must fit."
+            }
             Self::Compression => {
                 "Btrfs only: 0 disables compression, 1-15 select zstd; blank uses zstd:3."
             }

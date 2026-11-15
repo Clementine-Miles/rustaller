@@ -100,7 +100,59 @@ impl From<CommandError> for HandoffError {
     }
 }
 
-/// Read-only discovery. Downloads only bounded release metadata into memory.
+/// Offline disk/network inspection. Resource fields are deliberately empty:
+/// this value cannot be encoded or used as an installation deployment.
+pub fn inspect_inventory<R: CommandRunner>(
+    runner: &mut R,
+    plan: &InstallPlan,
+) -> Result<DeploymentManifest, HandoffError> {
+    let mut bounded = crate::command::InspectionRunner(runner);
+    let runner = &mut bounded;
+    plan.validate()
+        .map_err(|_| HandoffError::Invalid("invalid installation plan"))?;
+    preflight::collect_host_facts(runner, plan.target).map_err(HandoffError::Preflight)?;
+    let boot_mode =
+        preflight::validate_source_boot(Path::new("/")).map_err(HandoffError::Invalid)?;
+    validate_boot_mode(plan, boot_mode)?;
+    let roots = disk::discover_root_disks(runner)
+        .map_err(|_| HandoffError::Invalid("cannot bind a unique source root disk"))?;
+    let selected = plan
+        .target_disk
+        .as_deref()
+        .map(|path| path.strip_prefix("/dev/").unwrap_or(path));
+    let name = disk::select_root_disk(&roots, selected)
+        .map_err(|_| HandoffError::Invalid("select one whole source root disk explicitly"))?;
+    let device = format!("/dev/{name}");
+    disk::validate_target_disk_path(Path::new(&device))
+        .map_err(|_| HandoffError::Invalid("selected disk is not a block device"))?;
+    let manifest = DeploymentManifest {
+        disk: read_disk_identity(runner, &device)?,
+        boot_mode,
+        alpine_branch: String::new(),
+        debian_codename: String::new(),
+        gentoo_stage3: None,
+        network: collect_network(runner)?,
+    };
+    manifest
+        .validate_inventory()
+        .map_err(|_| HandoffError::Invalid("unsupported disk or network inventory"))?;
+    if plan.hold != Some(1) {
+        crate::shared::storage::validate_disk_geometry(runner, &manifest.disk.device, boot_mode)
+            .map_err(|_| HandoffError::Invalid("unsupported disk geometry"))?;
+        crate::shared::storage::planned_partitions(
+            boot_mode,
+            manifest.disk.size_bytes,
+            plan.system.boot_size_mib.unwrap_or(512),
+        )
+        .map_err(|_| HandoffError::Invalid("disk too small for planned partitions"))?;
+        crate::shared::network::validate_inventory_network_policy(plan, &manifest).map_err(
+            |_| HandoffError::Invalid("incompatible inherited network and target policy"),
+        )?;
+    }
+    Ok(manifest)
+}
+
+/// Installation discovery. Downloads only bounded release metadata into memory.
 pub fn discover<R: CommandRunner>(
     runner: &mut R,
     plan: &InstallPlan,
@@ -198,11 +250,17 @@ pub fn discover<R: CommandRunner>(
     };
     let gentoo_stage3 = if plan.target == Target::Gentoo {
         Some(
-            sources::parse_gentoo_stage3(
-                &fetch_text(runner, sources::GENTOO_STAGE3_INDEX_URL)?,
+            sources::parse_gentoo_stage3_for_init(
+                &fetch_text(
+                    runner,
+                    &sources::gentoo_stage3_index_url(plan.system.gentoo_init.unwrap_or_default()),
+                )?,
                 "x86_64",
+                plan.system.gentoo_init.unwrap_or_default(),
             )
-            .map_err(|_| HandoffError::Invalid("invalid Gentoo systemd stage3 metadata"))?,
+            .map_err(|_| {
+                HandoffError::Invalid("invalid selected Gentoo no-multilib stage3 metadata")
+            })?,
         )
     } else {
         None

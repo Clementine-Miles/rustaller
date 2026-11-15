@@ -202,7 +202,7 @@ mod live_install {
     }
     fn stage() -> GentooStage3 {
         let timestamp = "20261025T170057Z";
-        let filename = format!("stage3-amd64-systemd-{timestamp}.tar.xz");
+        let filename = format!("stage3-amd64-nomultilib-openrc-{timestamp}.tar.xz");
         let url = format!("{GENTOO_ARCHIVE}/{timestamp}/{filename}");
         GentooStage3 {
             timestamp: timestamp.into(),
@@ -322,6 +322,20 @@ mod live_install {
         let mut invalid = plan(Target::Alpine);
         invalid.username = Some("option;injection".into());
         assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn gentoo_source_init_mismatch_fails_before_installation_authorization() {
+        let mut metadata = manifest();
+        metadata.gentoo_stage3 = Some(stage());
+        let mut p = plan(Target::Gentoo);
+        p.system.gentoo_init = Some(rustaller::config::GentooInit::Systemd);
+        let p =
+            validate_live_plan_with_uid(p, "x86_64", 4096, rustaller::RUNTIME_VERSION, 0).unwrap();
+        assert!(validate_install_options(&p, &metadata).is_err());
+        let stage = metadata.gentoo_stage3.as_mut().unwrap();
+        stage.filename = stage.filename.replace("nomultilib-openrc", "systemd");
+        assert!(metadata.validate().is_err());
     }
 
     #[test]

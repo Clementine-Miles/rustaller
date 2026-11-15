@@ -76,6 +76,7 @@ impl Wizard {
                 let title = match setting {
                     Setting::Authentication => "Choose authentication",
                     Setting::Kernel => "Choose target kernel",
+                    Setting::GentooInit => "Gentoo init (amd64, no-multilib)",
                     Setting::Boot => "Choose boot mode",
                     Setting::Hold => "Choose installation hold behavior",
                     Setting::Profile => "Choose installation profile",
@@ -136,6 +137,7 @@ impl Wizard {
             }
             View::Review { scroll } => {
                 let report = rustaller::host::inspect::PreflightReport {
+                    blocked: false,
                     current: self.report.as_ref().map(|r|r.current.clone()).unwrap_or_else(||"Not inspected yet. Enter runs read-only host and disk checks.\nFirmware, storage eligibility and network ownership remain unknown.".into()),
                     target: summary.join("\n"),
                     warning: self.report.as_ref().map(|r|r.warning.clone()).unwrap_or_else(||"DESTRUCTIVE INSTALLATION: the selected whole disk will be erased after successful preflight and exact disk-identity confirmation.".into()),
@@ -148,7 +150,7 @@ impl Wizard {
                 message,
                 scroll,
             } => {
-                if *success && let Some(report) = &self.report {
+                if let Some(report) = &self.report {
                     render_report(frame, body, report, scroll);
                 } else {
                     render_text(frame, body, "Preflight blocked", message.clone(), scroll);

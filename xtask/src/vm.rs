@@ -14,7 +14,7 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const HELP: &str = "Usage: cargo xtask vm-acceptance ACTION [OPTIONS]\n\nActions:\n  smoke           BIOS/UEFI Alpine Live boot smoke, not an installation test\n  prepare-source  Provision a disposable Debian Cloud source for kexec tests\n  install         Reinstall disposable source overlays and verify target boots\n\nCommon options:\n  --tools PATH       Extracted Debian QEMU/OVMF/xorriso root\n  --output PATH      New private result directory (must not exist)\n  --firmware MODE    bios|efi|both (default both)\n  --timeout SECONDS  Per-case deadline (default 1800)\n\nSmoke: --iso FILE --sha256 HEX\nSource/install: --base FILE --sha512 HEX --key FILE --public-key FILE\n  --disk-bus BUS     virtio-blk|virtio-scsi|sata|nvme|pvscsi (default virtio-blk)\nInstall: --installer STATIC_ELF --target alpine|debian|arch|gentoo|all\n  --filesystem FS   xfs|ext4|btrfs|all (default xfs; all runs 24 cases)\n  --disk-size-gib N  Optional sparse overlay expansion (3072 tests BIOS/GPT)\n\nAll disk files and EFI variables are fresh disposable copies. No host devices,\nnetwork-policy changes, host reboot, or privileged mounts are used.\n";
+const HELP: &str = "Usage: cargo xtask vm-acceptance ACTION [OPTIONS]\n\nActions:\n  smoke           BIOS/UEFI Alpine Live boot smoke, not an installation test\n  prepare-source  Provision a disposable Debian Cloud source for kexec tests\n  install         Reinstall disposable source overlays and verify target boots\n\nCommon options:\n  --tools PATH       Extracted Debian QEMU/OVMF/xorriso root\n  --output PATH      New private result directory (must not exist)\n  --firmware MODE    bios|efi|both (default both)\n  --timeout SECONDS  Per-case deadline (default 1800)\n\nSmoke: --iso FILE --sha256 HEX\nSource/install: --base FILE --sha512 HEX --key FILE --public-key FILE\n  --disk-bus BUS     virtio-blk|virtio-scsi|sata|nvme|pvscsi (default virtio-blk)\nInstall: --installer STATIC_ELF --target alpine|debian|arch|gentoo|all\n  --filesystem FS   xfs|ext4|btrfs|all (default xfs)\n  --kernel CHOICE    Target kernel choice or all official families\n  --gentoo-init INIT openrc|systemd|both (default openrc; Gentoo only)\n  --kernel-update B  yes|no (default no); upgrade, regenerate, reboot, verify\n  --boot-size-mib N  FAT32 capacity (512-4096); consider 1024 for upgrades\n  --disk-size-gib N  Optional sparse overlay expansion (3072 tests BIOS/GPT)\n\nAll disk files and EFI variables are fresh disposable copies. No host devices,\nnetwork-policy changes, host reboot, or privileged mounts are used.\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Firmware {
@@ -95,6 +95,10 @@ impl Options {
                     | "--disk-bus"
                     | "--filesystem"
                     | "--disk-size-gib"
+                    | "--kernel"
+                    | "--gentoo-init"
+                    | "--kernel-update"
+                    | "--boot-size-mib"
             ) {
                 return Err(format!("unknown acceptance option: {flag}"));
             }
@@ -153,6 +157,79 @@ impl Options {
             fs @ ("xfs" | "ext4" | "btrfs") => Ok(vec![fs]),
             _ => Err("filesystem must be xfs, ext4, btrfs or all".into()),
         }
+    }
+    fn kernels(&self, target: &str) -> Result<Vec<String>, String> {
+        use rustaller::{model::Target, postinstall::KernelChoice};
+        let target_enum = match target {
+            "alpine" => Target::Alpine,
+            "debian" => Target::Debian,
+            "arch" => Target::Arch,
+            "gentoo" => Target::Gentoo,
+            _ => return Err("invalid acceptance target".into()),
+        };
+        let requested = self
+            .values
+            .get("--kernel")
+            .map(String::as_str)
+            .unwrap_or(match target {
+                "alpine" => "virt",
+                "debian" => "cloud",
+                _ => "standard",
+            });
+        if requested == "all" {
+            return Ok(match target {
+                "alpine" => vec!["lts", "virt"],
+                "debian" => vec!["generic", "cloud"],
+                "arch" => vec!["standard", "lts", "hardened", "zen"],
+                "gentoo" => vec!["standard"],
+                _ => unreachable!(),
+            }
+            .into_iter()
+            .map(str::to_owned)
+            .collect());
+        }
+        KernelChoice::parse_for_target(requested, target_enum)
+            .map(|choice| vec![choice.as_str().to_owned()])
+            .map_err(|e| e.to_string())
+    }
+    fn gentoo_inits(&self, target: &str) -> Result<Vec<&str>, String> {
+        if target != "gentoo" {
+            return Ok(vec!["native"]);
+        }
+        match self
+            .values
+            .get("--gentoo-init")
+            .map(String::as_str)
+            .unwrap_or("openrc")
+        {
+            "both" => Ok(vec!["openrc", "systemd"]),
+            init @ ("openrc" | "systemd") => Ok(vec![init]),
+            _ => Err("gentoo-init must be openrc, systemd or both".into()),
+        }
+    }
+    fn kernel_update(&self) -> Result<bool, String> {
+        match self
+            .values
+            .get("--kernel-update")
+            .map(String::as_str)
+            .unwrap_or("no")
+        {
+            "yes" => Ok(true),
+            "no" => Ok(false),
+            _ => Err("kernel-update must be yes or no".into()),
+        }
+    }
+    fn boot_size_mib(&self) -> Result<Option<u32>, String> {
+        self.values
+            .get("--boot-size-mib")
+            .map(|value| {
+                value
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|value| (512..=4096).contains(value))
+                    .ok_or_else(|| "boot-size-mib must be 512-4096".to_owned())
+            })
+            .transpose()
     }
     fn disk_bus(&self) -> Result<DiskBus, String> {
         match self
@@ -460,6 +537,16 @@ fn install_matrix(
         target @ ("alpine" | "debian" | "arch" | "gentoo") => vec![target],
         _ => return Err("invalid acceptance target".into()),
     };
+    if options.values.contains_key("--gentoo-init") && !targets.contains(&"gentoo") {
+        return Err("gentoo-init requires --target gentoo or all".into());
+    }
+    let kernel_update = options.kernel_update()?;
+    let boot_size_mib = options.boot_size_mib()?;
+    // Resolve the full choice matrix before creating any guest overlays.
+    for target in &targets {
+        options.kernels(target)?;
+        options.gentoo_inits(target)?;
+    }
     let probe = output.join("guest-probe");
     build_probe(&probe, &output.join("probe-build.log"))?;
     let transport = Transport::new()?;
@@ -467,51 +554,59 @@ fn install_matrix(
     let mut results = Vec::new();
     let mut failed = false;
     for target in targets {
-        for filesystem in options.filesystems()? {
-            for &mode in modes {
-                let name = format!("{target}-{}-{filesystem}", mode.label());
-                let case = output.join(&name);
-                private_directory(&case)?;
-                let result = install_case(
-                    tools,
-                    &base,
-                    &installer,
-                    &probe,
-                    &key,
-                    &public_path,
-                    &public,
-                    &transport,
-                    &relay,
-                    target,
-                    filesystem,
-                    options.values.get("--disk-size-gib").map(String::as_str),
-                    mode,
-                    options.disk_bus()?,
-                    &case,
-                    timeout,
-                );
-                let passed = result.is_ok();
-                let line = match result {
-                    Ok(()) => format!("{name}: PASS"),
-                    Err(error) => {
-                        failed = true;
-                        write_private(&case.join("failure.txt"), error.as_bytes())?;
-                        format!("{name}: FAIL ({error})")
+        for kernel in options.kernels(target)? {
+            for init in options.gentoo_inits(target)? {
+                for filesystem in options.filesystems()? {
+                    for &mode in modes {
+                        let name =
+                            format!("{target}-{}-{filesystem}-{kernel}-{init}", mode.label());
+                        let case = output.join(&name);
+                        private_directory(&case)?;
+                        let result = install_case(
+                            tools,
+                            &base,
+                            &installer,
+                            &probe,
+                            &key,
+                            &public_path,
+                            &public,
+                            &transport,
+                            &relay,
+                            target,
+                            &kernel,
+                            init,
+                            kernel_update,
+                            boot_size_mib,
+                            filesystem,
+                            options.values.get("--disk-size-gib").map(String::as_str),
+                            mode,
+                            options.disk_bus()?,
+                            &case,
+                            timeout,
+                        );
+                        let passed = result.is_ok();
+                        let line = match result {
+                            Ok(()) => format!("{name}: PASS"),
+                            Err(error) => {
+                                failed = true;
+                                write_private(&case.join("failure.txt"), error.as_bytes())?;
+                                format!("{name}: FAIL ({error})")
+                            }
+                        };
+                        println!("{line}");
+                        results.push(line);
+                        write_private(
+                            &output.join("results.txt"),
+                            format!(
+                                "Scope: full install acceptance, fresh disposable source overlays\n{}\n",
+                                results.join("\n")
+                            ).as_bytes(),
+                        )?;
+                        // Failed images remain available for offline guest/boot diagnosis.
+                        if passed {
+                            let _ = fs::remove_file(case.join("disk.qcow2"));
+                        }
                     }
-                };
-                println!("{line}");
-                results.push(line);
-                write_private(
-                    &output.join("results.txt"),
-                    format!(
-                        "Scope: full install acceptance, fresh disposable source overlays\n{}\n",
-                        results.join("\n")
-                    )
-                    .as_bytes(),
-                )?;
-                // Failed images remain available for offline guest/boot diagnosis.
-                if passed {
-                    let _ = fs::remove_file(case.join("disk.qcow2"));
                 }
             }
         }
@@ -535,6 +630,10 @@ fn install_case(
     transport: &Transport,
     relay: &Relay,
     target: &str,
+    kernel: &str,
+    init: &str,
+    kernel_update: bool,
+    boot_size_mib: Option<u32>,
     filesystem: &str,
     disk_size_gib: Option<&str>,
     mode: Firmware,
@@ -618,18 +717,17 @@ fn install_case(
         "--username=root".into(),
         "--ssh-key=/run/rustaller-vm/client.pub".into(),
         "--minimal".into(),
-        format!(
-            "--kernel={}",
-            match target {
-                "alpine" => "virt",
-                "debian" => "cloud",
-                _ => "standard",
-            }
-        ),
+        format!("--kernel={kernel}"),
         format!("--hostname=rustaller-{target}"),
         "--timezone=Etc/UTC".into(),
         format!("--filesystem={filesystem}"),
     ];
+    if let Some(size) = boot_size_mib {
+        arguments.push(format!("--boot-size-mib={size}"));
+    }
+    if target == "gentoo" {
+        arguments.push(format!("--gentoo-init={init}"));
+    }
     if filesystem != "btrfs" {
         arguments.extend(["--swapfile-mib=64".into(), "--swappiness=10".into()]);
     }
@@ -776,12 +874,75 @@ fn install_case(
             target,
             mode.label(),
             filesystem,
+            kernel,
+            init,
+            if kernel_update { "update" } else { "check" },
             "/run/rustaller-vm/transport",
         ],
         &case.join("target-probe.log"),
         remaining(deadline)?,
     )?;
-    write_private(&case.join("accepted.txt"),format!("target={target}\nfirmware={}\nfirmware_resets_after_dispatch={resets}\nSSH public-key authentication, native package update, kernel, hostname, {filesystem}/UUID fstab, Limine boot artifacts, DNS lookup, IPv4 route, filesystem-specific swap policy: PASS\nIPv6 Internet connectivity: NOT TESTED\n",mode.label()).as_bytes())?;
+    if kernel_update {
+        let before = destination.capture(
+            &["cat", "/proc/sys/kernel/random/boot_id"],
+            Duration::from_secs(10),
+        )?;
+        if !before.success {
+            return Err("cannot record pre-update reboot identity".into());
+        }
+        // Reboot through the target's own init, then require a different kernel
+        // boot ID before accepting SSH; a still-live old session cannot pass.
+        let _ = destination.capture(&["reboot"], Duration::from_secs(15));
+        let mut rebooted = false;
+        while Instant::now() < deadline {
+            if guest.child.try_wait().map_err(|e| e.to_string())?.is_some() {
+                break;
+            }
+            if let Ok(after) = destination.capture(
+                &["cat", "/proc/sys/kernel/random/boot_id"],
+                Duration::from_secs(8),
+            ) && after.success
+                && after.stdout != before.stdout
+            {
+                rebooted = true;
+                break;
+            }
+            thread::sleep(Duration::from_secs(2));
+        }
+        if !rebooted {
+            return Err("kernel update reboot did not restore SSH before deadline".into());
+        }
+        destination.checked(
+            &["mkdir", "-m", "700", "-p", "/run/rustaller-vm"],
+            &case.join("post-update-mkdir.log"),
+            Duration::from_secs(20),
+        )?;
+        destination.copy(
+            &env,
+            "/run/rustaller-vm/transport",
+            &case.join("post-update-copy-transport.log"),
+        )?;
+        destination.checked(
+            &["chmod", "600", "/run/rustaller-vm/transport"],
+            &case.join("post-update-transport-chmod.log"),
+            Duration::from_secs(20),
+        )?;
+        destination.checked(
+            &[
+                "/var/tmp/rustaller-vm/probe",
+                target,
+                mode.label(),
+                filesystem,
+                kernel,
+                init,
+                "check",
+                "/run/rustaller-vm/transport",
+            ],
+            &case.join("post-update-probe.log"),
+            remaining(deadline)?,
+        )?;
+    }
+    write_private(&case.join("accepted.txt"),format!("target={target}\nkernel_choice={kernel}\ninit={init}\nkernel_update_requested={kernel_update}\nfirmware={}\nfirmware_resets_after_dispatch={resets}\nSSH public-key authentication, native package update, kernel, hostname, {filesystem}/UUID fstab, Limine boot artifacts, DNS lookup, IPv4 route, filesystem-specific swap policy: PASS\nIPv6 Internet connectivity: NOT TESTED\n",mode.label()).as_bytes())?;
     guest.stop();
     Ok(())
 }
@@ -1481,6 +1642,49 @@ mod tests {
             .values
             .insert("--disk-bus".into(), "arbitrary".into());
         assert!(options.disk_bus().is_err());
+    }
+    #[test]
+    fn kernel_and_gentoo_init_matrices_cover_official_families() {
+        let mut options = Options::parse(&[
+            "install".into(),
+            "--kernel".into(),
+            "all".into(),
+            "--gentoo-init".into(),
+            "both".into(),
+        ])
+        .unwrap();
+        assert_eq!(options.kernels("alpine").unwrap(), ["lts", "virt"]);
+        assert_eq!(options.kernels("debian").unwrap(), ["generic", "cloud"]);
+        assert_eq!(
+            options.kernels("arch").unwrap(),
+            ["standard", "lts", "hardened", "zen"]
+        );
+        assert_eq!(options.kernels("gentoo").unwrap(), ["standard"]);
+        assert_eq!(
+            options.gentoo_inits("gentoo").unwrap(),
+            ["openrc", "systemd"]
+        );
+        assert_eq!(options.gentoo_inits("debian").unwrap(), ["native"]);
+        options.values.insert("--kernel".into(), "linux-zen".into());
+        assert_eq!(options.kernels("arch").unwrap(), ["zen"]);
+        assert!(options.kernels("debian").is_err());
+        options
+            .values
+            .insert("--gentoo-init".into(), "multilib".into());
+        assert!(options.gentoo_inits("gentoo").is_err());
+        assert!(!options.kernel_update().unwrap());
+        options
+            .values
+            .insert("--kernel-update".into(), "yes".into());
+        assert!(options.kernel_update().unwrap());
+        options
+            .values
+            .insert("--boot-size-mib".into(), "1024".into());
+        assert_eq!(options.boot_size_mib().unwrap(), Some(1024));
+        options
+            .values
+            .insert("--boot-size-mib".into(), "128".into());
+        assert!(options.boot_size_mib().is_err());
     }
     #[test]
     fn filesystem_matrix_accepts_three_roots_and_rejects_unknown_filesystems() {

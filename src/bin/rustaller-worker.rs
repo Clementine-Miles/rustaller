@@ -16,6 +16,21 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let argv: Vec<String> = std::env::args().collect();
     if argv
         .first()
+        .is_some_and(|v| v.ends_with("zz-rustaller-limine-check"))
+        || argv.get(1).is_some_and(|v| v == "limine-check")
+        || (argv
+            .first()
+            .is_some_and(|v| v.ends_with("zz-rustaller-limine"))
+            && argv.get(1).is_some_and(|v| v == "pre-commit"))
+    {
+        // initramfs-tools asks hooks for prerequisites before executing them.
+        if !argv.get(1).is_some_and(|v| v == "prereqs") {
+            rustaller::targets::limine::check(&mut SystemRunner, Path::new("/"))?;
+        }
+        return Ok(());
+    }
+    if argv
+        .first()
         .is_some_and(|v| v.ends_with("zz-rustaller-limine"))
         || argv.get(1).is_some_and(|v| v == "limine-refresh")
     {
@@ -27,7 +42,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let action = parse_worker_args(std::env::args().skip(1))?;
     let Some(action) = action else {
         println!(
-            "Usage: rustaller-worker <live-install PLAN MANIFEST|firstboot-fix|cachyos-firstboot|cleanup-openrc|initrd-network|log-stream|limine-refresh>\n\nRuntime version: {}\nInternal helper for the Rust rustaller installer.",
+            "Usage: rustaller-worker <live-install PLAN MANIFEST|firstboot-fix|cachyos-firstboot|cleanup-openrc|initrd-network|log-stream|limine-check|limine-refresh>\n\nRuntime version: {}\nInternal helper for the Rust rustaller installer.",
             rustaller::RUNTIME_VERSION
         );
         return Ok(());

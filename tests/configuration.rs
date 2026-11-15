@@ -24,6 +24,8 @@ mod postinstall {
             (Target::Arch, KernelChoice::Auto, "linux"),
             (Target::Arch, KernelChoice::Standard, "linux"),
             (Target::Arch, KernelChoice::Lts, "linux-lts"),
+            (Target::Arch, KernelChoice::Hardened, "linux-hardened"),
+            (Target::Arch, KernelChoice::Zen, "linux-zen"),
             (
                 Target::Gentoo,
                 KernelChoice::Auto,
@@ -51,6 +53,9 @@ mod postinstall {
                 (Target::Gentoo, KernelChoice::Cloud),
                 (Target::Gentoo, KernelChoice::Generic),
                 (Target::Gentoo, KernelChoice::Lts),
+                (Target::Alpine, KernelChoice::Hardened),
+                (Target::Debian, KernelChoice::Zen),
+                (Target::Gentoo, KernelChoice::Hardened),
             ] {
                 assert!(
                     PostInstallConfig {
@@ -61,6 +66,55 @@ mod postinstall {
                     .is_err()
                 );
             }
+        }
+    }
+
+    #[test]
+    fn package_spelling_aliases_are_bound_to_their_distribution() {
+        for (target, value, expected) in [
+            (Target::Arch, "linux", KernelChoice::Standard),
+            (Target::Arch, "linux-lts", KernelChoice::Lts),
+            (Target::Arch, "linux-hardened", KernelChoice::Hardened),
+            (Target::Arch, "linux-zen", KernelChoice::Zen),
+            (Target::Debian, "linux-image-amd64", KernelChoice::Generic),
+            (
+                Target::Debian,
+                "linux-image-cloud-amd64",
+                KernelChoice::Cloud,
+            ),
+            (Target::Alpine, "linux-lts", KernelChoice::Lts),
+            (Target::Alpine, "linux-virt", KernelChoice::Virt),
+            (Target::Gentoo, "gentoo-kernel-bin", KernelChoice::Standard),
+        ] {
+            assert_eq!(
+                KernelChoice::parse_for_target(value, target).unwrap(),
+                expected
+            );
+        }
+        for (target, value) in [
+            (Target::Alpine, "linux"),
+            (Target::Alpine, "linux-image-cloud-amd64"),
+            (Target::Gentoo, "linux-image-amd64"),
+            (Target::Debian, "linux-lts"),
+            (Target::Arch, "gentoo-kernel-bin"),
+        ] {
+            assert!(KernelChoice::parse_for_target(value, target).is_err());
+        }
+    }
+
+    #[test]
+    fn additional_arch_kernels_round_trip_through_the_worker_protocol() {
+        use rustaller::codec::{decode_plan, encode_plan};
+        for kernel in [KernelChoice::Hardened, KernelChoice::Zen] {
+            let mut plan = InstallPlan::new(Target::Arch);
+            plan.post_install.kernel = kernel;
+            assert_eq!(
+                decode_plan(&encode_plan(&plan).unwrap())
+                    .unwrap()
+                    .post_install
+                    .kernel,
+                kernel
+            );
         }
     }
 

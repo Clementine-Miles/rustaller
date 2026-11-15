@@ -17,6 +17,8 @@ pub enum KernelChoice {
     Standard,
     Virt,
     Cachyos,
+    Hardened,
+    Zen,
 }
 
 impl KernelChoice {
@@ -29,14 +31,39 @@ impl KernelChoice {
             Self::Standard => "standard",
             Self::Virt => "virt",
             Self::Cachyos => "cachyos",
+            Self::Hardened => "hardened",
+            Self::Zen => "zen",
         }
+    }
+
+    /// Package-spelling aliases are checked against the requested distribution
+    /// before being normalized to the backwards-compatible choice enum.
+    pub fn parse_for_target(value: &str, target: Target) -> Result<Self, PostInstallError> {
+        let allowed = match value {
+            "linux" | "linux-hardened" | "linux-zen" | "linux-cachyos" => target == Target::Arch,
+            "linux-lts" => matches!(target, Target::Arch | Target::Alpine),
+            "linux-virt" => target == Target::Alpine,
+            "linux-image-amd64" | "linux-image-cloud-amd64" => target == Target::Debian,
+            "gentoo-kernel-bin" | "sys-kernel/gentoo-kernel-bin" => target == Target::Gentoo,
+            _ => true,
+        };
+        let kernel = value.parse()?;
+        if !allowed {
+            return Err(PostInstallError::UnsupportedKernel { target, kernel });
+        }
+        PostInstallConfig {
+            kernel,
+            ..Default::default()
+        }
+        .kernel_package(target, false, false)?;
+        Ok(kernel)
     }
 
     pub const fn choices_for(target: Target) -> &'static str {
         match target {
             Target::Alpine => "standard/virt/lts",
             Target::Debian => "standard/cloud/generic",
-            Target::Arch => "standard/lts/cachyos",
+            Target::Arch => "standard/lts/hardened/zen/cachyos",
             Target::Gentoo => "auto/standard",
             Target::Reset => "auto",
         }
@@ -49,12 +76,16 @@ impl FromStr for KernelChoice {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "auto" => Ok(Self::Auto),
-            "cloud" => Ok(Self::Cloud),
-            "generic" => Ok(Self::Generic),
-            "lts" => Ok(Self::Lts),
-            "standard" => Ok(Self::Standard),
-            "virt" => Ok(Self::Virt),
+            "cloud" | "linux-image-cloud-amd64" => Ok(Self::Cloud),
+            "generic" | "linux-image-amd64" => Ok(Self::Generic),
+            "lts" | "linux-lts" => Ok(Self::Lts),
+            "standard" | "linux" | "gentoo-kernel-bin" | "sys-kernel/gentoo-kernel-bin" => {
+                Ok(Self::Standard)
+            }
+            "virt" | "linux-virt" => Ok(Self::Virt),
             "cachyos" | "linux-cachyos" => Ok(Self::Cachyos),
+            "hardened" | "linux-hardened" => Ok(Self::Hardened),
+            "zen" | "linux-zen" => Ok(Self::Zen),
             _ => Err(PostInstallError::InvalidKernel),
         }
     }
@@ -184,6 +215,8 @@ impl PostInstallConfig {
             (Target::Debian, KernelChoice::Cloud) => ("linux-image-cloud-amd64", None),
             (Target::Arch, KernelChoice::Auto | KernelChoice::Standard) => ("linux", None),
             (Target::Arch, KernelChoice::Lts) => ("linux-lts", None),
+            (Target::Arch, KernelChoice::Hardened) => ("linux-hardened", None),
+            (Target::Arch, KernelChoice::Zen) => ("linux-zen", None),
             (Target::Arch, KernelChoice::Cachyos) => ("linux-cachyos", None),
             (Target::Gentoo, KernelChoice::Auto | KernelChoice::Standard) => {
                 ("sys-kernel/gentoo-kernel-bin", None)

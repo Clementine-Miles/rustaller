@@ -63,6 +63,27 @@ fn static_dns(target: Target) -> InstallPlan {
     plan.system.dns.search_domains = vec!["example.test".into()];
     plan
 }
+
+#[test]
+fn offline_inventory_validation_cannot_authorize_deployment_or_target_writes() {
+    let mut inventory = manifest();
+    inventory.alpine_branch.clear();
+    inventory.debian_codename.clear();
+    let mut plan = InstallPlan::new(Target::Gentoo);
+    assert!(inventory.validate_inventory().is_ok());
+    assert!(inventory.validate().is_err());
+    assert!(rustaller::deployment::encode_manifest(&inventory).is_err());
+    assert!(
+        rustaller::shared::network::validate_inventory_network_policy(&plan, &inventory).is_ok()
+    );
+    assert!(render_network_configuration(&plan, &inventory).is_err());
+    plan.system.network.ipv6 = Ipv6Policy::Disable;
+    inventory.network[0].ipv4_addresses.clear();
+    inventory.network[0].ipv4_gateway = None;
+    assert!(
+        rustaller::shared::network::validate_inventory_network_policy(&plan, &inventory).is_err()
+    );
+}
 fn text(plan: &InstallPlan, manifest: &DeploymentManifest, name: &str) -> String {
     let files = render_network_configuration(plan, manifest).unwrap();
     String::from_utf8(
@@ -89,6 +110,9 @@ fn native_networkd_final_files_cover_static_dhcp_ra_mtu_and_mac_matching() {
                 m.network[0].ipv6_gateway = None;
             }
             let mut plan = static_dns(target);
+            if target == Target::Gentoo {
+                plan.system.gentoo_init = Some(rustaller::config::GentooInit::Systemd);
+            }
             plan.system.network.mtu = Some(1450);
             let name = "etc/systemd/network/10-ens3.network";
             let static_text = text(&plan, &m, name);
@@ -597,4 +621,51 @@ fn competing_default_gateways_are_rejected_before_any_target_file_is_written() {
         assert!(scratch.apply(InstallPlan::new(Target::Debian), &m).is_err());
         assert!(!scratch.0.join("etc").exists());
     }
+}
+
+#[test]
+fn gentoo_openrc_netifrc_preserves_static_and_dynamic_families_without_systemd() {
+    let mut p = static_dns(Target::Gentoo);
+    p.system.network.mtu = Some(1450);
+    let mut m = manifest();
+    let files = render_network_configuration(&p, &m).unwrap();
+    assert!(
+        !files
+            .iter()
+            .any(|file| file.path.to_string_lossy().contains("systemd"))
+    );
+    let static_text = text(&p, &m, "etc/conf.d/net");
+    assert!(static_text.contains("config_ens3=( \"192.0.2.2/32\" \"2001:db8::2/128\" )"));
+    assert!(static_text.contains("-4 default via 192.0.2.1 onlink"));
+    assert!(static_text.contains("-6 default via fe80::1 onlink"));
+    assert!(static_text.contains("mtu_ens3=\"1450\""));
+    assert!(text(&p, &m, "etc/dhcpcd.conf").contains("nohook resolv.conf"));
+    assert!(
+        text(&p, &m, "etc/udev/rules.d/70-rustaller-network.rules").contains("52:54:00:11:22:33")
+    );
+    m.network[0].accept_ra = true;
+    let mixed = text(&p, &m, "etc/conf.d/net");
+    assert!(mixed.contains("\"dhcp\" \"192.0.2.2/32\""));
+    assert!(mixed.contains("-6 --nodhcp6"));
+    assert!(!mixed.contains("2001:db8::2"));
+    m.network[0].dhcp4 = true;
+    m.network[0].accept_ra = false;
+    let other_mixed = text(&p, &m, "etc/conf.d/net");
+    assert!(other_mixed.contains("-4"));
+    assert!(other_mixed.contains("2001:db8::2/128"));
+    assert!(!other_mixed.contains("192.0.2.2"));
+}
+
+#[test]
+fn gentoo_openrc_rejects_netifrc_variable_name_collisions() {
+    let p = InstallPlan::new(Target::Gentoo);
+    let mut m = manifest();
+    m.network[0].name = "eth-0".into();
+    let mut other = m.network[0].clone();
+    other.name = "eth_0".into();
+    other.mac = "52:54:00:11:22:34".into();
+    other.ipv4_gateway = None;
+    other.ipv6_gateway = None;
+    m.network.push(other);
+    assert!(render_network_configuration(&p, &m).is_err());
 }

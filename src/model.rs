@@ -1,8 +1,10 @@
-use crate::config::{SystemConfig, SystemConfigError};
+use crate::config::{GentooInit, SystemConfig, SystemConfigError};
 use crate::postinstall::{PostInstallConfig, PostInstallError};
 use std::fmt;
 
-pub const CURRENT_SCHEMA_VERSION: u16 = 8;
+// Schema 9 binds Gentoo's init variant explicitly. Schema 8 used a systemd
+// stage3 and must never acquire the new OpenRC default while decoding.
+pub const CURRENT_SCHEMA_VERSION: u16 = 9;
 
 pub fn valid_account_name(value: &str) -> bool {
     !value.is_empty()
@@ -222,7 +224,10 @@ impl InstallPlan {
             target_disk: None,
             no_cloud_kernel: false,
             post_install: PostInstallConfig::default(),
-            system: SystemConfig::default(),
+            system: SystemConfig {
+                gentoo_init: (target == Target::Gentoo).then_some(GentooInit::Openrc),
+                ..SystemConfig::default()
+            },
             hold: None,
             force_boot_mode: None,
             debug: false,
@@ -232,6 +237,14 @@ impl InstallPlan {
     pub fn validate(&self) -> Result<(), PlanError> {
         if self.schema_version != CURRENT_SCHEMA_VERSION {
             return Err(PlanError::UnsupportedSchema(self.schema_version));
+        }
+        if self.target == Target::Gentoo
+            && self.hold != Some(1)
+            && self.system.gentoo_init.is_none()
+        {
+            return Err(PlanError::SystemConfig(
+                SystemConfigError::MissingGentooInit,
+            ));
         }
         self.post_install
             .validate(self.target, self.no_cloud_kernel, self.hold)
