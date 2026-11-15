@@ -4,7 +4,7 @@ use crate::config::{
     DnsConfig, DnsMode, InstallProfile, RootFilesystem, SystemConfig, SystemConfigError,
 };
 use crate::model::{
-    BootMode, CURRENT_SCHEMA_VERSION, InstallPlan, IsoOptions, PlanError, SecretString, Target,
+    BootMode, CURRENT_SCHEMA_VERSION, InstallPlan, PlanError, SecretString, Target,
 };
 use crate::postinstall::{KernelChoice, PostInstallConfig};
 
@@ -80,21 +80,13 @@ pub fn encode_plan(plan: &InstallPlan) -> Result<Vec<u8>, PlanCodecError> {
         Some(BootMode::Bios) => 1,
         Some(BootMode::Efi) => 2,
     });
-    match &plan.iso {
-        None => output.push(0),
-        Some(iso) => {
-            output.push(1);
-            put_string(&mut output, &iso.path)?;
-            put_optional_string(&mut output, iso.config.as_deref())?;
-            put_optional_string(&mut output, iso.kernel.as_deref())?;
-            put_optional_string(&mut output, iso.initrd.as_deref())?;
-            put_optional_string(&mut output, iso.cmdline.as_deref())?;
-        }
-    }
     output.push(u8::from(plan.debug));
+    put_u32(&mut output, plan.system.boot_size_mib.unwrap_or(0));
+    put_optional_u8(&mut output, plan.system.btrfs_compression);
     output.push(match plan.system.root_filesystem {
         RootFilesystem::Xfs => 0,
         RootFilesystem::Ext4 => 1,
+        RootFilesystem::Btrfs => 2,
     });
     output.push(match plan.system.profile {
         InstallProfile::Standard => 0,
@@ -217,21 +209,16 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
         2 => Some(BootMode::Efi),
         _ => return Err(PlanCodecError::InvalidTag),
     };
-    let iso = match reader.read_u8()? {
-        0 => None,
-        1 => Some(IsoOptions {
-            path: reader.read_string()?,
-            config: reader.read_optional_string()?,
-            kernel: reader.read_optional_string()?,
-            initrd: reader.read_optional_string()?,
-            cmdline: reader.read_optional_string()?,
-        }),
-        _ => return Err(PlanCodecError::InvalidTag),
-    };
     let debug = reader.read_bool()?;
+    let boot_size_mib = match reader.read_u32()? {
+        0 => None,
+        n => Some(n),
+    };
+    let btrfs_compression = reader.read_optional_u8()?;
     let root_filesystem = match reader.read_u8()? {
         0 => RootFilesystem::Xfs,
         1 => RootFilesystem::Ext4,
+        2 => RootFilesystem::Btrfs,
         _ => return Err(PlanCodecError::InvalidTag),
     };
     let profile = match reader.read_u8()? {
@@ -304,6 +291,8 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
         swappiness: reader.read_optional_u8()?,
     };
     let system = SystemConfig {
+        boot_size_mib,
+        btrfs_compression,
         root_filesystem,
         profile,
         with_tools,
@@ -351,7 +340,6 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
         system,
         hold,
         force_boot_mode,
-        iso,
         debug,
     };
     plan.validate().map_err(PlanCodecError::InvalidPlan)?;
@@ -364,8 +352,6 @@ fn target_to_tag(target: Target) -> u8 {
         Target::Debian => 2,
         Target::Arch => 3,
         Target::Gentoo => 4,
-        Target::LocalIso => 5,
-        Target::NetbootXyz => 6,
         Target::Reset => 7,
     }
 }
@@ -376,8 +362,6 @@ fn tag_to_target(tag: u8) -> Result<Target, PlanCodecError> {
         2 => Ok(Target::Debian),
         3 => Ok(Target::Arch),
         4 => Ok(Target::Gentoo),
-        5 => Ok(Target::LocalIso),
-        6 => Ok(Target::NetbootXyz),
         7 => Ok(Target::Reset),
         _ => Err(PlanCodecError::InvalidTag),
     }

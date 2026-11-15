@@ -4,7 +4,6 @@ use crate::command::{CommandError, CommandRunner, CommandSpec, OutputMode, run_c
 use crate::deployment::{DeploymentError, DeploymentManifest, DiskIdentity, read_manifest};
 use crate::fsutil::effective_uid;
 use crate::host::handoff::read_disk_identity;
-use crate::model::Target;
 use crate::plan_file::PrivatePlanFile;
 use crate::shared::storage::{DiskLayout, PartitionEnvironment, create_partitions};
 use crate::targets::install::{self, InstallError};
@@ -197,19 +196,19 @@ pub fn run_from_files<R: CommandRunner>(
     };
     create_partitions(runner, &layout, &environment)?;
     if let Err(error) = crate::shared::storage::mount_target(runner, &layout, root) {
-        let _ = unmount_target(runner, root, &layout);
+        let _ = unmount_target(runner, root);
         return Err(error.into());
     }
     let result = install_mounted(runner, root, &rebound, &manifest, &assets, &layout);
     if let Err(error) = result {
         // Unmount only our own target tree. Never reboot an incomplete install.
-        let _ = unmount_target(runner, root, &layout);
+        let _ = unmount_target(runner, root);
         announce(
             "Installation failed. Alpine Live and recovery SSH remain running; no final reboot was requested.",
         );
         return Err(error);
     }
-    unmount_target(runner, root, &layout)?;
+    unmount_target(runner, root)?;
     checked(runner, "sync", [] as [&str; 0], "live-final-sync")?;
     announce(&format!(
         "RUSTALLER_INSTALL_COMPLETE target={} firmware={}",
@@ -310,19 +309,9 @@ fn install_mounted<R: CommandRunner>(
     install::bootstrap(runner, root, plan, manifest, assets, layout)?;
     mount_pseudo(runner, root)?;
     let root_uuid = filesystem_uuid(runner, &layout.root_partition())?;
-    let efi_uuid = layout
-        .efi_partition()
-        .map(|device| filesystem_uuid(runner, &device))
-        .transpose()?;
+    let efi_uuid = filesystem_uuid(runner, &layout.boot_partition())?;
     install::configure(
-        runner,
-        root,
-        plan,
-        manifest,
-        assets,
-        layout,
-        &root_uuid,
-        efi_uuid.as_deref(),
+        runner, root, plan, manifest, assets, layout, &root_uuid, &efi_uuid,
     )?;
     Ok(())
 }
@@ -516,11 +505,7 @@ fn mount_pseudo<R: CommandRunner>(runner: &mut R, root: &Path) -> Result<(), Liv
     )?;
     Ok(())
 }
-fn unmount_target<R: CommandRunner>(
-    runner: &mut R,
-    root: &Path,
-    layout: &DiskLayout,
-) -> Result<(), LiveInstallError> {
+fn unmount_target<R: CommandRunner>(runner: &mut R, root: &Path) -> Result<(), LiveInstallError> {
     for name in ["sys", "proc", "dev"] {
         let path = root.join(name);
         let path_text = path.to_string_lossy();
@@ -539,14 +524,8 @@ fn unmount_target<R: CommandRunner>(
             )?;
         }
     }
-    if layout.efi_partition().is_some() {
-        let path = root.join(
-            if matches!(layout.target(), Target::Alpine | Target::Debian) {
-                "boot/efi"
-            } else {
-                "efi"
-            },
-        );
+    {
+        let path = root.join("efi");
         let mountpoint = path.to_string_lossy();
         if capture(
             runner,

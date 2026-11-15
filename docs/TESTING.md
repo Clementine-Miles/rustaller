@@ -27,24 +27,17 @@ continuation or reboot. Rendering tests are not native boot or connectivity test
 Fixture timezone files are compiled IANA public-domain data; they do not read the
 host timezone database. No test activates host swap or changes host networking.
 
-## Previous consolidation evidence (5fbfaa1)
+## Current refactor evidence
 
-The consolidation was checked with plan schema 7 and the matching runtime marker:
-
-| Check | Result |
-| --- | --- |
-| Formatting, strict workspace Clippy, all-feature workspace tests, diff hygiene | PASS |
-| Updated Rust-only `xtask check` | PASS |
-| Static musl bundle and exact embedded-worker verification | PASS |
-| Debug/bundled host and worker help; VM harness help | PASS |
-| Local preview packaging and SHA-256 integrity | PASS |
-| Live official-source audit | Debian metadata reachable; Alpine, Arch and Gentoo failed with HTTP 403 |
-| Fresh disposable VM execution | Not run: QEMU and `/dev/kvm` unavailable |
-
-The live audit did not download/authenticate complete installation payloads.
-No new full installation pass is established. The VM source seed now enables an
-explicit DHCPv4-only networkd profile for the next boot and masks competing
-source network services; this provisioning change still needs real VM validation.
+The reviewed starting revision was `31cbac103175d61582f9300f882989ed6a8840a299`.
+The new plan schema is 8, with a matching embedded-worker runtime marker.
+Static/mocked checks are separate from real installation evidence. Formatting,
+strict workspace Clippy, workspace tests, `xtask check` and static musl bundle
+verification passed. The production Limine resource-preparation function was run
+against a private temporary directory: all five pinned resources downloaded,
+matched their SHA-256 values and compiled the native utility successfully. Only
+resource preparation and help were executed; no bootloader/disk was modified.
+This does not prove firmware booting.
 
 ## Integration test ownership
 
@@ -58,7 +51,7 @@ fixture exercises real command I/O without a second installer.
 | `host.rs`, `sources.rs` | Inspection, disk confirmation, authenticated handoff and source metadata |
 | `network_config.rs`, `live_network.rs` | Complete target output and temporary Live connectivity |
 | `storage.rs`, `installation.rs`, `targets.rs` | Storage guards, lifecycle and distribution requirements |
-| `boot.rs`, `initrd.rs`, `firstboot.rs` | GRUB, private worker handoff and Alpine MAC repair |
+| `boot.rs`, `initrd.rs`, `firstboot.rs` | Limine, private worker handoff and Alpine MAC repair |
 | `runtime.rs`, `terminal.rs` | Commands, worker compatibility, CLI/TUI terminals and credential privacy |
 
 Host module unit tests cover applied DHCPv6/RA policy separately from address
@@ -99,7 +92,7 @@ cargo xtask vm-acceptance install \
   --base /absolute/prepared-source.qcow2 --sha512 VERIFIED_SOURCE_SHA512 \
   --key /absolute/test-key --public-key /absolute/test-key.pub \
   --installer /absolute/rustaller-x86_64-linux-musl \
-  --target all --firmware both --disk-bus virtio-blk \
+  --target all --firmware both --filesystem all --disk-bus virtio-blk \
   --timeout 3600 --output /absolute/new-results-directory
 ```
 
@@ -110,47 +103,57 @@ serial/QMP/SSH/probe logs and explicit pass/fail/not-run status. The harness's
 proxy relay preserves the configured proxy and public CA; it does not bypass TLS.
 
 A full pass requires authenticated source SSH, Live/install-complete markers,
-exactly one final QMP reset, boot from the installed disk, target SSH, correct
-architecture/kernel/filesystem/UUID fstab/GRUB and EFI fallback, working default
-route/DNS/package refresh, and requested target-boot swap activation. The existing
-probe fixture has specific XFS/kernel/swap expectations; extend it before claiming
-the broader kernel/ext4/profile matrix.
+exactly one final QMP reset, installed-disk boot, target SSH, correct kernel,
+filesystem/UUID fstab, mounted FAT32, Limine configuration/payloads, default
+route/DNS/package refresh and filesystem-specific swap policy. The probe validates
+XFS/ext4 swap activation; Btrfs must use `@`, zstd and no swapfile.
 
-Required future coverage includes all distributions × BIOS/UEFI × XFS/ext4,
-explicit kernels, IPv4/IPv6-only/dual-stack, multiple NICs, DHCP/RA renewal and
-source-policy refusals, target sysctl activation, hostname inheritance, non-root
-credentials/root SSH policy, swap allocation/activation and CachyOS ISA/upgrade
-retry. Failure scenarios include changed/ambiguous disk identity, mounted/active
-swap, read-only disks, low RAM, downloads/signatures, missing drivers and final
-SSH/GRUB validation. See [security](SECURITY.md) for code-level boundaries.
+`--filesystem all --target all --firmware both` runs the 24 primary combinations.
+Individual filesystems can be selected. `--disk-size-gib 3072 --firmware bios`
+expands only a fresh sparse overlay to exercise the three-partition GPT case.
+The `smoke --iso` input is the official Alpine Live test image, not an installer
+feature. Its stock boot files and source-image bootloader remain harness inputs;
+new target installations use Limine exclusively.
 
-## Boot integration and TUI verification
+## Limine/filesystem acceptance matrix
 
-The phased implementation adds Rust tests for firmware-specific netboot formats,
-checksum mismatch, exact reboot confirmation, unsupported GRUB prerequisites,
-state changes, publication/arming/reboot failures and restoration. Both ISO modes
-reach the shared publisher in mocked BIOS/UEFI cases. ISO tests inspect read-only
-mount/unmount behavior; digest changes block execution. TUI tests cover separate
-preflight, blocked execution, repeated keys, focused validation and shared secret
-snapshots. PTY tests include interruption during native ssh-keygen prompts.
+All entries below are **NOT RUN** for the current Limine implementation. Historical
+Live smoke above is not evidence of target booting.
 
-The retained VM harness now accepts `media` with `--target netboot.xyz|iso`,
-`--installer`, the normal disposable source/key/firmware options, and a required
-`--expect-serial TEXT` marker. ISO needs `--iso` and `--sha256`; optional
-`--iso-config`, `--iso-kernel`, `--iso-initrd`, `--iso-cmdline` mirror the CLI.
-It dispatches the real scoped confirmation inside a fresh guest, then requires
-one firmware reset and the requested marker in new serial output. This proves
-only the selected marker/boot scope; it is not distribution installation acceptance.
-The guest must satisfy the documented GRUB filesystem/module contract.
+| Distribution | BIOS/MBR XFS | BIOS/MBR ext4 | BIOS/MBR Btrfs | UEFI/GPT XFS | UEFI/GPT ext4 | UEFI/GPT Btrfs |
+| --- | --- | --- | --- | --- | --- | --- |
+| Alpine | Not run | Not run | Not run | Not run | Not run | Not run |
+| Debian | Not run | Not run | Not run | Not run | Not run | Not run |
+| Arch | Not run | Not run | Not run | Not run | Not run | Not run |
+| Gentoo | Not run | Not run | Not run | Not run | Not run | Not run |
 
-QEMU and /dev/kvm are unavailable here. Netboot artifact GETs returned HTTP 403;
-upstream README/build recipes were reviewed via the official Git repository.
-No actual netboot or ISO BIOS/UEFI boot pass is established, including the new
-harness path. No development-host boot state was changed.
+BIOS/GPT stage2, 4Kn UEFI, native kernel upgrades, package-hook ordering, CachyOS
+first boot, serial output and provider-specific firmware also need fresh VM or
+hardware evidence. QEMU and `/dev/kvm` are unavailable in the development
+environment, so no current real installation/reboot pass is claimed.
 
-For this implementation, formatting, strict all-target/all-feature Clippy,
-workspace tests, xtask check, static musl bundling with exact worker embedding,
-VM harness help, debug/static executable help and diff hygiene passed. CLI media
-inspection refused missing root privileges, and media --confirm-erase was rejected
-before preparation. Documentation link checks passed. These checks establish
-static/mocked behavior and terminal recovery, not real firmware boot success.
+## Regression boundaries
+
+`boot.rs` table-tests all 24 plan/layout/render combinations, GPT stage2 commands,
+UUID fstab/fsck rules, Btrfs formatting and subvolume cleanup, compression/schema
+roundtrips, kernel version ordering and update generations. Mocked resource tests
+reject digest mismatch before compilation. Native temporary-file tests exercise
+missing initramfs, unsafe symlinks/hardlinks, invalid firmware payloads, unmounted
+FAT and low capacity without replacing the published configuration.
+
+TUI tests preserve per-target drafts, fresh-key submission, cancellation, focused
+validation, credential masking and terminal recovery, and add current/target
+panel placement at 120-, 60- and 48-column sizes. Set `RUSTALLER_CAPTURE_TUI=1`
+when running these tests to save simulated terminal captures under `/tmp`.
+They are deterministic renderer fixtures, not host inspection or VM screenshots.
+
+Retained safety coverage includes disk identity/rebinding, exact destructive
+confirmation, source authentication, private handoff, unsupported firmware,
+read-only/4Kn geometry, mounted/active-swap rejection, unsafe paths, file
+publication failures, network rendering/ownership, first boot and refusal to
+reboot an incomplete installation. IPv6 external connectivity, all kernels,
+multiple NIC renewals, low-memory installations and hardware boot remain unverified.
+
+Official source audit reachability is environment-dependent and does not replace
+payload authentication. Previous audits reached Debian metadata while other
+endpoints returned HTTP 403; rerun and report actual results for each delivery.

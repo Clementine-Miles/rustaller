@@ -18,7 +18,7 @@ cargo xtask vm-acceptance --help
 ```
 
 Native commands remain the correct interfaces for Linux inventory, authenticated
-downloads, OpenSSH, kexec, filesystem/mount tools, package managers and GRUB/
+downloads, OpenSSH, kexec, filesystem/mount tools, package managers and Limine/
 initramfs generation. Do not implement another installer, general administration
 layer, plugin registry or recovery executable. OpenRC integration is generated
 minimal native service glue invoking the Rust worker; no separate service scripts
@@ -85,9 +85,13 @@ Git history retains earlier revisions; no additional reference snapshots are kep
 The test `UTC`/`New_York` TZif fixtures come from Debian tzdata 2026b-0+deb13u1
 (`Etc/UTC`, `America/New_York`); IANA timezone data is public domain.
 
-The netboot artifact contract was reviewed against the official
-[netboot.xyz README](https://github.com/netbootxyz/netboot.xyz/blob/670f279645091994d39c3b63e27b20f72a8c3486/README.md)
-and its build checksum/EFI recipes (release 3.0.3). Downloads use
-https://boot.netboot.xyz/ipxe/ and netboot.xyz-sha256-checksums.txt. BIOS uses
-netboot.xyz.lkrn; x86_64 UEFI uses netboot.xyz.efi. Network-loaded menus and OS
-payloads remain under upstream iPXE policy after handoff.
+Limine is pinned to upstream [v9.6.5-binary](https://github.com/limine-bootloader/limine/tree/81a11885edab8e59fdad2617b4ef6f35abe44e44),
+commit `81a11885edab8e59fdad2617b4ef6f35abe44e44`.
+The [9.x usage](https://github.com/limine-bootloader/limine/blob/v9.x/USAGE.md)
+and [configuration](https://github.com/limine-bootloader/limine/blob/v9.x/CONFIG.md)
+contracts define BIOS installation, GPT stage2 partition numbering, UEFI fallback
+and Linux boot syntax. Digests live in `targets/limine.rs`; no maintained
+bootloader fork or vendored C implementation is added. The upstream
+BSD-2-Clause license is authenticated and installed with the payload. Live needs
+GCC/musl development tools to compile the pinned native utility. Future updates
+must review source/digests, syntax, licensing, hooks and disposable boot evidence.

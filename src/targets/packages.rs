@@ -66,7 +66,14 @@ pub fn package_plan(
         return Err(PlanError::UnexpectedOption("automatic-install"));
     }
     let configuration = configuration_for_plan(plan, plan.target, is_virtual_machine)?;
-    let boot_mode = plan.force_boot_mode.unwrap_or(boot_mode);
+    if plan
+        .force_boot_mode
+        .is_some_and(|expected| expected != boot_mode)
+    {
+        return Err(PlanError::UnexpectedOption(
+            "force-boot-mode does not match detected firmware",
+        ));
+    }
     let (method, mut bootstrap_packages, mut later_packages) = match plan.target {
         Target::Alpine => {
             let base = [
@@ -75,25 +82,20 @@ pub fn package_plan(
                 "ca-certificates",
                 "dhcpcd",
                 "ifupdown-ng",
+                // Boot refresh requires the real util-linux mount inspector.
+                "findmnt",
                 match plan.system.root_filesystem {
                     crate::config::RootFilesystem::Xfs => "xfsprogs",
                     crate::config::RootFilesystem::Ext4 => "e2fsprogs",
+                    crate::config::RootFilesystem::Btrfs => "btrfs-progs",
                 },
             ]
             .map(str::to_owned)
             .to_vec();
             let mut later = vec![
                 configuration.kernel.package.to_owned(),
-                if boot_mode == BootMode::Efi {
-                    "grub-efi"
-                } else {
-                    "grub-bios"
-                }
-                .to_owned(),
+                "dosfstools".to_owned(),
             ];
-            if boot_mode == BootMode::Efi {
-                later.extend(["efibootmgr".into(), "dosfstools".into()]);
-            }
             later.extend(firmware_packages.iter().cloned());
             if plan.system.swap.size_mib.is_some() {
                 // util-linux swapon provides --show for post-boot diagnostics.
@@ -160,15 +162,12 @@ pub fn package_plan(
 }
 
 pub fn pacstrap_packages(
-    boot_mode: BootMode,
+    _boot_mode: BootMode,
     root_filesystem: &str,
     username: &str,
     firmware_packages: &[String],
 ) -> Vec<String> {
-    let mut packages = vec!["base".into(), "grub".into(), "openssh".into()];
-    if boot_mode == BootMode::Efi {
-        packages.extend(["efibootmgr".into(), "dosfstools".into()]);
-    }
+    let mut packages = vec!["base".into(), "dosfstools".into(), "openssh".into()];
     match root_filesystem {
         "xfs" => packages.push("xfsprogs".into()),
         "ext4" => packages.push("e2fsprogs".into()),
@@ -205,18 +204,15 @@ pub fn kernel_install_command_for_plan(
 }
 
 pub fn emerge_package_set(
-    boot_mode: BootMode,
+    _boot_mode: BootMode,
     root_filesystem: &str,
     username: &str,
     firmware_packages: &[String],
 ) -> Vec<String> {
-    let mut packages = vec!["sys-block/io-scheduler-udev-rules".to_owned()];
-    if boot_mode == BootMode::Efi {
-        packages.extend([
-            "sys-fs/dosfstools".to_owned(),
-            "sys-boot/efibootmgr".to_owned(),
-        ]);
-    }
+    let mut packages = vec![
+        "sys-block/io-scheduler-udev-rules".to_owned(),
+        "sys-fs/dosfstools".into(),
+    ];
     match root_filesystem {
         "xfs" => packages.push("sys-fs/xfsprogs".to_owned()),
         "ext4" => packages.push("sys-fs/e2fsprogs".to_owned()),
@@ -239,20 +235,13 @@ pub fn emerge_package_set_for_plan(
 ) -> Result<Vec<String>, PlanError> {
     let configuration = configuration_for_plan(plan, Target::Gentoo, false)?;
     let mut packages = emerge_package_set(
-        plan.force_boot_mode.unwrap_or(boot_mode),
+        boot_mode,
         root_filesystem,
         plan.username.as_deref().unwrap_or("root"),
         firmware_packages,
     );
     packages.extend(configuration.extra_packages.into_iter().map(str::to_owned));
     Ok(packages)
-}
-
-pub const fn grub_platforms(boot_mode: BootMode) -> &'static str {
-    match boot_mode {
-        BootMode::Efi => "efi-64",
-        BootMode::Bios => "pc",
-    }
 }
 
 pub const PRESERVED_ROOTS: &[&str] = &[

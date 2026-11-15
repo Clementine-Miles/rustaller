@@ -16,10 +16,13 @@ cargo xtask bundle
 
 Without arguments on a terminal, the bundled host opens its English TUI.
 Installation requires root, successful preflight and the exact disk-identity
-confirmation. `--inspect` is read-only. Optional settings include XFS/ext4,
+confirmation. `--inspect` is read-only. Optional settings include XFS/ext4/Btrfs,
 distribution kernels, SSH/accounts, DNS/network policy and a target-only swapfile.
 The automatic path requires kexec and performs one final reboot; failure retains
-Live rescue. netboot.xyz and Local ISO use a confirmed one-shot GRUB boot. Reset execution is unavailable. See installation requirements; real media boot acceptance remains unverified.
+Live rescue. New systems use Limine 9.6.5 with FAT32 at `/efi` and a root
+partition; large BIOS disks use a GPT stage2 exception. Btrfs uses `@` with
+optional zstd; Btrfs swapfiles are rejected. The TUI compares detected and planned
+systems. Reset infrastructure is retained; execution remains unavailable.
 
 Source network capture currently requires an applied explicit flat networkd
 profile; unsupported managers and routing stop preparation before erasure.

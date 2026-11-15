@@ -10,8 +10,7 @@ pub mod host {
     pub mod handoff;
     pub mod hostname;
     pub mod initrd;
-    pub mod iso;
-    pub mod media;
+    pub mod inspect;
     pub mod network;
     pub mod password;
     pub mod preflight;
@@ -31,11 +30,12 @@ pub mod targets {
     pub mod cachyos;
     pub mod debian;
     pub mod install;
+    pub mod limine;
     pub mod packages;
     pub mod rolling;
 }
 
-pub const RUNTIME_VERSION: &str = "RUSTALLER-CONFIG-20261115-07";
+pub const RUNTIME_VERSION: &str = "RUSTALLER-CONFIG-20261115-08";
 pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub mod worker {
     pub mod args;

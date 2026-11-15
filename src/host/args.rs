@@ -1,5 +1,5 @@
 use crate::config::{DnsMode, InstallProfile};
-use crate::model::{BootMode, InstallPlan, IsoOptions, PlanError, Target};
+use crate::model::{BootMode, InstallPlan, PlanError, Target};
 use std::fmt;
 
 pub const HELP: &str = r#"Usage: rustaller [OPTIONS] TARGET
@@ -9,8 +9,6 @@ Targets:
   debian       Latest stable Debian, installed from Alpine Live
   arch         Arch Linux
   gentoo       Gentoo Linux
-  netboot.xyz  Start the netboot.xyz installer
-  iso          Boot a local Linux ISO without formatting disks
 
 Options:
   --username USERNAME           Target account name
@@ -21,7 +19,9 @@ Options:
   --web-port PORT               Web log viewer port
   --frpc-config PATH            frpc configuration
   --target-disk /dev/DISK       Target disk for automatic installation
-  --filesystem xfs|ext4         Target root filesystem (default: xfs)
+  --filesystem xfs|ext4|btrfs   Target root filesystem (default: xfs)
+  --boot-size-mib MIB          FAT32 /efi size, 512-4096 MiB (default: 512)
+  --btrfs-compression LEVEL    Btrfs zstd 1-15, 0=off (default: 3)
   --no-cloud-kernel             Select the non-cloud kernel
   --kernel CHOICE               auto/standard/lts/virt/cloud/generic/cachyos
   --hostname NAME               Set target hostname (one ASCII label)
@@ -49,20 +49,15 @@ Options:
   --swapfile-mib MIB          Opt-in target /swapfile, 64-65536 MiB
   --swappiness N              Target vm.swappiness, 0-200
   --hold 0|1|2                  Select the existing hold behavior
-  --force-boot-mode bios|efi    Override detected boot mode
-  --iso PATH                    Local ISO image
-  --iso-config PATH             GRUB loopback configuration in the ISO
-  --iso-kernel PATH             Kernel path in the ISO
-  --iso-initrd PATH             Initrd path in the ISO
-  --iso-cmdline TEXT            Kernel command line for custom ISO boot
+  --force-boot-mode bios|efi    Assert expected detected firmware
   --debug, -x                   Enable debug diagnostics
   --inspect                    Read-only target-specific compatibility inspection
   --confirm-erase TOKEN        Exact identity token from --inspect (no prompt)
-  --confirm-handoff TOKEN      Exact handoff/BOOT-ONCE token from --inspect
   --help, -h                    Show this help
 
 Linux x86_64 hosts only. Automatic installation erases the selected disk.
 Rust embeds its matching worker and verifies official installation sources.
+New target systems use Limine 9.6.5; Btrfs swapfiles are unsupported.
 Development installer: BIOS/UEFI acceptance is required before production use.
 "#;
 
@@ -122,17 +117,8 @@ where
     let mut target = None;
     let mut inspect = false;
     let mut confirmation = None;
-    let mut erase_confirmation = false;
     let mut dns_mode = None;
     let mut options = InstallPlan::new(Target::Reset);
-    let mut iso_fields = IsoOptions {
-        path: String::new(),
-        config: None,
-        kernel: None,
-        initrd: None,
-        cmdline: None,
-    };
-    let mut has_iso_field = false;
     let mut options_ended = false;
     let mut index = 0;
 
@@ -164,8 +150,7 @@ where
                 inspect = true;
                 index += 1;
             }
-            "--confirm-erase" | "--confirm-handoff" => {
-                erase_confirmation = name == "--confirm-erase";
+            "--confirm-erase" => {
                 let (value, consumed) = take_value(&args, index, &name, inline_value)?;
                 if confirmation.is_some()
                     || value.len() > 4096
@@ -243,11 +228,24 @@ where
                 }
                 index += 1;
             }
-            "--profile" | "--filesystem" | "--dns-mode" | "--dns" | "--dns-search" => {
+            "--profile"
+            | "--filesystem"
+            | "--boot-size-mib"
+            | "--btrfs-compression"
+            | "--dns-mode"
+            | "--dns"
+            | "--dns-search" => {
                 let (value, consumed) = take_value(&args, index, &name, inline_value)?;
                 let invalid = || CliError::InvalidValue(name.clone());
                 match name.as_str() {
                     "--profile" => options.system.profile = value.parse().map_err(|_| invalid())?,
+                    "--boot-size-mib" => {
+                        options.system.boot_size_mib = Some(value.parse().map_err(|_| invalid())?)
+                    }
+                    "--btrfs-compression" => {
+                        options.system.btrfs_compression =
+                            Some(value.parse().map_err(|_| invalid())?)
+                    }
                     "--filesystem" => {
                         options.system.root_filesystem = value.parse().map_err(|_| invalid())?
                     }
@@ -358,19 +356,7 @@ where
                 });
                 index += consumed;
             }
-            "--iso" | "--iso-config" | "--iso-kernel" | "--iso-initrd" | "--iso-cmdline" => {
-                let (value, consumed) = take_value(&args, index, &name, inline_value)?;
-                has_iso_field = true;
-                match name.as_str() {
-                    "--iso" => iso_fields.path = value,
-                    "--iso-config" => iso_fields.config = Some(value),
-                    "--iso-kernel" => iso_fields.kernel = Some(value),
-                    "--iso-initrd" => iso_fields.initrd = Some(value),
-                    "--iso-cmdline" => iso_fields.cmdline = Some(value),
-                    _ => unreachable!(),
-                }
-                index += consumed;
-            }
+
             "-h" | "--help" => return Ok(CliOutcome::Help),
             _ if arg.starts_with('-') => return Err(CliError::UnknownOption(arg.clone())),
             _ => {
@@ -403,27 +389,8 @@ where
     plan.hold = options.hold;
     plan.force_boot_mode = options.force_boot_mode;
     plan.debug = options.debug;
-    if has_iso_field {
-        plan.iso = Some(iso_fields);
-    }
-    if plan.target == Target::LocalIso
-        && let Some(iso) = plan.iso.as_mut()
-        && iso.config.is_none()
-        && iso.kernel.is_none()
-        && iso.initrd.is_none()
-    {
-        iso.config = Some("/boot/grub/loopback.cfg".to_owned());
-    }
     plan.validate().map_err(CliError::InvalidPlan)?;
-    if erase_confirmation && !plan.target.is_automatic() {
-        return Err(CliError::InvalidValue(
-            "media boots require --confirm-handoff, not --confirm-erase".into(),
-        ));
-    }
-    if (inspect || confirmation.is_some())
-        && !plan.target.is_automatic()
-        && !matches!(plan.target, Target::NetbootXyz | Target::LocalIso)
-    {
+    if (inspect || confirmation.is_some()) && !plan.target.is_automatic() {
         return Err(CliError::InvalidValue(
             "--inspect/--confirm-erase require automatic installation".into(),
         ));
@@ -454,8 +421,6 @@ fn set_target(target: &mut Option<Target>, input: &str) -> Result<(), CliError> 
         "debian" => Target::Debian,
         "arch" => Target::Arch,
         "gentoo" => Target::Gentoo,
-        "iso" => Target::LocalIso,
-        "netboot.xyz" => Target::NetbootXyz,
         "reset" => Target::Reset,
         _ => return Err(CliError::InvalidTarget(input.to_owned())),
     });

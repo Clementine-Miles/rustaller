@@ -17,15 +17,17 @@ fn main() -> ExitCode {
 }
 fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    if args.len() != 3
+    if args.len() != 4
         || !matches!(args[0].as_str(), "alpine" | "debian" | "arch" | "gentoo")
         || !matches!(args[1].as_str(), "bios" | "efi")
+        || !matches!(args[2].as_str(), "xfs" | "ext4" | "btrfs")
     {
-        return Err("expected TARGET bios|efi TRANSPORT_FILE".into());
+        return Err("expected TARGET bios|efi xfs|ext4|btrfs TRANSPORT_FILE".into());
     }
     let target = &args[0];
     let firmware = &args[1];
-    let transport = load_transport(Path::new(&args[2]))?;
+    let filesystem = &args[2];
+    let transport = load_transport(Path::new(&args[3]))?;
     let os = fs::read_to_string("/etc/os-release").map_err(|e| e.to_string())?;
     let id = os
         .lines()
@@ -55,9 +57,9 @@ fn run() -> Result<(), String> {
     let mounts = fs::read_to_string("/proc/mounts").map_err(|e| e.to_string())?;
     if !mounts.lines().any(|line| {
         let fields: Vec<_> = line.split_whitespace().collect();
-        fields.get(1) == Some(&"/") && fields.get(2) == Some(&"xfs")
+        fields.get(1) == Some(&"/") && fields.get(2) == Some(&filesystem.as_str())
     }) {
-        return Err("target root is not xfs".into());
+        return Err(format!("target root is not {filesystem}"));
     }
     let fstab = fs::read_to_string("/etc/fstab").map_err(|e| e.to_string())?;
     // Read-only post-boot diagnostics; activation belongs to native init.
@@ -70,50 +72,72 @@ fn run() -> Result<(), String> {
     {
         return Err("root fstab lacks its UUID binding".into());
     }
-    if fstab
-        .lines()
-        .filter(|line| line.split_whitespace().next() == Some("/swapfile"))
-        .count()
-        != 1
-    {
-        return Err("swapfile fstab entry is not unique".into());
-    }
-    let swap = fs::read_to_string("/proc/swaps").map_err(|e| e.to_string())?;
-    if !swap
-        .lines()
-        .skip(1)
-        .any(|line| line.split_whitespace().next() == Some("/swapfile"))
-    {
-        return Err("target swapfile was not activated during boot".into());
-    }
-    if fs::metadata("/swapfile")
-        .map_err(|e| e.to_string())?
-        .permissions()
-        .mode()
-        & 0o777
-        != 0o600
-    {
-        return Err("swapfile permissions differ from 0600".into());
-    }
-    if fs::read_to_string("/proc/sys/vm/swappiness")
-        .map_err(|e| e.to_string())?
-        .trim()
-        != "10"
-    {
-        return Err("target swappiness was not applied".into());
-    }
-    if !Path::new("/boot/grub/grub.cfg").is_file() {
-        return Err("target GRUB configuration is absent".into());
-    }
-    if firmware == "efi" {
-        let efi = if matches!(target.as_str(), "alpine" | "debian") {
-            "/boot/efi/EFI/BOOT/BOOTX64.EFI"
-        } else {
-            "/efi/EFI/BOOT/BOOTX64.EFI"
-        };
-        if !Path::new(efi).is_file() {
-            return Err("UEFI removable boot loader is absent".into());
+    if filesystem != "btrfs" {
+        if fstab
+            .lines()
+            .filter(|line| line.split_whitespace().next() == Some("/swapfile"))
+            .count()
+            != 1
+        {
+            return Err("swapfile fstab entry is not unique".into());
         }
+        let swap = fs::read_to_string("/proc/swaps").map_err(|e| e.to_string())?;
+        if !swap
+            .lines()
+            .skip(1)
+            .any(|line| line.split_whitespace().next() == Some("/swapfile"))
+        {
+            return Err("target swapfile was not activated during boot".into());
+        }
+        if fs::metadata("/swapfile")
+            .map_err(|e| e.to_string())?
+            .permissions()
+            .mode()
+            & 0o777
+            != 0o600
+        {
+            return Err("swapfile permissions differ from 0600".into());
+        }
+        if fs::read_to_string("/proc/sys/vm/swappiness")
+            .map_err(|e| e.to_string())?
+            .trim()
+            != "10"
+        {
+            return Err("target swappiness was not applied".into());
+        }
+    } else if Path::new("/swapfile").exists() || !fstab.contains("subvol=@,compress=zstd:3") {
+        return Err("Btrfs requires @ with compression and no swapfile".into());
+    }
+    if !mounts.lines().any(|line| {
+        let f: Vec<_> = line.split_whitespace().collect();
+        f.get(1) == Some(&"/efi") && f.get(2) == Some(&"vfat")
+    }) {
+        return Err("FAT32 /efi is not mounted".into());
+    }
+    let limine = fs::read_to_string("/efi/limine.conf").map_err(|e| e.to_string())?;
+    if !limine.contains("protocol: linux")
+        || !limine.contains("root=UUID=")
+        || !limine.contains("console=ttyS0")
+        || (filesystem == "btrfs" && !limine.contains("rootflags=subvol=@"))
+    {
+        return Err("Limine configuration is incomplete".into());
+    }
+    for p in limine.lines().filter_map(|l| {
+        l.trim()
+            .strip_prefix("path: boot():/")
+            .or_else(|| l.trim().strip_prefix("module_path: boot():/"))
+    }) {
+        if !Path::new("/efi").join(p).is_file() {
+            return Err("Limine payload absent".into());
+        }
+    }
+    if !Path::new("/efi/EFI/BOOT/BOOTX64.EFI").is_file()
+        || !Path::new("/efi/limine-bios.sys").is_file()
+    {
+        return Err("Limine firmware payload absent".into());
+    }
+    if !Path::new("/usr/local/libexec/rustaller-limine-worker").is_file() {
+        return Err("Limine refresh worker absent".into());
     }
     let route = run_capture("ip", &["-4", "route", "show", "default"], &transport)?;
     if route.trim().is_empty() {
@@ -147,7 +171,7 @@ fn run() -> Result<(), String> {
     println!(
         "RUSTALLER_VM_TARGET_NETWORK IPv4 default route and DNS lookup passed; public-key-only SSH authenticated by host harness"
     );
-    println!("RUSTALLER_VM_TARGET_SWAP file active, 0600, fstab unique, swappiness=10");
+    println!("RUSTALLER_VM_TARGET_SWAP policy verified for {filesystem}");
     let (program, arguments): (&str, &[&str]) = match target.as_str() {
         "alpine" => ("apk", &["update"]),
         "debian" => ("apt-get", &["update"]),

@@ -21,6 +21,12 @@ pub fn run(root: &Path) -> Result<(), String> {
     ] {
         run_command(root, &cargo, args)?;
     }
+    // The standalone guest probe is compiled by the VM harness, not Cargo.
+    run_command(
+        root,
+        "rustfmt",
+        ["--edition=2024", "--check", "xtask/src/vm_guest.rs"],
+    )?;
     run_command(root, "git", ["diff", "--check"])
 }
 

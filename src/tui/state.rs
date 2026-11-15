@@ -8,30 +8,24 @@ use rustaller::host::ssh_keygen::{self, GeneratedKey, KeygenOptions};
 use rustaller::model::{BootMode, InstallPlan, Target};
 use rustaller::postinstall::KernelChoice;
 
-pub(super) const CHOICES: [(&str, &str, Route); 7] = [
+pub(super) const CHOICES: [(&str, &str, Route); 5] = [
     ("Alpine Linux", "alpine", Route::Automatic(Target::Alpine)),
     ("Debian minimal", "debian", Route::Automatic(Target::Debian)),
     ("Arch Linux", "arch", Route::Automatic(Target::Arch)),
     ("Gentoo", "gentoo", Route::Automatic(Target::Gentoo)),
-    ("Local Linux ISO", "iso", Route::LocalIso),
     ("Rescue: Alpine Live", "alpine", Route::Rescue),
-    ("Tool: netboot.xyz", "netboot.xyz", Route::NetbootXyz),
 ];
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) enum Route {
     Automatic(Target),
-    LocalIso,
     Rescue,
-    NetbootXyz,
 }
 impl Route {
     pub fn target(self) -> Target {
         match self {
             Self::Automatic(target) => target,
-            Self::LocalIso => Target::LocalIso,
             Self::Rescue => Target::Alpine,
-            Self::NetbootXyz => Target::NetbootXyz,
         }
     }
     pub fn automatic(self) -> bool {
@@ -40,11 +34,8 @@ impl Route {
     pub fn has_account(self) -> bool {
         self.automatic() || self == Self::Rescue
     }
-    pub fn media(self) -> bool {
-        matches!(self, Self::LocalIso | Self::NetbootXyz)
-    }
 }
-pub(super) use super::draft::{Authentication, DnsProvider, Draft, IsoMode};
+pub(super) use super::draft::{Authentication, DnsProvider, Draft};
 use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -69,7 +60,6 @@ pub(super) enum Page {
     Keygen,
     Boot,
     Resources,
-    Iso,
 }
 impl Page {
     pub fn title(self) -> &'static str {
@@ -94,7 +84,6 @@ impl Page {
             Self::Keygen => "System ssh-keygen",
             Self::Boot => "Disk and boot",
             Self::Resources => "Resources and logs",
-            Self::Iso => "ISO media",
         }
     }
 }
@@ -138,7 +127,6 @@ pub(super) enum Setting {
     Kernel,
     Boot,
     Hold,
-    IsoMode,
     Profile,
     DnsMode,
     RootFilesystem,
@@ -212,6 +200,7 @@ pub(super) struct Entry {
     pub action: Action,
 }
 pub(super) struct Wizard {
+    pub report: Option<rustaller::host::inspect::PreflightReport>,
     pub choice: usize,
     pub drafts: Vec<Rc<Draft>>,
     pub frames: Vec<MenuFrame>,
@@ -247,6 +236,7 @@ impl Wizard {
             .map(|_| Rc::new(Draft::new(&comment, &key_path)))
             .collect();
         Self {
+            report: None,
             choice: 0,
             drafts,
             frames: vec![MenuFrame {
@@ -264,6 +254,7 @@ impl Wizard {
         &self.drafts[self.choice]
     }
     pub fn draft_mut(&mut self) -> &mut Draft {
+        self.report = None;
         Rc::make_mut(&mut self.drafts[self.choice])
     }
     pub fn page(&self) -> Page {
@@ -480,10 +471,8 @@ impl Wizard {
                         Field::Hostname | Field::Timezone => Page::Host,
                         Field::Mtu => Page::Mtu,
                         Field::SwapSize | Field::Swappiness => Page::Swap,
-                        Field::IsoPath | Field::IsoConfig | Field::IsoKernel | Field::IsoInitrd => {
-                            Page::Iso
-                        }
-                        Field::Disk => Page::Boot,
+                        Field::Disk | Field::BootSize => Page::Boot,
+                        Field::Compression => Page::Installation,
                         Field::SshPort | Field::Username => Page::Account,
                         _ => Page::Tcp,
                     };
@@ -704,7 +693,19 @@ impl Wizard {
             }
         }
     }
-    pub fn preflight_complete(&mut self, result: Result<String, String>) {
+    pub fn preflight_complete(
+        &mut self,
+        result: Result<rustaller::host::inspect::PreflightReport, String>,
+    ) {
+        self.report = None;
+        let result = result.map(|mut report| {
+            report.current = self.redact(report.current);
+            report.target = self.redact(report.target);
+            report.warning = self.redact(report.warning);
+            let text = report.text();
+            self.report = Some(report);
+            text
+        });
         self.complete_message(result);
         let view = std::mem::replace(&mut self.view, View::Menu);
         if let View::Outcome {
@@ -725,12 +726,7 @@ impl Wizard {
             "Action completed. Return to review to keep editing the configuration.".into()
         }));
     }
-    fn complete_message(&mut self, result: Result<String, String>) {
-        let success = result.is_ok();
-        let mut message = match result {
-            Ok(message) => message,
-            Err(error) => error,
-        };
+    fn redact(&self, mut message: String) -> String {
         let mut secrets = Vec::new();
         for draft in &self.drafts {
             for field in [
@@ -739,7 +735,6 @@ impl Wizard {
                 Field::RootPassword,
                 Field::RootConfirm,
                 Field::Frpc,
-                Field::IsoCmdline,
             ] {
                 let value = draft.get(field);
                 secrets.extend([value, value.trim()]);
@@ -754,7 +749,7 @@ impl Wizard {
         for secret in secrets {
             message = message.replace(secret, "█");
         }
-        let message = message
+        message
             .chars()
             .map(|character| {
                 if character == '\n' || !character.is_control() {
@@ -763,7 +758,15 @@ impl Wizard {
                     '\u{fffd}'
                 }
             })
-            .collect();
+            .collect()
+    }
+    fn complete_message(&mut self, result: Result<String, String>) {
+        let success = result.is_ok();
+        let message = match result {
+            Ok(message) => message,
+            Err(error) => error,
+        };
+        let message = self.redact(message);
         self.view = View::Outcome {
             success,
             message,
@@ -818,8 +821,8 @@ pub(super) fn optional_label(value: &str, default: &str) -> String {
 pub(super) fn boot_label(mode: Option<BootMode>) -> &'static str {
     match mode {
         None => "Auto-detect",
-        Some(BootMode::Bios) => "BIOS",
-        Some(BootMode::Efi) => "UEFI",
+        Some(BootMode::Bios) => "Expect BIOS",
+        Some(BootMode::Efi) => "Expect UEFI",
     }
 }
 pub(super) fn hold_label(hold: Option<u8>) -> &'static str {
@@ -829,12 +832,7 @@ pub(super) fn hold_label(hold: Option<u8>) -> &'static str {
         _ => "Default behavior",
     }
 }
-pub(super) fn iso_label(mode: IsoMode) -> &'static str {
-    match mode {
-        IsoMode::Loopback => "ISO-provided loopback configuration",
-        IsoMode::Kernel => "Explicit kernel and initrd",
-    }
-}
+
 pub(super) fn yes_no(value: bool) -> &'static str {
     if value { "On" } else { "Off" }
 }

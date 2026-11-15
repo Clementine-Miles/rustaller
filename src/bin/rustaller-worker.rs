@@ -13,10 +13,21 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let argv: Vec<String> = std::env::args().collect();
+    if argv
+        .first()
+        .is_some_and(|v| v.ends_with("zz-rustaller-limine"))
+        || argv.get(1).is_some_and(|v| v == "limine-refresh")
+    {
+        if rustaller::targets::limine::hook_action(&argv[1..]) {
+            rustaller::targets::limine::refresh(&mut SystemRunner, Path::new("/"))?;
+        }
+        return Ok(());
+    }
     let action = parse_worker_args(std::env::args().skip(1))?;
     let Some(action) = action else {
         println!(
-            "Usage: rustaller-worker <live-install PLAN MANIFEST|firstboot-fix|cachyos-firstboot|cleanup-openrc|initrd-network|log-stream>\n\nRuntime version: {}\nInternal helper for the Rust rustaller installer.",
+            "Usage: rustaller-worker <live-install PLAN MANIFEST|firstboot-fix|cachyos-firstboot|cleanup-openrc|initrd-network|log-stream|limine-refresh>\n\nRuntime version: {}\nInternal helper for the Rust rustaller installer.",
             rustaller::RUNTIME_VERSION
         );
         return Ok(());

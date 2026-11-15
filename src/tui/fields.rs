@@ -6,16 +6,13 @@ pub(super) enum Field {
     RootPassword,
     RootConfirm,
     SshPort,
+    BootSize,
+    Compression,
     Hostname,
     Timezone,
     Disk,
     WebPort,
     Frpc,
-    IsoPath,
-    IsoConfig,
-    IsoKernel,
-    IsoInitrd,
-    IsoCmdline,
     DnsServers,
     DnsSearch,
     Mtu,
@@ -42,16 +39,13 @@ impl Field {
             Self::RootPassword => "Root account password",
             Self::RootConfirm => "Confirm root password",
             Self::SshPort => "SSH port",
+            Self::BootSize => "FAT32 boot size (MiB)",
+            Self::Compression => "Btrfs zstd level (0 disables)",
             Self::Hostname => "Hostname",
             Self::Timezone => "Timezone",
             Self::Disk => "Target disk",
             Self::WebPort => "Web log port",
             Self::Frpc => "frpc configuration file / URL",
-            Self::IsoPath => "Absolute ISO path",
-            Self::IsoConfig => "Loopback configuration inside ISO",
-            Self::IsoKernel => "Kernel path inside ISO",
-            Self::IsoInitrd => "Initrd path inside ISO",
-            Self::IsoCmdline => "ISO kernel command line",
             Self::DnsServers => "DNS servers (comma-separated)",
             Self::DnsSearch => "DNS search domains (comma-separated)",
             Self::Mtu => "Network interface MTU",
@@ -73,12 +67,7 @@ impl Field {
     pub fn secret(self) -> bool {
         matches!(
             self,
-            Self::Password
-                | Self::Confirm
-                | Self::RootPassword
-                | Self::RootConfirm
-                | Self::Frpc
-                | Self::IsoCmdline
+            Self::Password | Self::Confirm | Self::RootPassword | Self::RootConfirm | Self::Frpc
         )
     }
     pub fn option(self) -> &'static str {
@@ -89,16 +78,13 @@ impl Field {
             Self::RootPassword => "--root-password",
             Self::RootConfirm => "",
             Self::SshPort => "--ssh-port",
+            Self::BootSize => "--boot-size-mib",
+            Self::Compression => "--btrfs-compression",
             Self::Hostname => "--hostname",
             Self::Timezone => "--timezone",
             Self::Disk => "--target-disk",
             Self::WebPort => "--web-port",
             Self::Frpc => "--frpc-config",
-            Self::IsoPath => "--iso",
-            Self::IsoConfig => "--iso-config",
-            Self::IsoKernel => "--iso-kernel",
-            Self::IsoInitrd => "--iso-initrd",
-            Self::IsoCmdline => "--iso-cmdline",
             Self::DnsServers => "--dns",
             Self::DnsSearch => "--dns-search",
             Self::Mtu => "--mtu",
@@ -122,6 +108,10 @@ impl Field {
             }
             Self::SshPort => "Use a port from 1 to 65535. SSH default: 22.",
             Self::WebPort => "Use a port from 1 to 65535. Web-log default: 80.",
+            Self::BootSize => "512-4096 MiB; blank uses 512. Mounted at /efi.",
+            Self::Compression => {
+                "Btrfs only: 0 disables compression, 1-15 select zstd; blank uses zstd:3."
+            }
             Self::Hostname => {
                 "One ASCII label, 1-63 letters, digits or hyphens. Blank: use the existing hostname, then the target system name."
             }
@@ -134,16 +124,7 @@ impl Field {
             Self::Frpc => {
                 "Optional file path or URL. This editor does not read or download the configuration."
             }
-            Self::IsoPath => {
-                "Absolute path to an existing Linux ISO on this machine. This editor does not mount it."
-            }
-            Self::IsoConfig => "Absolute path inside the ISO. Blank uses /boot/grub/loopback.cfg.",
-            Self::IsoKernel | Self::IsoInitrd => {
-                "Absolute path inside the ISO. Custom boot requires both kernel and initrd."
-            }
-            Self::IsoCmdline => {
-                "ISO-specific arguments; %ISO_PATH% and %ISO_UUID% are available. Hidden input."
-            }
+
             Self::DnsServers => {
                 "1-3 upstream IPv4/IPv6 addresses, for example 1.1.1.1,2606:4700:4700::1111. Reachability is not tested here."
             }

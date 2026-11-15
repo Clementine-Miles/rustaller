@@ -1,7 +1,7 @@
 use super::fields::{Field, TCP_FIELDS};
 use super::state::{
-    Authentication, CHOICES, Draft, IsoMode, Page, Route, Wizard, boot_label, hold_label,
-    iso_label, optional_label, valid_public_key_source, valid_username, yes_no,
+    Authentication, CHOICES, Draft, Page, Route, Wizard, boot_label, hold_label, optional_label,
+    valid_public_key_source, valid_username, yes_no,
 };
 use rustaller::config::{DnsConfig, DnsMode, InstallProfile};
 use rustaller::host::args::{CliError, CliOutcome, parse_args};
@@ -17,7 +17,9 @@ impl Wizard {
         }
         if matches!(
             field,
-            Field::Hostname
+            Field::BootSize
+                | Field::Compression
+                | Field::Hostname
                 | Field::Timezone
                 | Field::Disk
                 | Field::Mtu
@@ -38,6 +40,9 @@ impl Wizard {
                 CHOICES[self.choice].1.to_owned(),
                 format!("{}={}", field.option(), value.trim()),
             ];
+            if field == Field::Compression {
+                args.push("--filesystem=btrfs".into());
+            }
             if field == Field::Swappiness {
                 args.push("--swapfile-mib=2048".into());
             }
@@ -51,7 +56,16 @@ impl Wizard {
             fields.extend([Field::Username, Field::SshPort, Field::WebPort]);
         }
         if self.is_automatic() {
-            fields.extend([Field::Hostname, Field::Timezone, Field::Disk, Field::Mtu]);
+            fields.extend([
+                Field::Hostname,
+                Field::Timezone,
+                Field::Disk,
+                Field::BootSize,
+                Field::Mtu,
+            ]);
+            if self.draft().root_filesystem == rustaller::config::RootFilesystem::Btrfs {
+                fields.push(Field::Compression);
+            }
             fields.extend_from_slice(TCP_FIELDS);
             if self.draft().swap_enabled {
                 fields.extend([Field::SwapSize, Field::Swappiness]);
@@ -67,13 +81,7 @@ impl Wizard {
         if self.is_automatic() && draft.hold == Some(1) {
             return Err("For rescue mode, choose Alpine Live from the system list".into());
         }
-        if self.route() == Route::LocalIso
-            && draft.iso_mode == IsoMode::Kernel
-            && (draft.get(Field::IsoKernel).trim().is_empty()
-                || draft.get(Field::IsoInitrd).trim().is_empty())
-        {
-            return Err("Custom ISO boot requires both kernel and initrd paths".into());
-        }
+
         let mut args = vec![CHOICES[self.choice].1.to_owned()];
         let mut add = |field: Field| {
             let value = draft.get(field).trim();
@@ -97,6 +105,10 @@ impl Wizard {
                 add(*field);
             }
             add(Field::Mtu);
+            add(Field::BootSize);
+            if draft.root_filesystem.as_str() == "btrfs" {
+                add(Field::Compression);
+            }
             if draft.swap_enabled {
                 if draft.get(Field::SwapSize).trim().is_empty() {
                     return Err("An enabled swapfile requires a size in MiB".into());
@@ -105,16 +117,7 @@ impl Wizard {
                 add(Field::Swappiness);
             }
         }
-        if self.route() == Route::LocalIso {
-            add(Field::IsoPath);
-            if draft.iso_mode == IsoMode::Loopback {
-                add(Field::IsoConfig);
-            } else {
-                for field in [Field::IsoKernel, Field::IsoInitrd, Field::IsoCmdline] {
-                    add(field);
-                }
-            }
-        }
+
         if self.is_automatic() {
             let dns = effective_dns(draft)?;
             for server in &dns.servers {
@@ -204,11 +207,7 @@ impl Wizard {
         plan.validate().map_err(|error| error.to_string())?;
         plan.validate_install_credentials()
             .map_err(|error| error.to_string())?;
-        if let Some(iso) = plan.iso.as_ref() {
-            rustaller::host::iso::validate_iso_options(iso).map_err(|_| {
-                "Invalid ISO path/boot configuration; check absolute paths and arguments".to_owned()
-            })?;
-        }
+
         Ok(plan)
     }
 
@@ -287,6 +286,9 @@ impl Wizard {
                 ),
                 format!("DNS policy: {}", draft.dns_mode.as_str()),
                 format!("Root filesystem: {}", draft.root_filesystem.as_str()),
+                format!("Target bootloader: Limine {}; FAT32 at /efi; /boot on root",rustaller::targets::limine::VERSION),
+                format!("Boot partition: {} MiB", optional_label(draft.get(Field::BootSize), "512")),
+                format!("Btrfs: {}", if draft.root_filesystem == rustaller::config::RootFilesystem::Btrfs { format!("@ root; zstd level {} (0=off)", optional_label(draft.get(Field::Compression), "3")) } else { "not selected".into() }),
                 format!(
                     "Hostname: {}",
                     optional_label(draft.get(Field::Hostname), "Existing hostname, otherwise target system name")
@@ -370,31 +372,12 @@ impl Wizard {
                 format!("frpc: {}", draft.display(Field::Frpc)),
             ]);
         }
-        if self.route() == Route::LocalIso {
-            lines.extend([
-                format!("ISO: {}", draft.display(Field::IsoPath)),
-                format!("ISO boot: {}", iso_label(draft.iso_mode)),
-            ]);
-            if draft.iso_mode == IsoMode::Loopback {
-                lines.push(format!(
-                    "Loopback configuration: {}",
-                    optional_label(draft.get(Field::IsoConfig), "/boot/grub/loopback.cfg")
-                ));
-            } else {
-                for field in [Field::IsoKernel, Field::IsoInitrd, Field::IsoCmdline] {
-                    lines.push(format!("{}: {}", field.label(), draft.display(field)));
-                }
-            }
-            lines.push(
-                "ISO compatibility is media-specific; use the console for interactive installation"
-                    .into(),
-            );
-        }
+
         lines.push(format!("Boot mode: {}", boot_label(draft.boot)));
         lines.push(format!("Debug output: {}", yes_no(draft.debug)));
         lines.extend([
             "".into(),
-            if self.route().media() { "Media boot interrupts connectivity and reboots without formatting disks. Exact boot confirmation and active-GRUB attestation are required.".into() } else { "Installation requires final disk identity confirmation in the native terminal.".into() },
+            "Installation requires final disk identity confirmation in the native terminal.".into(),
             "BIOS/UEFI acceptance status is reported separately; unit tests do not prove boot compatibility.".into(),
         ]);
         lines

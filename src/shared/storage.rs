@@ -12,6 +12,7 @@ use std::{
 #[derive(Debug)]
 pub enum StorageError {
     InvalidDisk,
+    InvalidUuid,
     UnsupportedGeometry,
     InsufficientRootSpace,
     RescuePlan,
@@ -31,6 +32,7 @@ pub enum StorageError {
 impl std::fmt::Display for StorageError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidUuid => f.write_str("Invalid filesystem UUID"),
             Self::InvalidDisk => f.write_str("Invalid Live target disk or size"),
             Self::InsufficientRootSpace => f.write_str("Root must have at least 512 MiB after boot partitions; this is a formatting floor, not a distro installation size guarantee"),
             Self::UnsupportedGeometry => f.write_str("Target disk must be writable with 512-byte sectors, or 4096-byte sectors under UEFI; unknown geometry and BIOS on 4Kn are unsupported"),
@@ -148,14 +150,69 @@ pub fn validate_disk_geometry<R: CommandRunner>(
     Ok(())
 }
 
-/// A layout can only be constructed after the Live architecture/RAM/version gate.
-/// This is storage preparation, not authorization to run an installation entry.
+/// Partition roles are explicit for both two- and three-partition layouts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PartitionRole {
+    BiosBoot,
+    Boot,
+    Root,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Partition {
+    pub number: u8,
+    pub role: PartitionRole,
+    pub start_mib: u64,
+    pub end_mib: Option<u64>,
+}
+/// Pure geometry calculation shared by host preview and the gated Live layout.
+pub fn planned_partitions(
+    boot_mode: BootMode,
+    bytes: u64,
+    boot_size_mib: u32,
+) -> Result<Vec<Partition>, StorageError> {
+    if !(512..=4096).contains(&boot_size_mib) {
+        return Err(StorageError::UnsupportedGeometry);
+    }
+    let bios_gpt = boot_mode == BootMode::Bios && bytes >= TWO_TIB;
+    let boot_number = if bios_gpt { 2 } else { 1 };
+    let boot_start = if bios_gpt { 2 } else { 1 };
+    let root_start_mib = boot_start + u64::from(boot_size_mib);
+    let mut partitions = Vec::new();
+    if bios_gpt {
+        partitions.push(Partition {
+            number: 1,
+            role: PartitionRole::BiosBoot,
+            start_mib: 1,
+            end_mib: Some(2),
+        });
+    }
+    partitions.push(Partition {
+        number: boot_number,
+        role: PartitionRole::Boot,
+        start_mib: boot_start,
+        end_mib: Some(root_start_mib),
+    });
+    partitions.push(Partition {
+        number: boot_number + 1,
+        role: PartitionRole::Root,
+        start_mib: root_start_mib,
+        end_mib: None,
+    });
+    // Fail before wipefs, including space reserved for ESP/alignment.
+    if bytes / (1024 * 1024) < root_start_mib + 512 {
+        return Err(StorageError::InsufficientRootSpace);
+    }
+
+    Ok(partitions)
+}
+/// Constructible only after the Live plan gate; still not authorization to erase.
 pub struct DiskLayout {
     disk: String,
     target: Target,
     boot_mode: BootMode,
-    large_disk: bool,
+    partitions: Vec<Partition>,
     root_filesystem: RootFilesystem,
+    btrfs_compression: u8,
 }
 
 impl DiskLayout {
@@ -179,28 +236,31 @@ impl DiskLayout {
         {
             return Err(StorageError::ConflictingDisk);
         }
-        let boot_mode = plan.plan().force_boot_mode.unwrap_or(boot_mode);
-        let large_disk = bytes > TWO_TIB;
-        let root_start_mib = if boot_mode == BootMode::Efi {
-            513
-        } else if large_disk {
-            2
-        } else {
-            1
-        };
-        // Fail before wipefs, including space reserved for ESP/alignment.
-        if bytes / (1024 * 1024) < root_start_mib + 512 {
-            return Err(StorageError::InsufficientRootSpace);
+        if plan
+            .plan()
+            .force_boot_mode
+            .is_some_and(|expected| expected != boot_mode)
+        {
+            return Err(StorageError::UnsupportedGeometry);
         }
+        let partitions = planned_partitions(
+            boot_mode,
+            bytes,
+            plan.plan().system.boot_size_mib.unwrap_or(512),
+        )?;
         Ok(Self {
             disk: disk.to_owned(),
             target: plan.plan().target,
             boot_mode,
-            large_disk,
+            partitions,
             root_filesystem: plan.plan().system.root_filesystem,
+            btrfs_compression: plan.plan().system.btrfs_compression.unwrap_or(3),
         })
     }
 
+    pub fn partitions(&self) -> &[Partition] {
+        &self.partitions
+    }
     pub fn device(&self) -> String {
         format!("/dev/{}", self.disk)
     }
@@ -213,16 +273,32 @@ impl DiskLayout {
     pub fn root_filesystem(&self) -> RootFilesystem {
         self.root_filesystem
     }
-    pub fn root_partition(&self) -> String {
-        self.partition(if self.boot_mode == BootMode::Efi || self.large_disk {
-            2
+    pub fn table(&self) -> &'static str {
+        if self.boot_mode == BootMode::Efi || self.role_number(PartitionRole::BiosBoot).is_some() {
+            "gpt"
         } else {
-            1
-        })
+            "msdos"
+        }
     }
-    pub fn efi_partition(&self) -> Option<String> {
-        (self.boot_mode == BootMode::Efi).then(|| self.partition(1))
+    pub fn role_number(&self, role: PartitionRole) -> Option<u8> {
+        self.partitions
+            .iter()
+            .find(|p| p.role == role)
+            .map(|p| p.number)
     }
+    pub fn boot_partition(&self) -> String {
+        self.partition(
+            self.role_number(PartitionRole::Boot)
+                .expect("boot partition"),
+        )
+    }
+    pub fn root_partition(&self) -> String {
+        self.partition(
+            self.role_number(PartitionRole::Root)
+                .expect("root partition"),
+        )
+    }
+
     fn partition(&self, number: u8) -> String {
         let separator = if self.disk.as_bytes().last().is_some_and(u8::is_ascii_digit) {
             "p"
@@ -233,6 +309,31 @@ impl DiskLayout {
     }
 }
 
+/// Render the sole target fstab policy, independent of filesystem mutation.
+pub fn render_fstab(
+    layout: &DiskLayout,
+    root_uuid: &str,
+    boot_uuid: &str,
+) -> Result<String, StorageError> {
+    if !valid_uuid(root_uuid) || !valid_uuid(boot_uuid) {
+        return Err(StorageError::InvalidUuid);
+    }
+    let filesystem = layout.root_filesystem();
+    let options = if filesystem == RootFilesystem::Btrfs {
+        btrfs_options(layout.btrfs_compression)
+    } else {
+        "defaults".into()
+    };
+    let pass = if filesystem == RootFilesystem::Ext4 {
+        1
+    } else {
+        0
+    };
+    Ok(format!(
+        "UUID={root_uuid} / {} {options} 0 {pass}\nUUID={boot_uuid} /efi vfat fmask=0177,dmask=0077 0 2\n",
+        filesystem.as_str()
+    ))
+}
 fn valid_disk_name(disk: &str) -> bool {
     disk.as_bytes()
         .first()
@@ -260,11 +361,10 @@ pub fn create_partitions<R: CommandRunner>(
     let tools = match layout.root_filesystem {
         RootFilesystem::Xfs => "xfsprogs",
         RootFilesystem::Ext4 => "e2fsprogs",
+        RootFilesystem::Btrfs => "btrfs-progs",
     };
     apk(runner, &["add", "parted", tools])?;
-    if layout.boot_mode == BootMode::Efi {
-        apk(runner, &["add", "dosfstools"])?;
-    }
+    apk(runner, &["add", "dosfstools"])?;
     apk(runner, &["add", "wipefs"])?;
     let device = layout.device();
     checked(
@@ -273,46 +373,61 @@ pub fn create_partitions<R: CommandRunner>(
     )?;
     apk(runner, &["del", "wipefs"])?;
 
-    let mut args = vec![device.as_str(), "-s", "--", "mklabel"];
-    if layout.boot_mode == BootMode::Efi {
-        args.extend([
-            "gpt", "mkpart", "\" \"", "fat32", "1MiB", "513MiB", "mkpart", "\" \"", filesystem,
-            "513MiB", "100%", "set", "1", "esp", "on",
-        ]);
-    } else if layout.large_disk {
-        args.extend([
-            "gpt",
-            "mkpart",
-            "\" \"",
-            filesystem,
-            "1MiB",
-            "2MiB",
-            "mkpart",
-            "\" \"",
-            filesystem,
-            "2MiB",
-            "100%",
-            "set",
-            "1",
-            "bios_grub",
-            "on",
-        ]);
-    } else {
-        args.extend([
-            "msdos", "mkpart", "primary", filesystem, "1MiB", "100%", "set", "1", "boot", "on",
-        ]);
+    let mut args = vec![
+        device.clone(),
+        "-s".into(),
+        "--".into(),
+        "mklabel".into(),
+        layout.table().into(),
+    ];
+    for partition in &layout.partitions {
+        args.push("mkpart".into());
+        args.push(
+            if layout.table() == "msdos" {
+                "primary"
+            } else {
+                "rustaller"
+            }
+            .into(),
+        );
+        args.push(
+            if partition.role == PartitionRole::Boot {
+                "fat32"
+            } else if partition.role == PartitionRole::BiosBoot {
+                "ext2"
+            } else {
+                filesystem
+            }
+            .into(),
+        );
+        args.push(format!("{}MiB", partition.start_mib));
+        args.push(
+            partition
+                .end_mib
+                .map(|v| format!("{v}MiB"))
+                .unwrap_or("100%".into()),
+        );
     }
+    let flag = if layout.boot_mode == BootMode::Efi {
+        "esp"
+    } else if layout.role_number(PartitionRole::BiosBoot).is_some() {
+        "bios_grub"
+    } else {
+        "boot"
+    };
+    args.extend(["set".into(), "1".into(), flag.into(), "on".into()]);
     checked(runner, &command("parted", args, "live-partition-disk"))?;
     refresh_partition_table(runner, layout, environment)?;
 
-    if let Some(efi) = layout.efi_partition() {
+    {
+        let efi = layout.boot_partition();
         checked(
             runner,
             &command("mkfs.fat", ["-F", "32", "-s", "1", &efi], "live-format-efi"),
         )?;
     }
     let root = layout.root_partition();
-    // Keep on-disk features readable by the retained distro GRUB versions.
+    // Preserve conservative XFS features and fully allocated optional swapfiles.
     // No reflink sharing is needed on this root, including its optional swapfile.
     let args = vec![
         "-f",
@@ -326,6 +441,10 @@ pub fn create_partitions<R: CommandRunner>(
     ];
     match layout.root_filesystem {
         RootFilesystem::Xfs => checked(runner, &command("mkfs.xfs", args, "live-format-root"))?,
+        RootFilesystem::Btrfs => checked(
+            runner,
+            &command("mkfs.btrfs", ["-f", "-K", &root], "live-format-root"),
+        )?,
         // Fully initialize inode tables/journal before the target's first boot.
         // Avoid whole-volume discard on thin-provisioned VPS disks.
         RootFilesystem::Ext4 => checked(
@@ -506,14 +625,45 @@ pub fn mount_target<R: CommandRunner>(
             "live-mount-root",
         ),
     )?;
-    if let Some(efi) = layout.efi_partition() {
-        let efi_root = root.join(
-            if matches!(layout.target(), Target::Alpine | Target::Debian) {
-                "boot/efi"
-            } else {
-                "efi"
-            },
+    if layout.root_filesystem.as_str() == "btrfs" {
+        let subvolume = root.join("@");
+        let created = checked(
+            runner,
+            &command(
+                "btrfs",
+                [
+                    "subvolume".as_ref(),
+                    "create".as_ref(),
+                    subvolume.as_os_str(),
+                ],
+                "create-root-subvolume",
+            ),
         );
+        let unmounted = checked(
+            runner,
+            &command("umount", [root.as_os_str()], "unmount-btrfs-top"),
+        );
+        created?;
+        unmounted?;
+        checked(
+            runner,
+            &command(
+                "mount",
+                [
+                    "-t".as_ref(),
+                    "btrfs".as_ref(),
+                    "-o".as_ref(),
+                    btrfs_options(layout.btrfs_compression).as_ref(),
+                    layout.root_partition().as_ref(),
+                    root.as_os_str(),
+                ],
+                "mount-btrfs-root",
+            ),
+        )?;
+    }
+    {
+        let efi = layout.boot_partition();
+        let efi_root = root.join("efi");
         validate_root(&efi_root)?;
         fs::create_dir_all(&efi_root)?;
         checked(
@@ -524,7 +674,8 @@ pub fn mount_target<R: CommandRunner>(
                     std::ffi::OsStr::new("-t"),
                     "vfat".as_ref(),
                     "-o".as_ref(),
-                    "umask=077".as_ref(),
+                    // Match atomic publication mode: FAT cannot represent arbitrary chmod.
+                    "fmask=0177,dmask=0077".as_ref(),
                     efi.as_ref(),
                     efi_root.as_os_str(),
                 ],
@@ -535,10 +686,18 @@ pub fn mount_target<R: CommandRunner>(
     Ok(())
 }
 
-/// Safe bounded filesystem identifier for blkid, fstab and GRUB arguments.
+/// Safe bounded filesystem identifier for blkid, fstab and bootloader arguments.
 /// Root-format constraints belong to the caller; FAT uses shorter identifiers.
 pub(crate) fn valid_uuid(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
         && value.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
+}
+
+pub fn btrfs_options(compression: u8) -> String {
+    if compression == 0 {
+        "subvol=@".into()
+    } else {
+        format!("subvol=@,compress=zstd:{compression}")
+    }
 }

@@ -184,8 +184,10 @@ fn container_markers(root: &Path) -> bool {
 /// our BOOTX64.EFI. Used again in Live, where EFI runtime variables may not be
 /// accessible after kexec.
 pub fn inspect_firmware(root: &Path) -> Result<BootMode, &'static str> {
-    if !root.join("sys/firmware/efi").is_dir() {
-        return Ok(BootMode::Bios);
+    match fs::symlink_metadata(root.join("sys/firmware/efi")) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BootMode::Bios),
+        Ok(m) if m.is_dir() => {}
+        _ => return Err("cannot establish actual firmware mode from sysfs"),
     }
     let bits = fs::read_to_string(root.join("sys/firmware/efi/fw_platform_size"))
         .map_err(|_| "cannot establish EFI firmware bitness")?;
@@ -212,7 +214,7 @@ pub fn validate_virtualization(root: &Path) -> Result<(), &'static str> {
             return Err("reinstallation of the Xen control domain is unsupported");
         }
         // Linux publishes PV, PVH or HVM. PV/PVH and unknown Xen boot paths
-        // may depend on a provider-supplied kernel instead of our disk GRUB.
+        // may depend on a provider-supplied kernel instead of our disk bootloader.
         if !fs::read_to_string(xen.join("guest_type")).is_ok_and(|kind| kind.trim() == "HVM") {
             return Err(
                 "Xen PV/PVH or unknown guest boot mode requires a provider-specific installer",
@@ -235,7 +237,7 @@ pub fn validate_virtualization(root: &Path) -> Result<(), &'static str> {
 
 /// Source-side gate, before downloading/staging an installer. Firmware
 /// capability is not Secure Boot state: read the actual UEFI global variable.
-/// Neither kexec nor --no-nvram bypasses target firmware signature enforcement.
+/// Kexec never bypasses target firmware signature enforcement.
 pub fn validate_source_boot(root: &Path) -> Result<BootMode, &'static str> {
     validate_virtualization(root)?;
     let mode = inspect_firmware(root)?;

@@ -15,7 +15,7 @@ src/
 ├── command.rs, fsutil.rs typed native commands and safe per-file replacement
 ├── host/                preflight, sources, disk/network discovery and kexec
 ├── worker/              Alpine Live execution, temporary networking and first boot
-├── targets/             Alpine/Debian/Arch/Gentoo packages, kernels and GRUB
+├── targets/             Alpine/Debian/Arch/Gentoo packages, kernels and Limine
 ├── shared/              target storage, configuration, networking and swapfile
 └── tui/                 installation drafts, editing and review
 xtask/src/               checks, bundle, preview release, source audit and VM harness
@@ -34,7 +34,7 @@ flowchart TD
     E --> F[Alpine Live: modules, temporary network and rescue SSH]
     F --> G[Revalidate disk identity, RAM, sectors, mounts and swap]
     G --> H[Prepare filesystems and install selected distribution]
-    H --> I[Configure accounts, kernel, GRUB, network and optional swap]
+    H --> I[Configure accounts, kernel, Limine, network and optional swap]
     I --> J[Verify target, unmount, sync and one final reboot]
 ```
 
@@ -50,9 +50,24 @@ disk to its stable recorded identity before destructive actions. The target is
 mounted separately, normally at `/os`.
 
 `targets` owns native distribution bootstrap, package trust, accounts, kernel
-payloads, initramfs and GRUB. Debian uses debootstrap minbase and systemd;
-Alpine uses OpenRC; Arch and Gentoo use systemd. GRUB supports the implemented
-BIOS and 64-bit EFI layouts; EFI uses removable/no-nvram fallback.
+payloads, initramfs and Limine. Debian uses debootstrap minbase and systemd;
+Alpine uses OpenRC; Arch and Gentoo use systemd. Limine 9.6.5 is the only installed target bootloader. FAT32 is mounted at `/efi`,
+while native `/boot` stays on the root filesystem. BIOS normally uses MBR with
+FAT32 + root; UEFI uses GPT with ESP + root. BIOS disks at least 2 TiB use GPT
+with a dedicated stage2 partition followed by FAT32 + root. Root can be XFS,
+ext4 or Btrfs (`@`, optional zstd).
+
+`shared/storage.rs` owns explicit numbered partition roles and pure layout/fstab
+rendering. `targets/limine.rs` authenticates a pinned native utility and boot
+payloads before disk erasure, installs BIOS stage2 or UEFI fallback, and publishes
+kernel/initramfs generations on FAT32. Native package hooks invoke the same Rust
+worker to refresh boot artifacts. No additional executable crate or bootloader
+selection layer exists.
+
+`host/inspect.rs` builds the CLI/TUI current-versus-target report after preflight.
+The TUI renders cached facts, planned values and explicit unknowns without probing
+inside its render loop. Host firmware is authoritative; forced mode is an
+assertion and cannot switch it.
 
 ## Configuration boundaries
 
@@ -79,11 +94,10 @@ Alpine's generated ifupdown configuration uses interface names, so a one-shot
 Rust worker repairs them from captured MAC addresses before networking starts.
 Systemd target files match MAC addresses directly and need no filename repair.
 Opt-in Arch CachyOS has a separate native first-boot full upgrade and
-initramfs/GRUB refresh; failure retains its pending marker for retry.
+initramfs/Limine refresh; failure retains its pending marker for retry.
 
-Reset execution is unavailable and hidden in the TUI. Netboot.xyz and Local ISO
-share `host/media.rs` for confirmed one-shot GRUB publication; ISO inspection
-and rendering remain in `host/iso.rs`. TUI routes are typed, with separate plan,
+Reset infrastructure is retained; its unconnected execution remains unavailable
+and hidden in the TUI. TUI routes are typed, with separate plan,
 read-only preflight, native confirmation and execution stages. `tui/draft.rs`
 owns shared snapshots and copy-on-write field values.
 

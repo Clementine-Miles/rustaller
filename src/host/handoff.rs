@@ -169,6 +169,16 @@ pub fn discover<R: CommandRunner>(
             "disk is read-only or its logical sector size is unsupported for this firmware",
         )
     })?;
+    if plan.hold != Some(1) {
+        crate::shared::storage::planned_partitions(
+            boot_mode,
+            identity.size_bytes,
+            plan.system.boot_size_mib.unwrap_or(512),
+        )
+        .map_err(|_| {
+            HandoffError::Invalid("disk is too small for the planned FAT32 and root partitions")
+        })?;
+    }
     let network = collect_network(runner)?;
     let alpine =
         sources::parse_alpine_netboot(&fetch_text(runner, sources::ALPINE_RELEASES_URL)?, "x86_64")

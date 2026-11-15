@@ -1,6 +1,7 @@
 # Target configuration
 
-`InstallPlan.system: SystemConfig` holds filesystem, package profile, DNS,
+`InstallPlan.system: SystemConfig` holds filesystem, boot partition size, Btrfs
+compression, package profile, DNS,
 network and optional swap policy. `InstallPlan.post_install: PostInstallConfig`
 holds kernel, hostname and timezone choices. Credentials and SSH settings belong
 to `InstallPlan`; `DeploymentManifest` carries source disk/network facts. These
@@ -115,7 +116,7 @@ command is invoked. No requested timezone means no timezone overwrite.
 
 [Installation](INSTALLATION.md) lists kernel choices. Arch CachyOS is opt-in,
 requires its authenticated official repositories and performs a native first-boot
-full upgrade/initramfs/GRUB refresh. Other kernels do not enable those repositories.
+full upgrade/initramfs/Limine refresh. Other kernels do not enable those repositories.
 Native package/service policy preserves SSH, DNS, CA roots, modules, boot files,
 licenses and package databases. Minimal profile trims documentation/cache unless
 explicitly retained; it is not a measured final size guarantee.
@@ -129,6 +130,49 @@ Existing files/swap are not adopted, resized or activated in source/Live. Target
 boot activates the file. Swap size is not reserved RAM and does not change RAM
 preflight floors. Runtime activation still requires [acceptance](TESTING.md).
 
-Media routes configure a one-shot host boot, not a future target system. They
-reject account, target networking, swap and installation options. See
-[installation](INSTALLATION.md) for ISO modes and boot confirmations.
+## Storage, Limine and kernel updates
+
+`--filesystem xfs|ext4|btrfs` selects the root filesystem. `--boot-size-mib`
+sets FAT32 size (512–4096 MiB, default 512) at `/efi`. Explicit partition roles
+determine device numbering, mount paths and UUID fstab bindings. ext4 fsck pass
+is 1; XFS/Btrfs use 0; FAT uses 2. BIOS/UEFI layouts are described in
+[installation](INSTALLATION.md#disk-layout-and-boot).
+
+Btrfs creates and mounts `@` and writes `subvol=@,compress=zstd:3` in fstab.
+`--btrfs-compression 0` disables compression; 1–15 selects zstd. Compression
+options require Btrfs. Limine passes `rootflags=subvol=@`. Each distribution
+installs its filesystem tools and includes Btrfs support through mkinitfs,
+initramfs-tools, mkinitcpio or dracut. Swapfiles on Btrfs fail plan validation;
+there is no snapshot or Btrfs swap management.
+
+Limine 9.6.5 loads Linux kernel/initramfs copies from FAT, independent of root
+filesystem bootloader support. Native kernels remain in `/boot`. The Rust
+refresh worker accepts 1–8 complete `vmlinuz-*` pairs with matching
+`initrd.img-*`, `initramfs-*.img` or `initramfs-*`. Standalone Intel/AMD
+microcode images, when present, precede initramfs. Numeric versions sort newest
+first; Gentoo same-version `.old` backups are skipped.
+
+| Target | Native update integration |
+| --- | --- |
+| Alpine | APK post-commit hook, after package triggers |
+| Debian | kernel postinst/postrm and initramfs post-update hooks |
+| Arch | ALPM post-transaction hook on kernel pkgbase/initcpio paths, after mkinitcpio |
+| Gentoo | traditional installkernel postinst, dracut; alternate boot-generator USE flags disabled |
+| Opt-in CachyOS | native full upgrade, initramfs rebuild, Rust Limine refresh |
+
+Hook entry points link to the installed matching static Rust worker; there are
+no independent Shell update scripts. The refresh requires FAT `/efi` mounted with the recorded boot UUID,
+valid pinned boot state, safe sources and space for a complete new generation.
+It streams copies and syncs files before replacing `/efi/limine.conf`.
+The previous generation survives that replacement; later refreshes prune only
+unreferenced managed generations. This is not an atomic multi-file transaction or
+automatic boot rollback. If updates fail, inspect the package-manager error and
+use console/rescue before rebooting. After fixing the cause, run
+`/usr/local/libexec/rustaller-limine-worker limine-refresh`.
+
+The pinned BIOS utility is installed at `/usr/local/libexec/limine` for explicit
+bootloader maintenance; kernel hooks do not rewrite MBR or NVRAM. Upgrading
+Limine itself requires a reviewed version/hash change and boot acceptance.
+APK post-commit errors are reported but cannot roll back an already committed
+package transaction; check its output before rebooting. Native update-hook and
+reboot behavior remain unverified in VMs.

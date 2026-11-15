@@ -1,7 +1,7 @@
 use super::fields::{Field, TCP_FIELDS};
 use super::state::{
-    Action, Authentication, CHOICES, DnsProvider, EditSlot, Entry, IsoMode, Page, Route, Setting,
-    Wizard, boot_label, hold_label, iso_label, optional_label, yes_no,
+    Action, Authentication, CHOICES, DnsProvider, EditSlot, Entry, Page, Route, Setting, Wizard,
+    boot_label, hold_label, optional_label, yes_no,
 };
 use rustaller::config::{AddressPreference, CongestionControl, Ipv6Policy, QueueDiscipline};
 use rustaller::config::{DnsMode, InstallProfile, RootFilesystem};
@@ -37,9 +37,7 @@ impl Wizard {
                     add("Network and DNS  ›".into(), Action::Open(Page::Network));
                     add("Target swapfile  ›".into(), Action::Open(Page::Swap));
                 }
-                if self.route() == Route::LocalIso {
-                    add("ISO media  ›".into(), Action::Open(Page::Iso));
-                }
+
                 add("Disk and boot  ›".into(), Action::Open(Page::Boot));
                 if self.has_account() {
                     add(
@@ -149,6 +147,12 @@ impl Wizard {
                 );
             }
             Page::Installation => {
+                if draft.root_filesystem == RootFilesystem::Btrfs {
+                    add(
+                        format!("Btrfs compression: {}", draft.display(Field::Compression)),
+                        Action::Edit(EditSlot::Field(Field::Compression)),
+                    );
+                }
                 add(
                     format!("Install profile: {}", draft.profile.as_str()),
                     Action::Select(Setting::Profile),
@@ -311,6 +315,12 @@ impl Wizard {
             Page::Boot => {
                 if self.is_automatic() {
                     add(
+                        format!("FAT boot size: {}", draft.display(Field::BootSize)),
+                        Action::Edit(EditSlot::Field(Field::BootSize)),
+                    );
+                }
+                if self.is_automatic() {
+                    add(
                         format!("Target disk: {}", draft.display(Field::Disk)),
                         Action::Edit(EditSlot::Field(Field::Disk)),
                     );
@@ -320,7 +330,7 @@ impl Wizard {
                     );
                 }
                 add(
-                    format!("Boot mode: {}", boot_label(draft.boot)),
+                    format!("Expected firmware: {}", boot_label(draft.boot)),
                     Action::Select(Setting::Boot),
                 );
                 if self.is_automatic() {
@@ -333,12 +343,6 @@ impl Wizard {
                     add(
                         format!("Generic kernel: {}", yes_no(draft.generic_kernel)),
                         Action::ToggleGeneric,
-                    );
-                }
-                if self.route().media() {
-                    add(
-                        format!("Debug output: {}", yes_no(draft.debug)),
-                        Action::ToggleDebug,
                     );
                 }
             }
@@ -354,27 +358,6 @@ impl Wizard {
                     Action::ToggleDebug,
                 );
             }
-            Page::Iso => {
-                add(
-                    format!("ISO path: {}", draft.display(Field::IsoPath)),
-                    Action::Edit(EditSlot::Field(Field::IsoPath)),
-                );
-                add(
-                    format!("Boot method: {}", iso_label(draft.iso_mode)),
-                    Action::Select(Setting::IsoMode),
-                );
-                let fields: &[Field] = if draft.iso_mode == IsoMode::Loopback {
-                    &[Field::IsoConfig]
-                } else {
-                    &[Field::IsoKernel, Field::IsoInitrd, Field::IsoCmdline]
-                };
-                for field in fields {
-                    add(
-                        format!("{}: {}", field.label(), draft.display(*field)),
-                        Action::Edit(EditSlot::Field(*field)),
-                    );
-                }
-            }
         }
         if self.page() != Page::Home {
             add("Back to previous menu".into(), Action::Back);
@@ -384,15 +367,11 @@ impl Wizard {
     pub fn choices(&self, setting: Setting) -> Vec<&'static str> {
         match setting {
             Setting::Authentication => vec!["Password", "SSH public keys"],
-            Setting::Boot => vec!["Auto-detect", "BIOS", "UEFI"],
+            Setting::Boot => vec!["Auto-detect", "Expect BIOS", "Expect UEFI"],
             Setting::Hold => vec![
                 "Default behavior",
                 "Wait for confirmation after preparation (hold=0)",
                 "Keep Live environment after installation (hold=2)",
-            ],
-            Setting::IsoMode => vec![
-                "ISO-provided loopback configuration",
-                "Explicit kernel and initrd",
             ],
             Setting::Profile => vec![
                 "standard (existing defaults)",
@@ -405,7 +384,7 @@ impl Wizard {
                 "Google (8.8.8.8 / 8.8.4.4)",
                 "Quad9 (9.9.9.9 / 149.112.112.112)",
             ],
-            Setting::RootFilesystem => vec!["xfs", "ext4"],
+            Setting::RootFilesystem => vec!["xfs", "ext4", "btrfs"],
             Setting::Congestion => CongestionControl::ALL.iter().map(|v| v.as_str()).collect(),
             Setting::Qdisc => QueueDiscipline::ALL.iter().map(|v| v.as_str()).collect(),
             Setting::Ipv6 => Ipv6Policy::ALL.iter().map(|v| v.as_str()).collect(),
@@ -435,7 +414,6 @@ impl Wizard {
                 Some(2) => 2,
                 _ => 0,
             },
-            Setting::IsoMode => usize::from(draft.iso_mode == IsoMode::Kernel),
             Setting::Profile => usize::from(draft.profile == InstallProfile::Minimal),
             Setting::DnsMode => {
                 if draft.dns_mode == DnsMode::Auto {
@@ -449,7 +427,10 @@ impl Wizard {
                     }
                 }
             }
-            Setting::RootFilesystem => usize::from(draft.root_filesystem == RootFilesystem::Ext4),
+            Setting::RootFilesystem => RootFilesystem::ALL
+                .iter()
+                .position(|v| *v == draft.root_filesystem)
+                .unwrap(),
             Setting::Congestion => CongestionControl::ALL
                 .iter()
                 .position(|v| *v == draft.congestion)
@@ -551,13 +532,7 @@ impl Wizard {
                     _ => None,
                 }
             }
-            Setting::IsoMode => {
-                draft.iso_mode = if index == 0 {
-                    IsoMode::Loopback
-                } else {
-                    IsoMode::Kernel
-                }
-            }
+
             Setting::Kernel => {
                 if let Some(kernel) = kernel {
                     draft.kernel = kernel;

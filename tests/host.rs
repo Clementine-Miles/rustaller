@@ -797,3 +797,78 @@ mod kexec {
         );
     }
 }
+
+mod inspection_preview {
+    use crate::support::Scratch;
+    use rustaller::{
+        command::{CommandOutput, MockRunner},
+        deployment::{DeploymentManifest, DiskIdentity},
+        model::{BootMode, InstallPlan, Target},
+    };
+    #[test]
+    fn inspection_keeps_detected_facts_separate_from_computed_target_and_does_not_mutate() {
+        let d = Scratch::new("host-preview");
+        d.write("etc/os-release", "PRETTY_NAME=\"Source Linux\"\n");
+        d.write("proc/sys/kernel/osrelease", "6.12-source\n");
+        d.write(
+            "proc/cpuinfo",
+            "processor: 0\nmodel name: Virtual CPU\nprocessor: 1\n",
+        );
+        d.write(
+            "proc/meminfo",
+            "MemTotal: 2048000 kB\nMemAvailable: 1024000 kB\n",
+        );
+        d.write("etc/resolv.conf", "nameserver 192.0.2.53\n");
+        let manifest = DeploymentManifest {
+            disk: DiskIdentity {
+                device: "/dev/vda".into(),
+                size_bytes: 3 * 1024_u64.pow(4),
+                serial: "DISK-A".into(),
+                wwn: String::new(),
+                partition_table_id: "OLD".into(),
+            },
+            boot_mode: BootMode::Bios,
+            alpine_branch: "v3.24".into(),
+            debian_codename: "".into(),
+            gentoo_stage3: None,
+            network: vec![],
+        };
+        let mut plan = InstallPlan::new(Target::Debian);
+        plan.system.root_filesystem = rustaller::config::RootFilesystem::Btrfs;
+        plan.password = Some(rustaller::model::SecretString::new("PRIVATE-SENTINEL"));
+        let mut runner = MockRunner::new(
+            [
+                "kvm",
+                "512 dos",
+                "/dev/vda 3T disk\n/dev/vda1 3T part ext4",
+                "port 2222\npasswordauthentication no\nprivate-field hidden",
+            ]
+            .map(|v| CommandOutput::new(Some(0), v.as_bytes().to_vec(), vec![])),
+        );
+        let report = rustaller::host::inspect::report(&mut runner, &d.0, &plan, &manifest);
+        assert!(
+            report.current.contains("Source Linux")
+                && report.current.contains("vCPU: 2")
+                && report.current.contains("6.12-source")
+        );
+        assert!(report.current.contains("Current bootloader: unknown"));
+        assert!(
+            report.target.contains("count: 3")
+                && report.target.contains("Limine")
+                && report.target.contains("@; zstd level 3")
+        );
+        assert!(report.warning.contains("ERASE ALL PARTITIONS ON /dev/vda"));
+        assert!(
+            !report.text().contains("PRIVATE-SENTINEL") && !report.text().contains("private-field")
+        );
+        assert_eq!(d.read("etc/resolv.conf"), "nameserver 192.0.2.53\n");
+        assert_eq!(
+            runner
+                .calls()
+                .iter()
+                .map(|c| c.program.to_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["systemd-detect-virt", "lsblk", "lsblk", "sshd"]
+        );
+    }
+}

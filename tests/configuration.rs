@@ -204,7 +204,8 @@ mod postinstall {
             plan.post_install.hostname = Some("vps".into());
             assert!(plan.validate().is_err());
         }
-        for target in [Target::LocalIso, Target::NetbootXyz, Target::Reset] {
+        {
+            let target = Target::Reset;
             assert_eq!(
                 PostInstallConfig {
                     hostname: Some("vps".into()),
@@ -393,7 +394,8 @@ mod system_config {
             selected.hold = Some(1);
             assert!(selected.validate().is_err());
         }
-        for target in [Target::LocalIso, Target::NetbootXyz, Target::Reset] {
+        {
+            let target = Target::Reset;
             let system = SystemConfig {
                 profile: InstallProfile::Minimal,
                 ..Default::default()

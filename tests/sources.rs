@@ -32,9 +32,7 @@ mod sources {
             assert_eq!(source_kind(target, "x86_64").unwrap(), kind);
             assert!(source_kind(target, "aarch64").is_err());
         }
-        for target in [Target::LocalIso, Target::NetbootXyz, Target::Reset] {
-            assert!(source_kind(target, "x86_64").is_err());
-        }
+        assert!(source_kind(Target::Reset, "x86_64").is_err());
         for url in [
             ALPINE_RELEASES_URL,
             DEBIAN_RELEASE_URL,

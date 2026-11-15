@@ -4,8 +4,7 @@ mod debian {
     use rustaller::model::BootMode;
     use rustaller::targets::debian::{
         apt_package_list, apt_sources_text, bootstrap_rootfs, debian_kernel_package,
-        grub_selections, install_apt_packages, install_grub, preseed_grub, write_apt_sources,
-        write_fstab,
+        install_apt_packages, write_apt_sources,
     };
     use std::fs;
 
@@ -62,8 +61,6 @@ mod debian {
                 "openssh-server",
                 "xfsprogs",
                 "linux-image-cloud-amd64",
-                "grub-efi-amd64",
-                "efibootmgr",
                 "dosfstools",
                 "sudo",
                 "firmware-linux"
@@ -78,7 +75,7 @@ mod debian {
                 "openssh-server",
                 "xfsprogs",
                 "linux-image-amd64",
-                "grub-pc"
+                "dosfstools"
             ]
         );
 
@@ -106,54 +103,6 @@ mod debian {
     }
 
     #[test]
-    fn fstab_uses_only_validated_root_and_optional_efi_uuids_without_swap() {
-        let scratch = Scratch::new("debian");
-        write_fstab(
-            &scratch.0,
-            "1234abcd-0000-1111-2222-abcdefabcdef",
-            Some("efef1234-1111-2222-3333-abcdefabcdef"),
-            BootMode::Efi,
-        )
-        .unwrap();
-        let efi = String::from_utf8(fs::read(scratch.0.join("etc/fstab")).unwrap()).unwrap();
-        assert_eq!(
-            efi,
-            "# <file system> <mount point> <type> <options> <dump> <pass>\nUUID=1234abcd-0000-1111-2222-abcdefabcdef / xfs defaults 0 0\nUUID=efef1234-1111-2222-3333-abcdefabcdef /boot/efi vfat umask=0077 0 1\n"
-        );
-        assert!(!efi.contains("swap"));
-
-        write_fstab(&scratch.0, "aabbccdd", None, BootMode::Bios).unwrap();
-        let bios = fs::read_to_string(scratch.0.join("etc/fstab")).unwrap();
-        assert!(bios.contains("UUID=aabbccdd / xfs"));
-        assert!(!bios.contains("/boot/efi"));
-        assert!(write_fstab(&scratch.0, "bad/uuid", None, BootMode::Bios).is_err());
-    }
-
-    #[test]
-    fn grub_preseed_preserves_bios_and_nvram_safe_uefi_inputs() {
-        assert_eq!(
-        grub_selections(BootMode::Efi, "ignored").unwrap(),
-        b"grub-efi-amd64 grub-efi/install_devices_empty boolean true\ngrub-efi-amd64 grub-efi/install_devices multiselect\n"
-    );
-        assert_eq!(
-            grub_selections(BootMode::Bios, "nvme0n1").unwrap(),
-            b"grub-pc grub-pc/install_devices multiselect /dev/nvme0n1\n"
-        );
-        assert!(grub_selections(BootMode::Bios, "../../dev/sda").is_err());
-
-        let scratch = Scratch::new("debian");
-        let mut runner = MockRunner::new(success_outputs(1));
-        preseed_grub(&mut runner, &scratch.0, BootMode::Efi, "").unwrap();
-        assert_eq!(runner.calls().len(), 1);
-        assert_eq!(runner.calls()[0].program, "chroot");
-        assert_eq!(runner.calls()[0].args[1], "debconf-set-selections");
-        assert_eq!(
-            runner.calls()[0].stdin,
-            rustaller::command::CommandInput::Bytes(grub_selections(BootMode::Efi, "").unwrap())
-        );
-    }
-
-    #[test]
     fn debian_bootstrap_uses_the_required_minbase_debootstrap_arguments_in_order() {
         let scratch = Scratch::new("debian");
         let mut runner = MockRunner::new(success_outputs(2));
@@ -172,7 +121,7 @@ mod debian {
             [
                 "--arch=amd64",
                 "--variant=minbase",
-                "--include=ca-certificates,debconf-utils",
+                "--include=ca-certificates",
                 "bookworm",
                 scratch.0.to_str().unwrap(),
                 "https://deb.debian.org/debian"
@@ -182,50 +131,6 @@ mod debian {
             runner.calls()[1].cwd.as_deref().unwrap().to_str(),
             Some("/")
         );
-    }
-
-    #[test]
-    fn grub_install_order_is_bios_uefi_specific_and_forces_no_nvram_write() {
-        let scratch = Scratch::new("debian");
-        fs::create_dir_all(scratch.0.join("etc/default")).unwrap();
-        fs::write(scratch.0.join("etc/default/grub"), b"GRUB_TIMEOUT=5\n").unwrap();
-        let mut runner = MockRunner::new(success_outputs(2));
-
-        install_grub(
-            &mut runner,
-            &scratch.0,
-            BootMode::Efi,
-            "ignored",
-            "console=ttyS0,115200n8 console=tty0",
-        )
-        .unwrap();
-
-        assert_eq!(runner.calls().len(), 2);
-        assert_eq!(runner.calls()[0].program, "chroot");
-        assert_eq!(
-            runner.calls()[0]
-                .args
-                .iter()
-                .map(|arg| arg.to_string_lossy().into_owned())
-                .collect::<Vec<_>>(),
-            [
-                scratch.0.to_str().unwrap(),
-                "grub-install",
-                "--target=x86_64-efi",
-                "--efi-directory=/boot/efi",
-                "--bootloader-id=debian",
-                "--no-nvram",
-                "--removable"
-            ]
-        );
-        assert!(
-        fs::read_to_string(scratch.0.join("etc/default/grub"))
-            .unwrap()
-            .ends_with(
-                "GRUB_CMDLINE_LINUX=\"$GRUB_CMDLINE_LINUX console=ttyS0,115200n8 console=tty0\"\n"
-            )
-    );
-        assert_eq!(runner.calls()[1].args[1], "grub-mkconfig");
     }
 }
 
@@ -353,8 +258,6 @@ mod target_config {
             Target::Debian,
             Target::Arch,
             Target::Gentoo,
-            Target::LocalIso,
-            Target::NetbootXyz,
             Target::Reset,
         ] {
             let mut candidate = InstallPlan::new(target);
@@ -407,10 +310,8 @@ mod target_config {
             packages::pacstrap_packages(BootMode::Efi, "btrfs", "admin", &firmware),
             [
                 "base",
-                "grub",
-                "openssh",
-                "efibootmgr",
                 "dosfstools",
+                "openssh",
                 "btrfs-progs",
                 "sudo",
                 "intel-ucode"
@@ -418,11 +319,11 @@ mod target_config {
         );
         assert_eq!(
             packages::pacstrap_packages(BootMode::Bios, "ext4", "root", &[]),
-            ["base", "grub", "openssh", "e2fsprogs"]
+            ["base", "dosfstools", "openssh", "e2fsprogs"]
         );
         assert_eq!(
             packages::pacstrap_packages(BootMode::Bios, "xfs", "root", &[]),
-            ["base", "grub", "openssh", "xfsprogs"]
+            ["base", "dosfstools", "openssh", "xfsprogs"]
         );
     }
 
@@ -434,7 +335,6 @@ mod target_config {
             [
                 "sys-block/io-scheduler-udev-rules",
                 "sys-fs/dosfstools",
-                "sys-boot/efibootmgr",
                 "sys-fs/xfsprogs",
                 "app-admin/sudo",
                 "sys-kernel/linux-firmware",
@@ -445,12 +345,11 @@ mod target_config {
             packages::emerge_package_set(BootMode::Bios, "ext4", "root", &[]),
             [
                 "sys-block/io-scheduler-udev-rules",
+                "sys-fs/dosfstools",
                 "sys-fs/e2fsprogs",
                 "sys-kernel/gentoo-kernel-bin"
             ]
         );
-        assert_eq!(packages::grub_platforms(BootMode::Efi), "efi-64");
-        assert_eq!(packages::grub_platforms(BootMode::Bios), "pc");
     }
 }
 
@@ -578,7 +477,7 @@ mod cachyos {
                 [
                     "cachyos-firstboot-full-upgrade",
                     "cachyos-firstboot-initramfs",
-                    "cachyos-firstboot-grub"
+                    "cachyos-firstboot-limine"
                 ]
             );
             assert!(

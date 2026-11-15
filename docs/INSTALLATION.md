@@ -27,11 +27,36 @@ binary do not establish that a VPS can reinstall successfully.
 | Alpine latest stable | APK, OpenRC, ifupdown-ng/dhcpcd | standard/lts (`linux-lts`), virt (`linux-virt`) |
 | Debian latest stable | debootstrap minbase, APT, systemd/networkd/resolved | standard/generic, cloud |
 | Arch rolling | pacstrap/pacman, systemd/networkd/resolved | standard, lts, opt-in cachyos |
-| Gentoo rolling | systemd stage3, Portage, dracut, GRUB | auto/standard (`gentoo-kernel-bin`) |
+| Gentoo rolling | systemd stage3, Portage, dracut, Limine | auto/standard (`gentoo-kernel-bin`) |
 
-No version argument is accepted. All targets install from Alpine Live. XFS is
-the default root filesystem; ext4 is optional. EFI has a 512 MiB FAT32 ESP.
-GRUB is retained for both firmware modes; EFI Stub is not implemented.
+No distribution version argument is accepted. All targets install from Alpine
+Live with Limine 9.6.5. XFS is default; ext4 and Btrfs are selectable.
+
+## Disk layout and boot
+
+| Running firmware/disk | Table | Partitions |
+| --- | --- | --- |
+| BIOS, below 2 TiB, 512-byte sectors | MBR | 1: FAT32; 2: root |
+| UEFI x86_64, 512/4096-byte sectors | GPT | 1: FAT32 ESP; 2: root |
+| BIOS, at least 2 TiB, 512-byte sectors | GPT | 1: 1 MiB BIOS stage2; 2: FAT32; 3: root |
+
+The FAT32 partition is 512 MiB by default and mounted at `/efi` in every target.
+Use `--boot-size-mib 1024` (512–4096) for large initramfs or multiple kernels.
+The first MiB is reserved for alignment/BIOS embedding; GPT BIOS stage2 uses its
+own partition. Root uses the remaining space, and native `/boot` stays on root.
+The geometry check rejects read-only/unknown sectors, BIOS/4Kn and insufficient
+space before erasure. The 512 MiB root formatting floor is not a distribution
+size recommendation; leave ample disk space for packages and updates.
+
+UEFI installs `/efi/EFI/BOOT/BOOTX64.EFI` without NVRAM entries. BIOS runs the
+pinned native Limine installer against the identity-bound whole disk, with the
+explicit GPT stage2 partition when needed. `/efi/limine.conf` is authoritative;
+serial Linux console remains `ttyS0,115200n8`. Firmware honoring the fallback
+path and serial behavior require real boot testing.
+
+Btrfs uses an `@` root subvolume and zstd:3 by default. Select compression 0–15
+with `--btrfs-compression` (0 disables it). Btrfs swapfiles are explicitly
+rejected; XFS/ext4 swapfiles remain supported. No snapshot manager is installed.
 
 ## Build and inspect
 
@@ -45,7 +70,8 @@ A prebuilt release entry is `rustaller-x86_64-linux-musl`. Obtain its matching
 `SHA256SUMS`, verify the downloaded binary, then run the saved executable; release
 packaging and draft status are explained in [development](DEVELOPMENT.md).
 
-`--inspect` performs read-only preflight and reports disk identity and the exact
+`--inspect` performs read-only preflight, displays detected host and computed target
+panels (including unknown facts), and reports disk identity and the exact
 confirmation token. Actual dispatch requires that full token, never a generic
 `--yes`. Interactive execution prompts for it; noninteractive execution requires
 `--confirm-erase 'EXACT_TOKEN_FROM_INSPECTION'`. Identity is checked again before
@@ -55,7 +81,9 @@ handoff and in Live. Confirmation is not a substitute for backups.
 
 Run without arguments on an interactive terminal to open the English TUI.
 Choose a distribution, configure the account/SSH, target, network and optional
-settings, then review. Drafts are separate per selection. Save keeps a draft in
+settings, then review and run read-only preflight. Current/target panels are side by side
+on wide terminals and stacked on narrow terminals; uninspected facts stay unknown.
+Drafts are separate per selection. Save keeps a draft in
 memory; discard restores its entry snapshot. Returning from an error does not
 retry an action. `Esc` cancels the current edit; `Ctrl-C` exits the application. Credential fields are masked.
 
@@ -85,7 +113,7 @@ enters the plan. Back up the private key to the client before erasing its disk.
 - `--hold 0` pauses after preparation; an interactive `KEXEC` confirmation
   continues. Noninteractive hold leaves the source running.
 - `--hold 2` retains Live after target installation; the user reboots manually.
-- `--force-boot-mode bios|efi` selects a compatible layout, not different firmware.
+- `--force-boot-mode bios|efi` asserts the detected mode; a mismatch is rejected.
 - `--ssh-port`, `--web-port` and `--frpc-config` configure installation access/logs.
 - `--minimal`, `--with-tools`, `--keep-docs` and `--keep-package-cache` control
   package policy; `--swapfile-mib` and `--swappiness` are opt-in target settings.
@@ -93,53 +121,3 @@ enters the plan. Back up the private key to the client before erasing its disk.
 See [configuration](CONFIGURATION.md) for ranges and compatibility. Installation
 failure retains Alpine Live rescue. Runtime acceptance remains listed in
 [testing](TESTING.md).
-
-## netboot.xyz and Local ISO
-
-These routes reboot through the existing GRUB without partitioning or formatting.
-They require Linux x86_64, root, supported BIOS/64-bit EFI with Secure Boot
-disabled, and one inspected GRUB under `/boot/grub` or `/boot/grub2`. Its
-1024-byte environment must be on plain ext2/3/4 without encryption/LVM/RAID;
-the generated configuration must load and clear `next_entry` and source adjacent
-`custom.cfg`. Required platform modules and native GRUB tools must exist.
-The operator must explicitly attest that this GRUB is the firmware's active
-bootloader; files alone cannot prove BIOS disk selection. Other loaders fail
-preflight. Firmware mode cannot be switched. No NVRAM writes are made.
-
-```console
-./rustaller netboot.xyz --inspect
-./rustaller iso --iso /root/linux.iso --inspect
-./rustaller iso --iso /root/linux.iso --iso-kernel /casper/vmlinuz \
-  --iso-initrd /casper/initrd --iso-cmdline 'boot=casper iso-scan/filename=%ISO_PATH%' --inspect
-```
-
-Review the output, then rerun without `--inspect`; noninteractive callers use
-`--confirm-handoff 'EXACT_BOOT-ONCE_TOKEN'`. This interrupts connectivity and
-reboots. `--confirm-erase` is reserved for installation. TUI routes use the
-same implementation, with read-only preflight before native confirmation.
-
-netboot.xyz downloads the official HTTPS iPXE artifact and checksum manifest,
-checks SHA-256 and the firmware-specific image format, then uses BIOS
-`linux16` or UEFI `chainloader`. iPXE needs its own working NIC/network/DHCP;
-source static networking is not transferred into iPXE.
-
-Local ISO reuses read-only loop inspection. Media must expose its own
-`/boot/grub/loopback.cfg` (or an explicit config path), or the supplied Linux
-kernel and initrd paths. Windows layouts, encrypted storage, unsafe paths and
-boot files escaping the mount are rejected. `%ISO_PATH%` and `%ISO_UUID%`
-are supported substitutions. Root must trust the ISO, including its GRUB code;
-the SHA-256 confirmation detects changes, not publisher authenticity. These
-are media-specific Linux boot contracts, not universal ISO compatibility.
-
-The original default entry is retained. The new entry is visible only when the
-one-shot default selects it. GRUB consumes `next_entry` before entering media.
-Preparation failures restore prior custom configuration/environment where writes
-occurred; rollback failures retain private backups and an explicit error.
-A killed process after arming can leave a one-shot request. From a rescue console,
-use the matching native `grub-editenv /boot/grub/grubenv unset next_entry`
-(adjust grub2 paths), read `rustaller-media/state.before` for original presence/modes, restore
-`custom.before` if originally present or remove
-the newly created custom file, and inspect/remove only the private
-`rustaller-media` directory. Do not remove an outstanding ISO mount recursively.
-Successful boots leave guarded staging/backups for manual cleanup after returning
-to the original OS. BIOS/UEFI media acceptance is still unverified.

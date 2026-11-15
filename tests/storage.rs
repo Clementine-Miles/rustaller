@@ -16,14 +16,14 @@ mod live_storage {
     #[test]
     fn layout_preserves_bios_gpt_boundary_and_nvme_partition_names() {
         let limit = 2 * 1024_u64.pow(4);
-        let bios = layout(Target::Debian, BootMode::Bios, limit, "vda");
-        assert_eq!(bios.root_partition(), "/dev/vda1");
-        assert_eq!(bios.efi_partition(), None);
+        let bios = layout(Target::Debian, BootMode::Bios, limit - 1, "vda");
+        assert_eq!(bios.root_partition(), "/dev/vda2");
+        assert_eq!(bios.boot_partition(), "/dev/vda1");
         let large = layout(Target::Gentoo, BootMode::Bios, limit + 1, "nvme0n1");
-        assert_eq!(large.root_partition(), "/dev/nvme0n1p2");
+        assert_eq!(large.root_partition(), "/dev/nvme0n1p3");
         let efi = layout(Target::Alpine, BootMode::Efi, 40_000_000_000, "nvme0n1");
         assert_eq!(efi.root_partition(), "/dev/nvme0n1p2");
-        assert_eq!(efi.efi_partition().as_deref(), Some("/dev/nvme0n1p1"));
+        assert_eq!(efi.boot_partition(), "/dev/nvme0n1p1");
     }
 
     #[test]
@@ -64,7 +64,7 @@ mod live_storage {
             0,
         )
         .unwrap();
-        for (mode, minimum_mib) in [(BootMode::Bios, 513), (BootMode::Efi, 1025)] {
+        for (mode, minimum_mib) in [(BootMode::Bios, 1025), (BootMode::Efi, 1025)] {
             assert!(DiskLayout::new(&plan, "vda", mode, (minimum_mib - 1) * 1024 * 1024).is_err());
             assert!(DiskLayout::new(&plan, "vda", mode, minimum_mib * 1024 * 1024).is_ok());
         }
@@ -115,12 +115,13 @@ mod live_storage {
         let mut runner = MockRunner::new([
             CommandOutput::new(Some(0), vec![], vec![]),
             CommandOutput::new(Some(0), vec![], vec![]),
+            CommandOutput::new(Some(0), vec![], vec![]),
             CommandOutput::new(Some(9), vec![], vec![]),
         ]);
         let error = create_partitions(&mut runner, &layout, &Default::default()).unwrap_err();
         assert!(error.to_string().contains("9"));
-        assert_eq!(runner.calls().len(), 3);
-        assert_eq!(runner.calls()[2].program, "wipefs");
+        assert_eq!(runner.calls().len(), 4);
+        assert_eq!(runner.calls()[3].program, "wipefs");
         assert!(
             !runner
                 .calls()
@@ -299,7 +300,7 @@ mod live_storage {
         assert!(
             create_partitions(
                 &mut runner,
-                &layout(Target::Arch, BootMode::Bios, 1_000_000_000, "vda"),
+                &layout(Target::Arch, BootMode::Bios, 8_000_000_000, "vda"),
                 &Default::default()
             )
             .is_err()

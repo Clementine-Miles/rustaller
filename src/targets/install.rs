@@ -6,7 +6,7 @@ use crate::command::{
 use crate::deployment::DeploymentManifest;
 use crate::fsutil::atomic_replace;
 use crate::host::sources::{self, GentooStage3};
-use crate::model::{BootMode, Target, valid_account_name as valid_username};
+use crate::model::{Target, valid_account_name as valid_username};
 use crate::shared::configure::{ConfigurationError, validate_root};
 use crate::shared::configure::{ensure_parent, validate_planned_file};
 use crate::shared::storage::DiskLayout;
@@ -24,6 +24,7 @@ const GENTOO_KEYS: &str = "https://qa-reports.gentoo.org/output/service-keys.gpg
 
 #[derive(Debug)]
 pub enum InstallError {
+    Boot(String),
     Invalid(&'static str),
     Filesystem(io::Error),
     Command(CommandError),
@@ -38,6 +39,7 @@ pub enum InstallError {
 impl std::fmt::Display for InstallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Boot(error) => write!(f, "Limine boot setup failed: {error}"),
             Self::Invalid(reason) => write!(f, "Target installation cannot continue: {reason}"),
             Self::Filesystem(e) => write!(f, "Target installation filesystem error: {e}"),
             Self::Command(e) => e.fmt(f),
@@ -170,41 +172,7 @@ pub fn prepare<R: CommandRunner>(
     );
     // This is the in-memory Live system, never the original host root.
     atomic_replace(Path::new("/etc/apk/repositories"), repos.as_bytes(), 0o644)?;
-    let mut packages = vec![
-        "ca-certificates",
-        "curl",
-        "gnupg",
-        "util-linux",
-        "findmnt",
-        "lsblk",
-        "blkid",
-        "mount",
-        "umount",
-        "util-linux-misc",
-        "parted",
-        match plan.plan().system.root_filesystem {
-            crate::config::RootFilesystem::Xfs => "xfsprogs",
-            crate::config::RootFilesystem::Ext4 => "e2fsprogs",
-        },
-        "coreutils",
-        "dosfstools",
-        "tar",
-        "xz",
-        "openssh",
-    ];
-    match plan.plan().target {
-        Target::Alpine => packages.extend(["apk-tools", "alpine-base"]),
-        Target::Debian => packages.extend(["debootstrap", "debian-archive-keyring"]),
-        Target::Arch => packages.extend(["arch-install-scripts", "archlinux-keyring"]),
-        Target::Gentoo => {}
-        _ => return Err(InstallError::Invalid("automatic target required")),
-    }
-    if plan.plan().web_port.is_some() {
-        packages.push("websocketd");
-    }
-    if plan.plan().frpc_config.is_some() {
-        packages.push("frp");
-    }
+    let packages = live_packages(plan.plan())?;
     let mut args = vec!["add", "--no-cache"];
     args.extend(packages);
     checked(runner, "apk", args, "live-authenticated-prerequisites")?;
@@ -218,6 +186,9 @@ pub fn prepare<R: CommandRunner>(
     )?;
     if plan.plan().post_install.kernel == crate::postinstall::KernelChoice::Cachyos {
         super::cachyos::prepare_assets(runner, work)?;
+    }
+    if plan.plan().hold != Some(1) {
+        super::limine::prepare(runner, work).map_err(InstallError::Boot)?;
     }
     let stage3 = match &manifest.gentoo_stage3 {
         Some(stage) if plan.plan().target == Target::Gentoo => {
@@ -238,6 +209,49 @@ pub fn prepare<R: CommandRunner>(
         frp,
         work: work.to_owned(),
     })
+}
+
+fn live_packages(plan: &crate::model::InstallPlan) -> Result<Vec<&'static str>, InstallError> {
+    let mut packages = vec![
+        "ca-certificates",
+        "curl",
+        "gnupg",
+        "util-linux",
+        "findmnt",
+        "lsblk",
+        "blkid",
+        "mount",
+        "umount",
+        "util-linux-misc",
+        "parted",
+        match plan.system.root_filesystem {
+            crate::config::RootFilesystem::Xfs => "xfsprogs",
+            crate::config::RootFilesystem::Ext4 => "e2fsprogs",
+            crate::config::RootFilesystem::Btrfs => "btrfs-progs",
+        },
+        "coreutils",
+        "dosfstools",
+        "tar",
+        "xz",
+        "openssh",
+    ];
+    match plan.target {
+        Target::Alpine => packages.extend(["apk-tools", "alpine-base"]),
+        Target::Debian => packages.extend(["debootstrap", "debian-archive-keyring"]),
+        Target::Arch => packages.extend(["arch-install-scripts", "archlinux-keyring"]),
+        Target::Gentoo => {}
+        _ => return Err(InstallError::Invalid("automatic target required")),
+    }
+    if plan.hold != Some(1) {
+        packages.extend(["gcc", "musl-dev"]);
+    }
+    if plan.web_port.is_some() {
+        packages.push("websocketd");
+    }
+    if plan.frpc_config.is_some() {
+        packages.push("frp");
+    }
+    Ok(packages)
 }
 
 pub fn validate_install_options(
@@ -339,7 +353,7 @@ pub fn bootstrap<R: CommandRunner>(
             let args = vec![
                 OsString::from("--arch=amd64"),
                 "--variant=minbase".into(),
-                "--include=ca-certificates,debconf-utils".into(),
+                "--include=ca-certificates".into(),
                 "--force-check-gpg".into(),
                 format!("--keyring={keyring}").into(),
                 manifest.debian_codename.clone().into(),
@@ -381,7 +395,7 @@ pub fn configure<R: CommandRunner>(
     assets: &PreparedAssets,
     layout: &DiskLayout,
     root_uuid: &str,
-    efi_uuid: Option<&str>,
+    efi_uuid: &str,
 ) -> Result<(), InstallError> {
     validate_root(root)?;
     let mut transport = TargetTransportRunner {
@@ -434,12 +448,6 @@ pub fn configure<R: CommandRunner>(
             }
             Target::Debian => {
                 super::debian::write_apt_sources(root, &manifest.debian_codename, None)?;
-                super::debian::preseed_grub(
-                    runner,
-                    root,
-                    layout.boot_mode(),
-                    &layout.device()[5..],
-                )?;
                 let packages =
                     super::debian::apt_package_list_for_plan(plan.plan(), layout.boot_mode(), &[])?;
                 super::debian::install_apt_packages(runner, root, &packages)?;
@@ -449,6 +457,9 @@ pub fn configure<R: CommandRunner>(
                     b"MODULES=most\n",
                     0o644,
                 )?;
+                if layout.root_filesystem() == crate::config::RootFilesystem::Btrfs {
+                    write_target(root, "etc/initramfs-tools/modules", b"btrfs\n", 0o644)?;
+                }
                 chroot_checked(
                     runner,
                     root,
@@ -498,31 +509,15 @@ pub fn configure<R: CommandRunner>(
         if let Some(frp) = &assets.frp {
             install_frpc(root, plan.plan().target, frp)?;
         }
-        match plan.plan().target {
-            Target::Alpine => install_alpine_grub(runner, root, layout)?,
-            Target::Debian => super::debian::install_grub(
-                runner,
-                root,
-                layout.boot_mode(),
-                &layout.device()[5..],
-                TTY_COMMAND_LINE,
-            )?,
-            Target::Arch | Target::Gentoo => rolling::install_grub(
-                runner,
-                root,
-                layout.boot_mode(),
-                &layout.device(),
-                TTY_COMMAND_LINE,
-            )?,
-            _ => unreachable!(),
-        }
+        super::limine::install(runner, root, layout, &assets.work, root_uuid, efi_uuid)
+            .map_err(InstallError::Boot)?;
         if plan.plan().target == Target::Alpine {
             let worker = fs::read("/rustaller-worker")?;
             crate::worker::firstboot::install_firstboot_service(runner, root, &worker)?;
         }
         cleanup_cache(runner, root, plan)?;
         crate::shared::network::apply_network_configuration(root, plan, manifest, &kernel_config)?;
-        verify_installed_target(runner, root, plan, layout)?;
+        verify_installed_target(runner, root)?;
         remove_live_transport(root)?;
         Ok(())
     })();
@@ -753,82 +748,12 @@ fn write_fstab(
     root: &Path,
     layout: &DiskLayout,
     root_uuid: &str,
-    efi_uuid: Option<&str>,
+    efi_uuid: &str,
 ) -> Result<(), InstallError> {
-    if !crate::shared::storage::valid_uuid(root_uuid)
-        || efi_uuid.is_some_and(|value| !crate::shared::storage::valid_uuid(value))
-    {
-        return Err(InstallError::Invalid("invalid target filesystem UUID"));
-    }
-    if (layout.boot_mode() == BootMode::Efi) != efi_uuid.is_some() {
-        return Err(InstallError::Invalid("EFI layout/UUID mismatch"));
-    }
-    let filesystem = layout.root_filesystem();
-    let pass = if filesystem == crate::config::RootFilesystem::Ext4 {
-        1
-    } else {
-        0
-    };
-    let mut text = format!(
-        "UUID={root_uuid} / {} defaults 0 {pass}\n",
-        filesystem.as_str()
-    );
-    if let Some(uuid) = efi_uuid {
-        text.push_str(&format!(
-            "UUID={uuid} {} vfat umask=0077 0 2\n",
-            if matches!(layout.target(), Target::Alpine | Target::Debian) {
-                "/boot/efi"
-            } else {
-                "/efi"
-            }
-        ));
-    }
+    let boot_uuid = efi_uuid;
+    let text = crate::shared::storage::render_fstab(layout, root_uuid, boot_uuid)
+        .map_err(|_| InstallError::Invalid("invalid filesystem UUID"))?;
     write_target(root, "etc/fstab", text.as_bytes(), 0o644)
-}
-
-fn install_alpine_grub<R: CommandRunner>(
-    runner: &mut R,
-    root: &Path,
-    layout: &DiskLayout,
-) -> Result<(), InstallError> {
-    write_target(
-        root,
-        "etc/default/grub",
-        format!("GRUB_TIMEOUT=2\nGRUB_CMDLINE_LINUX=\"{TTY_COMMAND_LINE}\"\n").as_bytes(),
-        0o644,
-    )?;
-    match layout.boot_mode() {
-        BootMode::Bios => chroot_checked(
-            runner,
-            root,
-            vec![
-                "grub-install".into(),
-                "--target=i386-pc".into(),
-                "--recheck".into(),
-                layout.device(),
-            ],
-            "alpine-install-grub-bios",
-        )?,
-        BootMode::Efi => chroot_checked(
-            runner,
-            root,
-            [
-                "grub-install",
-                "--target=x86_64-efi",
-                "--efi-directory=/boot/efi",
-                "--bootloader-id=alpine",
-                "--no-nvram",
-                "--removable",
-            ],
-            "alpine-install-grub-efi",
-        )?,
-    }
-    chroot_checked(
-        runner,
-        root,
-        ["grub-mkconfig", "-o", "/boot/grub/grub.cfg"],
-        "alpine-generate-grub",
-    )
 }
 
 fn installed_kernel_config<R: CommandRunner>(
@@ -1134,14 +1059,12 @@ fn cleanup_cache<R: CommandRunner>(
 fn verify_installed_target<R: CommandRunner>(
     runner: &mut R,
     root: &Path,
-    plan: &ValidatedLivePlan,
-    layout: &DiskLayout,
 ) -> Result<(), InstallError> {
-    for path in ["etc/os-release", "etc/fstab", "boot/grub/grub.cfg"] {
+    for path in ["etc/os-release", "etc/fstab", "efi/limine.conf"] {
         let path = root.join(path);
         if !path.is_file() || fs::metadata(path)?.len() == 0 {
             return Err(InstallError::Invalid(
-                "installed OS, fstab or GRUB configuration is missing",
+                "installed OS, fstab or Limine configuration is missing",
             ));
         }
     }
@@ -1162,17 +1085,8 @@ fn verify_installed_target<R: CommandRunner>(
             "installed kernel or initramfs is missing",
         ));
     }
-    verify_grub_root(runner, root, layout.root_filesystem())?;
-    if layout.boot_mode() == BootMode::Efi {
-        let path = root.join(
-            if matches!(plan.plan().target, Target::Alpine | Target::Debian) {
-                "boot/efi/EFI/BOOT/BOOTX64.EFI"
-            } else {
-                "efi/EFI/BOOT/BOOTX64.EFI"
-            },
-        );
-        verify_efi_loader(&path)?;
-    }
+    super::limine::verify(root).map_err(InstallError::Boot)?;
+
     chroot_checked(
         runner,
         root,
@@ -1182,45 +1096,9 @@ fn verify_installed_target<R: CommandRunner>(
     Ok(())
 }
 
-fn verify_grub_root<R: CommandRunner>(
-    runner: &mut R,
-    root: &Path,
-    root_filesystem: crate::config::RootFilesystem,
-) -> Result<(), InstallError> {
-    let filesystem = capture(
-        runner,
-        &command(
-            "chroot",
-            [
-                root.as_os_str(),
-                "grub-probe".as_ref(),
-                "--target=fs".as_ref(),
-                "/".as_ref(),
-            ],
-            "target-grub-root-probe",
-        ),
-    )?;
-    // GRUB's ext2 filesystem module reads ext2, ext3 and ext4 and reports ext2.
-    let expected = match root_filesystem {
-        crate::config::RootFilesystem::Xfs => "xfs",
-        crate::config::RootFilesystem::Ext4 => "ext2",
-    };
-    if filesystem.trim() != expected {
-        return Err(InstallError::Invalid(
-            "GRUB cannot identify the selected target root filesystem",
-        ));
-    }
-    chroot_checked(
-        runner,
-        root,
-        ["grub-script-check", "/boot/grub/grub.cfg"],
-        "target-grub-config-check",
-    )
-}
-
 // An existing filename is not sufficient: reject empty/truncated, IA32 and
 // non-application PE files before requesting the sole final reboot.
-fn verify_efi_loader(path: &Path) -> Result<(), InstallError> {
+pub(super) fn verify_efi_loader(path: &Path) -> Result<(), InstallError> {
     let invalid =
         || InstallError::Invalid("EFI fallback loader is not a valid x86_64 PE32+ application");
     if !fs::symlink_metadata(path)?.is_file() {
@@ -2092,62 +1970,23 @@ fn download<R: CommandRunner>(
 #[cfg(test)]
 mod runtime_tests {
     use super::*;
+    #[test]
+    fn rescue_keeps_access_packages_without_boot_compiler_requirements() {
+        let mut plan = crate::model::InstallPlan::new(Target::Alpine);
+        plan.hold = Some(1);
+        let packages = live_packages(&plan).unwrap();
+        assert!(packages.contains(&"openssh"));
+        assert!(!packages.contains(&"gcc") && !packages.contains(&"musl-dev"));
+        plan.hold = None;
+        let packages = live_packages(&plan).unwrap();
+        assert!(packages.contains(&"gcc") && packages.contains(&"musl-dev"));
+    }
+
     use crate::command::{CommandOutput, MockRunner};
     use crate::config::{CongestionControl, NetworkConfig, QueueDiscipline};
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    #[test]
-    fn grub_validation_rejects_wrong_filesystem_and_invalid_config() {
-        for (fs_type, status, accepted, count) in [
-            ("xfs\n", 0, true, 2),
-            ("ext2\n", 0, false, 1),
-            ("xfs\n", 1, false, 2),
-        ] {
-            let mut runner = MockRunner::new([
-                CommandOutput::new(Some(0), fs_type.as_bytes().to_vec(), vec![]),
-                CommandOutput::new(Some(status), vec![], vec![]),
-            ]);
-            assert_eq!(
-                verify_grub_root(
-                    &mut runner,
-                    Path::new("/isolated-target"),
-                    crate::config::RootFilesystem::Xfs
-                )
-                .is_ok(),
-                accepted
-            );
-            assert_eq!(runner.calls().len(), count);
-        }
-    }
-    #[test]
-    fn ext4_grub_uses_the_ext2_driver_and_fstab_fsck_pass() {
-        let root = Scratch::new();
-        let mut install = crate::model::InstallPlan::new(Target::Debian);
-        install.system.root_filesystem = crate::config::RootFilesystem::Ext4;
-        let plan = crate::worker::live::validate_live_plan_with_uid(
-            install,
-            "x86_64",
-            4096,
-            crate::RUNTIME_VERSION,
-            0,
-        )
-        .unwrap();
-        let layout = DiskLayout::new(&plan, "vda", BootMode::Bios, 8 * 1024_u64.pow(3)).unwrap();
-        write_fstab(&root.0, &layout, "1234-ABCD", None).unwrap();
-        assert_eq!(
-            fs::read_to_string(root.0.join("etc/fstab")).unwrap(),
-            "UUID=1234-ABCD / ext4 defaults 0 1\n"
-        );
-        let mut runner = MockRunner::new([
-            CommandOutput::new(Some(0), b"ext2\n".to_vec(), vec![]),
-            CommandOutput::new(Some(0), vec![], vec![]),
-        ]);
-        verify_grub_root(&mut runner, &root.0, crate::config::RootFilesystem::Ext4).unwrap();
-        let mut wrong = MockRunner::new([CommandOutput::new(Some(0), b"xfs\n".to_vec(), vec![])]);
-        assert!(
-            verify_grub_root(&mut wrong, &root.0, crate::config::RootFilesystem::Ext4).is_err()
-        );
-    }
+
     #[test]
     fn non_root_accounts_set_root_password_privately_without_enabling_root_ssh() {
         for key_auth in [false, true] {

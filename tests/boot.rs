@@ -1,384 +1,453 @@
 mod support;
-mod boot {
-    use rustaller::host::boot::{
-        BootError, GrubBootEntry, build_nextos_cmdline, entry_name, render_grub_config,
-    };
-
-    #[test]
-    fn grub_entry_names_and_alpine_live_cmdline_preserve_live_options() {
-        assert_eq!(
-            entry_name("alpine", "3.22.1", Some(1)),
-            "rustaller (alpine 3.22.1 Live OS)"
-        );
-        assert_eq!(
-            entry_name("debian", "stable", None),
-            "rustaller (debian stable)"
-        );
-        assert_eq!(
-            build_nextos_cmdline(
-                "https://dl-cdn.alpinelinux.org/alpine/v3.22/main",
-                "/boot/modloop-lts"
-            )
-            .unwrap(),
-            "alpine_repo=https://dl-cdn.alpinelinux.org/alpine/v3.22/main modloop=/boot/modloop-lts console=ttyS0,115200n8 console=tty0"
-        );
+use rustaller::shared::storage::{DiskLayout, PartitionRole};
+use rustaller::worker::live::validate_live_plan_with_uid;
+use rustaller::{
+    config::RootFilesystem,
+    model::{BootMode, InstallPlan, Target},
+};
+#[test]
+fn alpine_live_cmdline_keeps_strict_url_and_path_validation() {
+    use rustaller::host::boot::build_nextos_cmdline;
+    assert!(
+        build_nextos_cmdline(
+            "https://dl-cdn.alpinelinux.org/alpine/v3.24/main",
+            "/boot/modloop-virt"
+        )
+        .unwrap()
+        .contains("console=ttyS0")
+    );
+    for (repo, path) in [
+        ("https://", "/boot/modloop"),
+        ("https://example.org/a?x=1", "/boot/modloop"),
+        ("https://example.org/a", "/boot/../modloop"),
+    ] {
+        assert!(build_nextos_cmdline(repo, path).is_err());
     }
+}
+#[test]
+fn all_24_target_firmware_filesystem_plans_have_bootable_limine_paths() {
+    for target in [Target::Alpine, Target::Debian, Target::Arch, Target::Gentoo] {
+        for boot in [BootMode::Bios, BootMode::Efi] {
+            for filesystem in RootFilesystem::ALL {
+                let mut plan = InstallPlan::new(target);
+                plan.system.root_filesystem = *filesystem;
+                let plan = validate_live_plan_with_uid(
+                    plan,
+                    "x86_64",
+                    4096,
+                    rustaller::RUNTIME_VERSION,
+                    0,
+                )
+                .unwrap();
+                let layout = DiskLayout::new(&plan, "nvme0n1", boot, 8 * 1024_u64.pow(3)).unwrap();
+                assert_eq!(layout.partitions().len(), 2);
+                assert_eq!(layout.root_partition(), "/dev/nvme0n1p2");
+                assert_eq!(layout.boot_partition(), "/dev/nvme0n1p1");
+                let config = rustaller::targets::limine::render(
+                    "1234-abcd",
+                    filesystem.as_str(),
+                    &[(
+                        "Linux".into(),
+                        "generation/kernel".into(),
+                        "generation/initrd".into(),
+                    )],
+                )
+                .unwrap();
+                assert!(config.contains("protocol: linux"));
+                assert!(config.contains("console=ttyS0"));
+                assert_eq!(
+                    config.contains("rootflags=subvol=@"),
+                    *filesystem == RootFilesystem::Btrfs
+                );
+                assert_eq!(
+                    layout.table(),
+                    if boot == BootMode::Bios {
+                        "msdos"
+                    } else {
+                        "gpt"
+                    }
+                );
+            }
+        }
+    }
+}
+#[test]
+fn large_bios_disks_reserve_a_dedicated_gpt_stage2_partition_and_reject_firmware_override() {
+    let plan = InstallPlan::new(Target::Debian);
+    let plan =
+        validate_live_plan_with_uid(plan, "x86_64", 4096, rustaller::RUNTIME_VERSION, 0).unwrap();
+    let layout = DiskLayout::new(&plan, "vda", BootMode::Bios, 3 * 1024_u64.pow(4)).unwrap();
+    assert_eq!(layout.table(), "gpt");
+    assert_eq!(layout.partitions().len(), 3);
+    assert_eq!(layout.role_number(PartitionRole::BiosBoot), Some(1));
+    assert_eq!(layout.boot_partition(), "/dev/vda2");
+    assert_eq!(layout.root_partition(), "/dev/vda3");
+    let mut plan = InstallPlan::new(Target::Debian);
+    plan.force_boot_mode = Some(BootMode::Efi);
+    let plan =
+        validate_live_plan_with_uid(plan, "x86_64", 4096, rustaller::RUNTIME_VERSION, 0).unwrap();
+    assert!(DiskLayout::new(&plan, "vda", BootMode::Bios, 8 * 1024_u64.pow(3)).is_err());
+}
+#[test]
+fn btrfs_swap_and_unsafe_limine_configurations_fail_before_mutation() {
+    let mut plan = InstallPlan::new(Target::Arch);
+    plan.system.root_filesystem = RootFilesystem::Btrfs;
+    plan.system.swap.size_mib = Some(1024);
+    assert!(plan.validate().is_err());
+    assert!(rustaller::targets::limine::render("x;bad", "ext4", &[]).is_err());
+    assert!(
+        rustaller::targets::limine::render(
+            "1234-abcd",
+            "xfs",
+            &[("bad\nentry".into(), "k".into(), "i".into())]
+        )
+        .is_err()
+    );
+}
 
-    #[test]
-    fn alpine_boot_values_reject_missing_hosts_queries_and_path_traversal() {
-        assert!(build_nextos_cmdline("https://", "/boot/modloop-lts").is_err());
-        assert!(build_nextos_cmdline("https:///v3.22/main", "/boot/modloop-lts").is_err());
+#[test]
+fn target_fstab_centralizes_uuid_paths_and_fsck_policy() {
+    use rustaller::shared::storage::render_fstab;
+    for filesystem in RootFilesystem::ALL {
+        let mut plan = InstallPlan::new(Target::Debian);
+        plan.system.root_filesystem = *filesystem;
+        let plan = validate_live_plan_with_uid(plan, "x86_64", 4096, rustaller::RUNTIME_VERSION, 0)
+            .unwrap();
+        let layout = DiskLayout::new(&plan, "vda", BootMode::Bios, 8 * 1024_u64.pow(3)).unwrap();
+        let fstab = render_fstab(&layout, "abcd-1234", "1234-abcd").unwrap();
+        assert!(fstab.contains("/efi vfat fmask=0177,dmask=0077 0 2"));
+        assert_eq!(
+            fstab.contains("subvol=@,compress=zstd:3"),
+            *filesystem == RootFilesystem::Btrfs
+        );
         assert!(
-            build_nextos_cmdline("https://mirror.example/repo?token=x", "/boot/modloop-lts")
-                .is_err()
+            fstab
+                .lines()
+                .next()
+                .unwrap()
+                .ends_with(if *filesystem == RootFilesystem::Ext4 {
+                    "0 1"
+                } else {
+                    "0 0"
+                })
         );
-        assert!(build_nextos_cmdline("https://mirror.example/repo", "/boot/../modloop").is_err());
+        assert!(render_fstab(&layout, "bad/uuid", "abcd").is_err());
     }
+}
+mod limine {
+    use super::*;
+    use rustaller::{
+        command::{CommandOutput, MockRunner},
+        targets::limine::*,
+    };
+    use std::{fs, os::unix::fs::symlink};
+    use support::Scratch;
 
+    fn fixture() -> Scratch {
+        let d = Scratch::new("limine");
+        d.write("boot/vmlinuz-linux", "kernel");
+        d.write("boot/initramfs-linux.img", "initramfs");
+        d.write(
+            "etc/rustaller/boot-state",
+            &format!("RUSTALLER-LIMINE-{VERSION}\n1234-abcd\nbtrfs\nabcd-5678\n"),
+        );
+        d.write("efi/limine-bios.sys", "BIOS payload");
+        let mut pe = vec![0; 512];
+        pe[..2].copy_from_slice(b"MZ");
+        pe[60..64].copy_from_slice(&64u32.to_le_bytes());
+        pe[64..70].copy_from_slice(b"PE\0\0\x64\x86");
+        pe[84..86].copy_from_slice(&240u16.to_le_bytes());
+        pe[88..90].copy_from_slice(b"\x0b\x02");
+        pe[156..158].copy_from_slice(&10u16.to_le_bytes());
+        let path = d.0.join("efi/EFI/BOOT/BOOTX64.EFI");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, pe).unwrap();
+        d
+    }
+    fn runner(root: &Scratch, free: u64) -> MockRunner {
+        MockRunner::new([
+            CommandOutput::new(Some(0),format!("vfat {} abcd-5678\n",root.0.join("efi").display()).into_bytes(),vec![]),
+            CommandOutput::new(Some(0),format!("Filesystem 1024-blocks Used Available Capacity Mounted\n/dev/vda1 524288 100 {free} 1% /efi\n").into_bytes(),vec![]),
+        ])
+    }
     #[test]
-    fn grub_config_renders_a_validated_bios_entry_and_shared_grubenv_helper() {
-        let entry = GrubBootEntry {
-            name: "rustaller (debian stable)".into(),
-            kernel_path: "/rustaller-vmlinuz".into(),
-            initrd_path: Some("/rustaller-initrd".into()),
-            linux_command: "linux".into(),
-            initrd_command: "initrd".into(),
-            cmdline:
-                "alpine_repo=https://mirror.example/alpine modloop=/boot/modloop-lts console=tty0"
-                    .into(),
-            btrfs_root: true,
-            include_grubenv_helper: true,
-        };
+    fn refresh_keeps_previous_generation_until_complete_publication_and_supports_updates() {
+        let d = fixture();
+        refresh(&mut runner(&d, 500000), &d.0).unwrap();
+        let first = d.read("efi/limine.conf");
+        d.write("efi/rustaller---/kernel-0", "unmanaged file");
+        assert!(first.contains("rootflags=subvol=@"));
+        verify(&d.0).unwrap();
+        d.write("boot/intel-ucode.img", "early microcode");
+        d.write("boot/vmlinuz-lts", "new-kernel");
+        d.write("boot/initramfs-lts.img", "new-initramfs");
+        refresh(&mut runner(&d, 500000), &d.0).unwrap();
+        let next = d.read("efi/limine.conf");
+        assert!(next.contains("/linux\n") && next.contains("/lts\n"));
+        // Previous complete payload is retained through the configuration switch.
+        for line in first
+            .lines()
+            .filter_map(|v| v.trim().strip_prefix("path: boot():/"))
+        {
+            assert!(d.0.join("efi").join(line).is_file());
+        }
+        assert!(next.find("microcode-0").unwrap() < next.find("/initrd-0").unwrap());
+        assert!(!next.contains("grub"));
+        verify(&d.0).unwrap();
+        refresh(&mut runner(&d, 500000), &d.0).unwrap();
+        let count = fs::read_dir(d.0.join("efi"))
+            .unwrap()
+            .filter(|v| {
+                v.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("rustaller-")
+            })
+            .count();
         assert_eq!(
-            render_grub_config(&entry).unwrap(),
-            concat!(
-                "### BEGIN rustaller ###\n",
-                "if ! [ -s $prefix/grubenv ]; then\n",
-                "    for dir in /boot/grub /boot/grub2 /grub /grub2; do\n",
-                "        set grubenv=\"($root)$dir/grubenv\"\n",
-                "        if [ -s $grubenv ]; then\n",
-                "            load_env --file $grubenv\n",
-                "            if [ \"${next_entry}\" ]; then\n",
-                "                set default=\"${next_entry}\"\n",
-                "                set next_entry=\n",
-                "                save_env --file $grubenv next_entry\n",
-                "            else\n",
-                "                set default=\"0\"\n",
-                "            fi\n",
-                "            return\n",
-                "        fi\n",
-                "    done\n",
-                "fi\n",
-                "set timeout_style=menu\n",
-                "set timeout=5\n",
-                "menuentry \"rustaller (debian stable)\" --unrestricted {\n",
-                "    insmod lvm\n",
-                "    set btrfs_relative_path=n\n",
-                "    insmod all_video\n",
-                "    search --no-floppy --file --set=root /rustaller-vmlinuz\n",
-                "    linux /rustaller-vmlinuz alpine_repo=https://mirror.example/alpine modloop=/boot/modloop-lts console=tty0\n",
-                "    initrd /rustaller-initrd\n",
-                "}\n",
-                "### END rustaller ###\n"
-            )
+            count, 3,
+            "two managed generations plus the untouched unrelated directory"
         );
+        assert_eq!(d.read("efi/rustaller---/kernel-0"), "unmanaged file");
     }
-
     #[test]
-    fn grub_config_rejects_untrusted_paths_commands_and_config_injection() {
-        let entry = GrubBootEntry {
-            name: "bad\" entry".into(),
-            kernel_path: "/rustaller-vmlinuz".into(),
-            initrd_path: None,
-            linux_command: "linux".into(),
-            initrd_command: "initrd".into(),
-            cmdline: String::new(),
-            btrfs_root: false,
-            include_grubenv_helper: false,
-        };
-        assert!(matches!(
-            render_grub_config(&entry),
-            Err(BootError::UnsafeValue(_))
-        ));
-        let mut entry = entry;
-        entry.name = "valid".into();
-        entry.kernel_path = "/tmp/../etc/passwd".into();
-        assert!(matches!(
-            render_grub_config(&entry),
-            Err(BootError::InvalidBootPath)
-        ));
-        entry.kernel_path = "/rustaller-vmlinuz".into();
-        entry.linux_command = "sh".into();
-        assert!(matches!(
-            render_grub_config(&entry),
-            Err(BootError::InvalidBootCommand)
-        ));
+    fn newest_numeric_kernel_is_default_and_gentoo_backup_files_are_ignored() {
+        let d = fixture();
+        fs::remove_file(d.0.join("boot/vmlinuz-linux")).unwrap();
+        for version in ["6.9+dist", "6.10+dist"] {
+            d.write(&format!("boot/vmlinuz-{version}"), "kernel");
+            d.write(&format!("boot/initramfs-{version}.img"), "initramfs");
+        }
+        d.write("boot/vmlinuz-6.10+dist.old", "backup kernel");
+        d.write("boot/initramfs-6.10+dist.img.old", "backup initramfs");
+        refresh(&mut runner(&d, 500000), &d.0).unwrap();
+        let c = d.read("efi/limine.conf");
+        assert!(c.find("/6.10+dist\n").unwrap() < c.find("/6.9+dist\n").unwrap());
+        assert!(!c.contains(".old"));
+    }
+    #[test]
+    fn failed_refresh_preserves_published_configuration_and_rejects_unsafe_inputs() {
+        for failure in [
+            "capacity",
+            "missing-initrd",
+            "symlink",
+            "hardlink",
+            "config-link",
+            "unmounted",
+            "wrong-boot-uuid",
+            "invalid-state",
+            "efi-corrupt",
+        ] {
+            let d = fixture();
+            refresh(&mut runner(&d, 500000), &d.0).unwrap();
+            let before = d.read("efi/limine.conf");
+            match failure {
+                "capacity" => {}
+                "missing-initrd" => {
+                    fs::remove_file(d.0.join("boot/initramfs-linux.img")).unwrap();
+                }
+                "symlink" => {
+                    fs::remove_file(d.0.join("boot/vmlinuz-linux")).unwrap();
+                    symlink("/etc/passwd", d.0.join("boot/vmlinuz-linux")).unwrap();
+                }
+                "hardlink" => {
+                    fs::hard_link(d.0.join("boot/vmlinuz-linux"), d.0.join("kernel-copy")).unwrap();
+                }
+                "config-link" => {
+                    fs::rename(d.0.join("efi/limine.conf"), d.0.join("original")).unwrap();
+                    symlink(d.0.join("original"), d.0.join("efi/limine.conf")).unwrap();
+                }
+                "invalid-state" => {
+                    d.write("etc/rustaller/boot-state", "bad\n");
+                }
+                "efi-corrupt" => {
+                    d.write("efi/EFI/BOOT/BOOTX64.EFI", "not PE");
+                }
+                _ => {}
+            }
+            let mut r = if failure == "wrong-boot-uuid" {
+                MockRunner::new([CommandOutput::new(
+                    Some(0),
+                    format!("vfat {} 0000-0000\n", d.0.join("efi").display()).into_bytes(),
+                    vec![],
+                )])
+            } else if failure == "unmounted" {
+                MockRunner::new([CommandOutput::new(Some(0), b"ext4 /\n".to_vec(), vec![])])
+            } else {
+                runner(&d, if failure == "capacity" { 0 } else { 500000 })
+            };
+            assert!(refresh(&mut r, &d.0).is_err(), "{failure}");
+            assert_eq!(d.read("efi/limine.conf"), before, "{failure}");
+        }
+    }
+    #[test]
+    fn refresh_refuses_partial_copy_and_limine_paths_cannot_traverse() {
+        let d = fixture();
+        refresh(&mut runner(&d, 500000), &d.0).unwrap();
+        let before = d.read("efi/limine.conf");
+        // A native filesystem write failure, independent of mocked commands.
+        fs::remove_file(d.0.join("boot/initramfs-linux.img")).unwrap();
+        fs::create_dir(d.0.join("boot/initramfs-linux.img")).unwrap();
+        assert!(refresh(&mut runner(&d, 500000), &d.0).is_err());
+        assert_eq!(d.read("efi/limine.conf"), before);
+        for path in [
+            "../kernel",
+            "/kernel",
+            "a/../kernel",
+            "a//kernel",
+            "a/./kernel",
+            "bad\nentry",
+        ] {
+            assert!(
+                render(
+                    "1234-abcd",
+                    "ext4",
+                    &[("Linux".into(), path.into(), "initrd".into())]
+                )
+                .is_err(),
+                "{path}"
+            );
+        }
+    }
+    #[test]
+    fn authenticated_resources_and_hooks_fail_closed() {
+        let d = Scratch::new("limine-download");
+        let mut r = MockRunner::new([
+            CommandOutput::new(Some(0), b"untrusted".to_vec(), vec![]),
+            CommandOutput::new(Some(0), b"wronghash  -\n".to_vec(), vec![]),
+        ]);
+        assert!(prepare(&mut r, &d.0).is_err());
+        assert!(!d.0.join("LICENSE").exists());
+        assert!(!r.calls().iter().any(|c| c.program == "cc"));
+        for target in [Target::Alpine, Target::Debian, Target::Arch, Target::Gentoo] {
+            let d = Scratch::new("limine-hooks");
+            assert!(install_hooks(&d.0, target, b"wrong worker").is_err());
+            install_hooks(&d.0, target, rustaller::RUNTIME_VERSION.as_bytes()).unwrap();
+            assert!(
+                d.0.join("usr/local/libexec/rustaller-limine-worker")
+                    .is_file()
+            );
+            let path = match target {
+                Target::Alpine => "etc/apk/commit_hooks.d/zz-rustaller-limine",
+                Target::Debian | Target::Gentoo => "etc/kernel/postinst.d/zz-rustaller-limine",
+                Target::Arch => "etc/pacman.d/hooks/zz-rustaller-limine.hook",
+                _ => unreachable!(),
+            };
+            assert!(fs::symlink_metadata(d.0.join(path)).is_ok());
+            if target == Target::Arch {
+                let hook = d.read(path);
+                assert!(hook.contains("Target=usr/lib/modules/*/pkgbase"));
+                assert!(hook.contains("Target=usr/lib/initcpio/*"));
+            }
+        }
+        assert!(!hook_action(&["pre-commit".into()]));
+        assert!(hook_action(&["post-commit".into()]));
+    }
+    #[test]
+    fn bios_command_binds_whole_disk_and_explicit_gpt_stage2_partition() {
+        for (bytes, expected) in [
+            (8 * 1024_u64.pow(3), vec!["bios-install", "/dev/vda"]),
+            (3 * 1024_u64.pow(4), vec!["bios-install", "/dev/vda", "1"]),
+        ] {
+            let p = validate_live_plan_with_uid(
+                InstallPlan::new(Target::Debian),
+                "x86_64",
+                4096,
+                rustaller::RUNTIME_VERSION,
+                0,
+            )
+            .unwrap();
+            let l = DiskLayout::new(&p, "vda", BootMode::Bios, bytes).unwrap();
+            assert_eq!(
+                bios_command(&l, std::path::Path::new("/work/limine"))
+                    .unwrap()
+                    .args,
+                expected
+            );
+        }
     }
 }
 
-mod iso {
+#[test]
+fn btrfs_options_roundtrip_and_invalid_boot_geometry_fail_closed() {
+    use rustaller::host::args::{CliOutcome, parse_args};
+    for level in [0, 3, 15] {
+        let level = level.to_string();
+        let CliOutcome::Plan(plan) = parse_args([
+            "debian",
+            "--filesystem=btrfs",
+            "--boot-size-mib=1024",
+            "--btrfs-compression",
+            &level,
+        ])
+        .unwrap() else {
+            panic!("plan")
+        };
+        let bytes = rustaller::codec::encode_plan(&plan).unwrap();
+        let decoded = rustaller::codec::decode_plan(&bytes).unwrap();
+        assert_eq!(decoded.system, plan.system);
+        assert_eq!(decoded.schema_version, 8);
+    }
+    for args in [
+        vec!["debian", "--boot-size-mib=511"],
+        vec!["arch", "--boot-size-mib=4097"],
+        vec!["gentoo", "--filesystem=btrfs", "--btrfs-compression=16"],
+        vec!["alpine", "--filesystem=xfs", "--btrfs-compression=3"],
+        vec!["debian", "--filesystem=btrfs", "--swapfile-mib=64"],
+    ] {
+        assert!(parse_args(args).is_err());
+    }
+    assert!(
+        rustaller::shared::storage::planned_partitions(BootMode::Bios, 1024 * 1024 * 1024, 512)
+            .is_err()
+    );
+    assert!(
+        rustaller::targets::limine::render(
+            "1234-abcd",
+            "ext4",
+            &[(
+                "6.12.73+deb13-amd64".into(),
+                "g/kernel".into(),
+                "g/initrd".into()
+            )]
+        )
+        .is_ok()
+    );
+}
+#[test]
+fn btrfs_format_and_mount_create_at_root_and_unmount_top_on_failure() {
     use rustaller::command::{CommandOutput, MockRunner};
-    use rustaller::host::iso::{
-        IsoError, canonicalize_iso_source, prepare_local_iso, render_grub_entry,
-        validate_iso_options,
-    };
-    use rustaller::model::IsoOptions;
-    use std::fs;
-    use std::path::PathBuf;
-
-    use crate::support::Scratch;
-
-    fn test_mount_dir(scratch: &Scratch) -> (PathBuf, PathBuf) {
-        let managed = scratch.0.join("rustaller-tmp");
-        let check = managed.join("iso-check");
-        fs::create_dir_all(&check).unwrap();
-        (managed, check)
-    }
-
-    fn options(path: &str) -> IsoOptions {
-        IsoOptions {
-            path: path.to_owned(),
-            config: None,
-            kernel: None,
-            initrd: None,
-            cmdline: None,
-        }
-    }
-
-    #[test]
-    fn iso_options_default_to_loopback_cfg_and_validate_custom_kernel_pair() {
-        let default = validate_iso_options(&options("/images/live.iso")).unwrap();
-        assert_eq!(default.config.as_deref(), Some("/boot/grub/loopback.cfg"));
-        assert!(default.kernel.is_none());
-
-        let custom = IsoOptions {
-            path: "/images/live.iso".into(),
-            config: None,
-            kernel: Some("/live/vmlinuz".into()),
-            initrd: Some("/live/initrd.img".into()),
-            cmdline: Some("boot=live findiso=%ISO_PATH%".into()),
-        };
-        let custom = validate_iso_options(&custom).unwrap();
-        assert_eq!(custom.kernel.as_deref(), Some("/live/vmlinuz"));
-        assert_eq!(custom.initrd.as_deref(), Some("/live/initrd.img"));
-    }
-
-    #[test]
-    fn iso_options_reject_path_injection_incomplete_pairs_and_conflicts() {
-        for path in [
-            "relative.iso",
-            "/images/../live.iso",
-            "/images/a b.iso",
-            "/images/a;reboot.iso",
-        ] {
-            assert!(validate_iso_options(&options(path)).is_err(), "{path}");
-        }
+    use rustaller::shared::storage::{btrfs_options, create_partitions, mount_target};
+    for level in [0, 3] {
+        let mut p = InstallPlan::new(Target::Alpine);
+        p.system.root_filesystem = RootFilesystem::Btrfs;
+        p.system.btrfs_compression = Some(level);
+        let p =
+            validate_live_plan_with_uid(p, "x86_64", 4096, rustaller::RUNTIME_VERSION, 0).unwrap();
+        let l = DiskLayout::new(&p, "vda", BootMode::Bios, 8 * 1024_u64.pow(3)).unwrap();
+        let d = support::Scratch::new("btrfs-mount");
+        let mut r = MockRunner::new((0..100).map(|_| CommandOutput::new(Some(0), vec![], vec![])));
+        create_partitions(&mut r, &l, &Default::default()).unwrap();
         assert!(
-            validate_iso_options(&IsoOptions {
-                path: "/images/live.iso".into(),
-                config: None,
-                kernel: Some("/live/vmlinuz".into()),
-                initrd: None,
-                cmdline: None,
-            })
-            .is_err()
+            r.calls()
+                .iter()
+                .any(|c| c.program == "mkfs.btrfs" && c.args == ["-f", "-K", "/dev/vda2"])
         );
+        mount_target(&mut r, &l, &d.0).unwrap();
         assert!(
-            validate_iso_options(&IsoOptions {
-                path: "/images/live.iso".into(),
-                config: Some("/boot/grub/loopback.cfg".into()),
-                kernel: Some("/live/vmlinuz".into()),
-                initrd: Some("/live/initrd.img".into()),
-                cmdline: None,
-            })
-            .is_err()
+            r.calls()
+                .iter()
+                .any(|c| c.program == "btrfs" && c.args[..2] == ["subvolume", "create"])
         );
-        assert!(
-            validate_iso_options(&IsoOptions {
-                path: "/images/live.iso".into(),
-                config: None,
-                kernel: Some("/live/vmlinuz".into()),
-                initrd: Some("/live/initrd.img".into()),
-                cmdline: Some("boot=live; reboot".into()),
-            })
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn canonical_iso_source_must_be_readable_nonempty_and_outside_managed_paths() {
-        let scratch = Scratch::new("source");
-        let image = scratch.0.join("live.iso");
-        fs::write(&image, b"not really an ISO, but a nonempty local source").unwrap();
-        let resolved = canonicalize_iso_source(&image, &scratch.0.join("rustaller-tmp")).unwrap();
-        assert_eq!(resolved, fs::canonicalize(image).unwrap());
-
-        let empty = scratch.0.join("empty.iso");
-        fs::write(&empty, []).unwrap();
-        assert!(canonicalize_iso_source(&empty, &scratch.0.join("rustaller-tmp")).is_err());
-
-        let managed = scratch.0.join("rustaller-tmp");
-        fs::create_dir(&managed).unwrap();
-        let protected = managed.join("live.iso");
-        fs::write(&protected, b"iso").unwrap();
-        assert!(canonicalize_iso_source(&protected, &managed).is_err());
-    }
-
-    #[test]
-    fn read_only_iso_preflight_preserves_probe_and_mount_call_order() {
-        let scratch = Scratch::new("preflight");
-        let image = scratch.0.join("live.iso");
-        fs::write(&image, b"iso bytes").unwrap();
-        let (managed_tmp, check_dir) = test_mount_dir(&scratch);
-        fs::create_dir_all(check_dir.join("boot/grub")).unwrap();
-        fs::write(
-            check_dir.join("boot/grub/loopback.cfg"),
-            b"menuentry test\n",
-        )
-        .unwrap();
-
-        let mut runner = MockRunner::new([
-            CommandOutput::new(Some(0), b"ext2\n".to_vec(), Vec::new()),
-            CommandOutput::new(Some(0), b"1111-2222\n".to_vec(), Vec::new()),
-            CommandOutput::new(Some(0), b"/images/live.iso\n".to_vec(), Vec::new()),
-            CommandOutput::new(Some(0), Vec::new(), Vec::new()),
-            CommandOutput::new(Some(0), Vec::new(), Vec::new()),
-        ]);
-        let prepared = prepare_local_iso(
-            &mut runner,
-            &options(&image.to_string_lossy()),
-            &managed_tmp,
-            &check_dir,
-        )
-        .unwrap();
-
-        assert_eq!(prepared.uuid(), "1111-2222");
-        assert_eq!(prepared.grub_path(), "/images/live.iso");
-        assert_eq!(runner.calls().len(), 5);
-        assert_eq!(runner.calls()[0].program, "grub-probe");
-        assert_eq!(runner.calls()[0].args[0], "--target=abstraction");
-        assert_eq!(runner.calls()[1].args[0], "--target=fs_uuid");
-        assert_eq!(runner.calls()[2].program, "grub-mkrelpath");
-        assert_eq!(runner.calls()[3].program, "mount");
-        assert_eq!(
-            runner.calls()[3].args,
-            [
-                "-o",
-                "loop,ro,nosuid,nodev,noexec",
-                image.to_str().unwrap(),
-                check_dir.to_str().unwrap()
-            ]
-        );
-        assert_eq!(runner.calls()[4].program, "umount");
-    }
-
-    #[test]
-    fn generated_loopback_config_contains_only_validated_iso_parameters() {
-        let scratch = Scratch::new("render");
-        let image = scratch.0.join("live.iso");
-        fs::write(&image, b"iso").unwrap();
-        let (managed_tmp, check_dir) = test_mount_dir(&scratch);
-        fs::create_dir_all(check_dir.join("boot/grub")).unwrap();
-        fs::write(check_dir.join("boot/grub/loopback.cfg"), b"cfg").unwrap();
-        let mut runner = MockRunner::new([
-            CommandOutput::new(Some(0), b"ext2\n".to_vec(), Vec::new()),
-            CommandOutput::new(Some(0), b"1111-2222\n".to_vec(), Vec::new()),
-            CommandOutput::new(Some(0), b"/images/live.iso\n".to_vec(), Vec::new()),
-            CommandOutput::new(Some(0), Vec::new(), Vec::new()),
-            CommandOutput::new(Some(0), Vec::new(), Vec::new()),
-        ]);
-        let prepared = prepare_local_iso(
-            &mut runner,
-            &options(&image.to_string_lossy()),
-            &managed_tmp,
-            &check_dir,
-        )
-        .unwrap();
-        let output = render_grub_entry(&prepared);
-        assert!(
-            output.starts_with("### BEGIN rustaller ###\nset timeout_style=menu\nset timeout=5\n")
-        );
-        assert!(output.contains("search --no-floppy --fs-uuid --set=iso_device '1111-2222'\n"));
-        assert!(output.contains("loopback loop ($iso_device)$iso_path\n"));
-        assert!(output.contains("configfile (loop)/boot/grub/loopback.cfg\n"));
-        assert!(output.ends_with("### END rustaller ###\n"));
-    }
-
-    #[test]
-    fn read_only_preflight_rejects_encryption_and_windows_media_without_skipping_unmount() {
-        let encrypted = Scratch::new("encrypted");
-        let encrypted_image = encrypted.0.join("live.iso");
-        fs::write(&encrypted_image, b"iso").unwrap();
-        let mut encrypted_runner = MockRunner::new([CommandOutput::new(
-            Some(0),
-            b"partmap cryptodisk\n".to_vec(),
-            Vec::new(),
-        )]);
-        assert!(matches!(
-            prepare_local_iso(
-                &mut encrypted_runner,
-                &options(&encrypted_image.to_string_lossy()),
-                &encrypted.0.join("rustaller-tmp"),
-                &encrypted.0.join("rustaller-tmp/iso-check"),
-            ),
-            Err(IsoError::EncryptedStorage)
-        ));
-        assert_eq!(encrypted_runner.calls().len(), 1);
-
-        let windows = Scratch::new("windows-media");
-        let windows_image = windows.0.join("live.iso");
-        fs::write(&windows_image, b"iso").unwrap();
-        let (managed_tmp, check_dir) = test_mount_dir(&windows);
-        fs::create_dir_all(check_dir.join("SOURCES")).unwrap();
-        fs::write(check_dir.join("SOURCES/BOOT.WIM"), b"windows installer").unwrap();
-        let mut windows_runner = MockRunner::new([
-            CommandOutput::new(Some(0), b"ext2\n".to_vec(), Vec::new()),
-            CommandOutput::new(Some(0), b"1111-2222\n".to_vec(), Vec::new()),
-            CommandOutput::new(Some(0), b"/images/live.iso\n".to_vec(), Vec::new()),
-            CommandOutput::new(Some(0), Vec::new(), Vec::new()),
-            CommandOutput::new(Some(0), Vec::new(), Vec::new()),
-        ]);
-        assert!(matches!(
-            prepare_local_iso(
-                &mut windows_runner,
-                &options(&windows_image.to_string_lossy()),
-                &managed_tmp,
-                &check_dir,
-            ),
-            Err(IsoError::InvalidFilesystemLayout)
-        ));
-        assert_eq!(windows_runner.calls().last().unwrap().program, "umount");
-    }
-
-    #[test]
-    fn custom_kernel_parameters_substitute_only_the_supported_iso_tokens() {
-        let scratch = Scratch::new("custom");
-        let image = scratch.0.join("live.iso");
-        fs::write(&image, b"iso").unwrap();
-        let (managed_tmp, check_dir) = test_mount_dir(&scratch);
-        fs::create_dir_all(check_dir.join("live")).unwrap();
-        fs::write(check_dir.join("live/vmlinuz"), b"kernel").unwrap();
-        fs::write(check_dir.join("live/initrd.img"), b"initrd").unwrap();
-        let config = IsoOptions {
-            path: image.to_string_lossy().into_owned(),
-            config: None,
-            kernel: Some("/live/vmlinuz".into()),
-            initrd: Some("/live/initrd.img".into()),
-            cmdline: Some("findiso=%ISO_PATH% uuid=%ISO_UUID%".into()),
-        };
-        let mut runner = MockRunner::new([
-            CommandOutput::new(Some(0), b"ext2\n".to_vec(), Vec::new()),
-            CommandOutput::new(Some(0), b"1111-2222\n".to_vec(), Vec::new()),
-            CommandOutput::new(Some(0), b"/images/live.iso\n".to_vec(), Vec::new()),
-            CommandOutput::new(Some(0), Vec::new(), Vec::new()),
-            CommandOutput::new(Some(0), Vec::new(), Vec::new()),
-        ]);
-        let prepared = prepare_local_iso(&mut runner, &config, &managed_tmp, &check_dir).unwrap();
-        let output = render_grub_entry(&prepared);
-        assert!(
-            output.contains("linux (loop)/live/vmlinuz findiso=/images/live.iso uuid=1111-2222\n")
-        );
-        assert!(output.contains("initrd (loop)/live/initrd.img\n"));
-        assert!(!output.contains("%ISO_"));
+        assert!(r.calls().iter().any(|c| c.phase == "mount-btrfs-root"
+            && c.args.iter().any(|v| v == btrfs_options(level).as_str())));
+        assert!(r.calls().iter().any(|c| c.phase == "live-mount-efi"
+            && c.args.iter().any(|v| v == d.0.join("efi").as_os_str())));
+        let mut r =
+            MockRunner::new([0, 1, 0].map(|code| CommandOutput::new(Some(code), vec![], vec![])));
+        assert!(mount_target(&mut r, &l, &d.0).is_err());
+        assert_eq!(r.calls().last().unwrap().program, "umount");
+        assert!(!r.calls().iter().any(|c| c.phase == "live-mount-efi"));
     }
 }

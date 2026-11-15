@@ -188,6 +188,13 @@ pub(super) fn configure_arch<R: CommandRunner>(
     )?;
     // The native kernel package's hooks normally do this; the explicit rebuild
     // makes success depend on an actual initramfs, including the selected LTS.
+    if plan.plan().system.root_filesystem == crate::config::RootFilesystem::Btrfs {
+        write_target(
+            root,
+            "etc/mkinitcpio.conf.d/90-rustaller-root.conf",
+            b"MODULES+=(btrfs)\n",
+        )?;
+    }
     chroot_checked(
         runner,
         root,
@@ -269,10 +276,7 @@ pub(super) fn configure_gentoo<R: CommandRunner>(
     write_target(root, "etc/portage/repos.conf/gentoo.conf", b"[gentoo]\nlocation = /var/db/repos/gentoo\nsync-type = webrsync\nsync-uri = https://distfiles.gentoo.org/snapshots\nsync-webrsync-verify-signature = true\nsync-openpgp-key-path = /usr/share/openpgp-keys/gentoo-release.asc\nsync-openpgp-key-refresh = false\n")?;
     let make_conf = root.join("etc/portage/make.conf");
     validate_planned_file(&make_conf)?;
-    let extra = format!(
-        "GRUB_PLATFORMS=\"{}\"\nMAKEOPTS=\"-j1\"\nGENTOO_MIRRORS=\"https://distfiles.gentoo.org\"\nFEATURES=\"${{FEATURES}} getbinpkg binpkg-request-signature\"\n",
-        packages::grub_platforms(boot)
-    );
+    let extra = "MAKEOPTS=\"-j1\"\nGENTOO_MIRRORS=\"https://distfiles.gentoo.org\"\nFEATURES=\"${FEATURES} getbinpkg binpkg-request-signature\"\n".to_owned();
     let text = replace_managed_block(
         &read_config(&make_conf)?,
         &extra,
@@ -284,12 +288,20 @@ pub(super) fn configure_gentoo<R: CommandRunner>(
     write_target(
         root,
         "etc/portage/package.use/rustaller-installkernel",
-        b"sys-kernel/installkernel dracut grub\n",
+        b"sys-kernel/installkernel dracut -systemd -systemd-boot -uki -ukify -efistub -grub -refind\n",
     )?;
+    let btrfs = plan.plan().system.root_filesystem == crate::config::RootFilesystem::Btrfs;
+    let flags = if btrfs { " rootflags=subvol=@" } else { "" };
+    let drivers = if btrfs {
+        "add_drivers+=\" btrfs \"\n"
+    } else {
+        ""
+    };
     write_target(
         root,
         "etc/dracut.conf.d/00-rustaller-root.conf",
-        format!("hostonly=\"no\"\nkernel_cmdline=\" root=UUID={root_uuid} \"\n").as_bytes(),
+        format!("hostonly=\"no\"\nkernel_cmdline=\" root=UUID={root_uuid}{flags} \"\n{drivers}")
+            .as_bytes(),
     )?;
     write_target(root, "etc/locale.gen", b"en_US.UTF-8 UTF-8\n")?;
     write_target(root, "etc/locale.conf", b"LANG=C.UTF-8\n")?;
@@ -324,7 +336,6 @@ pub(super) fn configure_gentoo<R: CommandRunner>(
         firmware,
     )?;
     for atom in [
-        "sys-boot/grub",
         "sys-kernel/dracut",
         "sys-kernel/installkernel",
         "net-misc/openssh",
@@ -350,71 +361,6 @@ pub(super) fn configure_gentoo<R: CommandRunner>(
         root,
         ["dracut", "--regenerate-all", "--force", "--no-hostonly"],
         "gentoo-target-initramfs",
-    )
-}
-
-/// Both targets use GRUB. EFI installs use the standard fallback path and never
-/// create firmware entries; BIOS explicitly selects i386-pc and the bound disk.
-pub(super) fn install_grub<R: CommandRunner>(
-    runner: &mut R,
-    root: &Path,
-    boot: BootMode,
-    disk: &str,
-    tty_cmdline: &str,
-) -> Result<(), RollingError> {
-    validate_root(root)?;
-    if !disk.strip_prefix("/dev/").is_some_and(|name| {
-        !name.is_empty()
-            && name
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-    }) {
-        return Err(RollingError::InvalidInput("bound boot disk"));
-    }
-    if tty_cmdline.len() > 1024
-        || !tty_cmdline
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b" =,._-".contains(&b))
-    {
-        return Err(RollingError::InvalidInput("console kernel arguments"));
-    }
-    let defaults = root.join("etc/default/grub");
-    validate_planned_file(&defaults)?;
-    let body = format!("GRUB_CMDLINE_LINUX=\"${{GRUB_CMDLINE_LINUX}} {tty_cmdline}\"\n");
-    let contents = replace_managed_block(
-        &read_config(&defaults)?,
-        &body,
-        "# BEGIN rustaller console",
-        "# END rustaller console",
-        false,
-    )?;
-    write_file(&defaults, contents.as_bytes())?;
-    match boot {
-        BootMode::Efi => chroot_checked(
-            runner,
-            root,
-            [
-                "grub-install",
-                "--target=x86_64-efi",
-                "--efi-directory=/efi",
-                "--bootloader-id=rustaller",
-                "--no-nvram",
-                "--removable",
-            ],
-            "rolling-install-grub-efi",
-        )?,
-        BootMode::Bios => chroot_checked(
-            runner,
-            root,
-            ["grub-install", "--target=i386-pc", "--recheck", disk],
-            "rolling-install-grub-bios",
-        )?,
-    }
-    chroot_checked(
-        runner,
-        root,
-        ["grub-mkconfig", "-o", "/boot/grub/grub.cfg"],
-        "rolling-generate-grub-config",
     )
 }
 

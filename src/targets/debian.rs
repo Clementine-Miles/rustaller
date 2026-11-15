@@ -13,8 +13,6 @@ use std::path::Path;
 pub enum DebianError {
     InvalidCodename,
     InvalidArchive,
-    InvalidUuid,
-    InvalidDisk,
     Command(CommandError),
     Filesystem(io::Error),
 }
@@ -24,8 +22,6 @@ impl fmt::Display for DebianError {
         match self {
             Self::InvalidCodename => f.write_str("Invalid Debian stable codename."),
             Self::InvalidArchive => f.write_str("Invalid Debian archive URL."),
-            Self::InvalidUuid => f.write_str("Invalid Debian filesystem UUID."),
-            Self::InvalidDisk => f.write_str("Invalid Debian target disk name."),
             Self::Command(error) => write!(f, "Debian: {error}"),
             Self::Filesystem(error) => write!(f, "Debian configuration write failed: {error}"),
         }
@@ -85,122 +81,6 @@ pub fn write_apt_sources(
     remove_if_exists(&apt.join("sources.list.d/debian.sources")).map_err(DebianError::Filesystem)
 }
 
-pub fn write_fstab(
-    root: &Path,
-    root_uuid: &str,
-    esp_uuid: Option<&str>,
-    boot_mode: BootMode,
-) -> Result<(), DebianError> {
-    if !crate::shared::storage::valid_uuid(root_uuid)
-        || esp_uuid.is_some_and(|uuid| !crate::shared::storage::valid_uuid(uuid))
-    {
-        return Err(DebianError::InvalidUuid);
-    }
-    if (boot_mode == BootMode::Efi) != esp_uuid.is_some() {
-        return Err(DebianError::InvalidUuid);
-    }
-    let mut contents = format!(
-        "# <file system> <mount point> <type> <options> <dump> <pass>\nUUID={root_uuid} / xfs defaults 0 0\n"
-    );
-    if let Some(esp_uuid) = esp_uuid {
-        contents.push_str(&format!("UUID={esp_uuid} /boot/efi vfat umask=0077 0 1\n"));
-    }
-    let etc = root.join("etc");
-    fs::create_dir_all(&etc).map_err(DebianError::Filesystem)?;
-    atomic_replace(&etc.join("fstab"), contents.as_bytes()).map_err(DebianError::Filesystem)
-}
-
-pub fn grub_selections(boot_mode: BootMode, disk: &str) -> Result<Vec<u8>, DebianError> {
-    if boot_mode == BootMode::Efi {
-        return Ok(b"grub-efi-amd64 grub-efi/install_devices_empty boolean true\ngrub-efi-amd64 grub-efi/install_devices multiselect\n".to_vec());
-    }
-    if disk.is_empty()
-        || !disk
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
-    {
-        return Err(DebianError::InvalidDisk);
-    }
-    Ok(format!("grub-pc grub-pc/install_devices multiselect /dev/{disk}\n").into_bytes())
-}
-
-pub fn preseed_grub<R: CommandRunner>(
-    runner: &mut R,
-    root: &Path,
-    boot_mode: BootMode,
-    disk: &str,
-) -> Result<(), DebianError> {
-    let input = grub_selections(boot_mode, disk)?;
-    let command = CommandSpec::new(
-        "chroot",
-        [
-            root.as_os_str(),
-            std::ffi::OsStr::new("debconf-set-selections"),
-        ],
-    )
-    .phase("debian-grub-preseed")
-    .stdin(CommandInput::Bytes(input))
-    .stdout_mode(OutputMode::Stream)
-    .stderr_mode(OutputMode::Stream);
-    run_checked(runner, &command).map_err(DebianError::Command)
-}
-
-pub fn install_grub<R: CommandRunner>(
-    runner: &mut R,
-    root: &Path,
-    boot_mode: BootMode,
-    disk: &str,
-    tty_cmdline: &str,
-) -> Result<(), DebianError> {
-    let grub_args: Vec<&str> = match boot_mode {
-        BootMode::Efi => vec![
-            "grub-install",
-            "--target=x86_64-efi",
-            "--efi-directory=/boot/efi",
-            "--bootloader-id=debian",
-            "--no-nvram",
-            "--removable",
-        ],
-        BootMode::Bios => {
-            if disk.is_empty()
-                || !disk
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
-            {
-                return Err(DebianError::InvalidDisk);
-            }
-            vec!["grub-install", "--target=i386-pc"]
-        }
-    };
-    let mut args = vec![root.as_os_str().to_owned()];
-    args.extend(grub_args.into_iter().map(Into::into));
-    if boot_mode == BootMode::Bios {
-        args.push(format!("/dev/{disk}").into());
-    }
-    let command = CommandSpec::new("chroot", args)
-        .phase("debian-grub-install")
-        .stdin(CommandInput::Null)
-        .stdout_mode(OutputMode::Stream)
-        .stderr_mode(OutputMode::Stream);
-    run_checked(runner, &command).map_err(DebianError::Command)?;
-
-    append_grub_cmdline(root, tty_cmdline).map_err(DebianError::Filesystem)?;
-    let command = CommandSpec::new(
-        "chroot",
-        [
-            root.as_os_str(),
-            std::ffi::OsStr::new("grub-mkconfig"),
-            std::ffi::OsStr::new("-o"),
-            std::ffi::OsStr::new("/boot/grub/grub.cfg"),
-        ],
-    )
-    .phase("debian-grub-config")
-    .stdin(CommandInput::Null)
-    .stdout_mode(OutputMode::Stream)
-    .stderr_mode(OutputMode::Stream);
-    run_checked(runner, &command).map_err(DebianError::Command)
-}
-
 pub fn apt_package_list(
     no_cloud_kernel: bool,
     boot_mode: BootMode,
@@ -223,17 +103,20 @@ pub fn apt_package_list_for_plan(
     let configuration = super::packages::configuration_for_plan(plan, Target::Debian, false)?;
     let mut packages = apt_package_list_with_kernel(
         configuration.kernel.package,
-        plan.force_boot_mode.unwrap_or(boot_mode),
+        boot_mode,
         plan.username.as_deref().unwrap_or("root"),
         firmware_packages,
     );
+    if plan.system.root_filesystem.as_str() == "btrfs" {
+        packages.push("btrfs-progs".into());
+    }
     packages.extend(configuration.extra_packages.into_iter().map(str::to_owned));
     Ok(packages)
 }
 
 fn apt_package_list_with_kernel(
     kernel_package: &str,
-    boot_mode: BootMode,
+    _boot_mode: BootMode,
     username: &str,
     firmware_packages: &[String],
 ) -> Vec<String> {
@@ -244,14 +127,8 @@ fn apt_package_list_with_kernel(
         "openssh-server".to_owned(),
         "xfsprogs".to_owned(),
         kernel_package.to_owned(),
-        match boot_mode {
-            BootMode::Efi => "grub-efi-amd64".to_owned(),
-            BootMode::Bios => "grub-pc".to_owned(),
-        },
+        "dosfstools".to_owned(),
     ];
-    if boot_mode == BootMode::Efi {
-        packages.extend(["efibootmgr".to_owned(), "dosfstools".to_owned()]);
-    }
     if username != "root" {
         packages.push("sudo".to_owned());
     }
@@ -317,7 +194,7 @@ pub fn bootstrap_rootfs<R: CommandRunner>(
         [
             "--arch=amd64",
             "--variant=minbase",
-            "--include=ca-certificates,debconf-utils",
+            "--include=ca-certificates",
             codename,
         ],
     )
@@ -330,20 +207,6 @@ pub fn bootstrap_rootfs<R: CommandRunner>(
     command.args.push(root.as_os_str().to_owned());
     command.args.push(archive.into());
     run_checked(runner, &command).map_err(DebianError::Command)
-}
-
-fn append_grub_cmdline(root: &Path, tty_cmdline: &str) -> io::Result<()> {
-    let path = root.join("etc/default/grub");
-    let existing = match fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
-        Err(error) => return Err(error),
-    };
-    let mut contents = existing;
-    contents.extend_from_slice(
-        format!("GRUB_CMDLINE_LINUX=\"$GRUB_CMDLINE_LINUX {tty_cmdline}\"\n").as_bytes(),
-    );
-    atomic_replace(&path, &contents)
 }
 
 fn remove_if_exists(path: &Path) -> io::Result<()> {

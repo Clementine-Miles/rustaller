@@ -13,11 +13,7 @@ pub(super) enum Authentication {
     Password,
     PublicKeys,
 }
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub(super) enum IsoMode {
-    Loopback,
-    Kernel,
-}
+
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) enum DnsProvider {
     Custom,
@@ -43,7 +39,6 @@ pub(super) struct Draft {
     pub kernel: KernelChoice,
     pub boot: Option<BootMode>,
     pub hold: Option<u8>,
-    pub iso_mode: IsoMode,
     pub generic_kernel: bool,
     pub debug: bool,
     pub profile: InstallProfile,
@@ -72,7 +67,6 @@ impl Draft {
             kernel: KernelChoice::Auto,
             boot: None,
             hold: None,
-            iso_mode: IsoMode::Loopback,
             generic_kernel: false,
             debug: false,
             profile: InstallProfile::Standard,

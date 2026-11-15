@@ -436,8 +436,11 @@ pub fn run_firstboot_update<R: CommandRunner>(r: &mut R, root: &Path) -> Result<
         ),
         (vec!["mkinitcpio", "-P"], "cachyos-firstboot-initramfs"),
         (
-            vec!["grub-mkconfig", "-o", "/boot/grub/grub.cfg"],
-            "cachyos-firstboot-grub",
+            vec![
+                "/usr/local/libexec/rustaller-limine-worker",
+                "limine-refresh",
+            ],
+            "cachyos-firstboot-limine",
         ),
     ] {
         let spec = if root == Path::new("/") {

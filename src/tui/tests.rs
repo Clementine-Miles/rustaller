@@ -1,6 +1,6 @@
 use super::editor::{Editor, MAX_INPUT, TextValue};
 use super::state::{
-    Action, Authentication, DnsProvider, EditSlot, Field, IsoMode, MenuFrame, Page, Setting, View,
+    Action, Authentication, DnsProvider, EditSlot, Field, MenuFrame, Page, Setting, View,
 };
 use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -596,12 +596,6 @@ fn drafts_survive_back_navigation_and_switching_targets_without_cross_target_opt
     choose(&mut wizard, 2);
     assert_eq!(wizard.draft().get(Field::Username), "arch_user");
     assert!(wizard.draft().kernel == KernelChoice::Lts);
-    choose(&mut wizard, 4);
-    set(&mut wizard, Field::IsoPath, "/images/live.iso");
-    let plan = wizard.build_plan().unwrap();
-    assert!(plan.password.is_none());
-    assert!(plan.username.is_none());
-    assert!(plan.post_install.is_default());
 }
 
 #[test]
@@ -671,7 +665,7 @@ fn all_automatic_targets_match_cli_plan_encoding_including_multiple_keys_and_hos
 #[test]
 fn rescue_and_manual_targets_match_cli_and_hide_installation_categories() {
     let mut wizard = wizard();
-    choose(&mut wizard, 5);
+    choose(&mut wizard, 4);
     credentials(&mut wizard);
     wizard.draft_mut().generic_kernel = true;
     assert_same_plan(
@@ -702,57 +696,6 @@ fn rescue_and_manual_targets_match_cli_and_hide_installation_categories() {
         entry.action,
         Action::Edit(EditSlot::Field(Field::Disk)) | Action::Select(super::state::Setting::Hold)
     )));
-    choose(&mut wizard, 6);
-    wizard.draft_mut().boot = Some(BootMode::Bios);
-    assert_same_plan(&wizard, &["netboot.xyz", "--force-boot-mode", "bios"]);
-    for index in [4, 6] {
-        choose(&mut wizard, index);
-        assert!(!wizard.entries().iter().any(|entry| matches!(
-            entry.action,
-            Action::Open(Page::Account | Page::Host | Page::Resources)
-        )));
-    }
-}
-
-#[test]
-fn iso_modes_use_only_active_fields_and_validate_pure_grub_safety() {
-    let mut wizard = wizard();
-    choose(&mut wizard, 4);
-    set(&mut wizard, Field::IsoPath, "/images/live.iso");
-    set(&mut wizard, Field::IsoKernel, "/live/vmlinuz");
-    set(&mut wizard, Field::IsoInitrd, "/live/initrd.img");
-    assert_same_plan(&wizard, &["iso", "--iso", "/images/live.iso"]);
-    wizard.draft_mut().iso_mode = IsoMode::Kernel;
-    set(&mut wizard, Field::IsoConfig, "/boot/grub/loopback.cfg");
-    set(
-        &mut wizard,
-        Field::IsoCmdline,
-        "boot=live findiso=%ISO_PATH%",
-    );
-    assert_same_plan(
-        &wizard,
-        &[
-            "iso",
-            "--iso",
-            "/images/live.iso",
-            "--iso-kernel",
-            "/live/vmlinuz",
-            "--iso-initrd",
-            "/live/initrd.img",
-            "--iso-cmdline",
-            "boot=live findiso=%ISO_PATH%",
-        ],
-    );
-    set(&mut wizard, Field::IsoPath, "relative.iso");
-    assert!(wizard.build_plan().is_err());
-    set(&mut wizard, Field::IsoPath, "/images/live.iso");
-    set(&mut wizard, Field::IsoCmdline, "boot=live;reboot");
-    assert!(wizard.build_plan().is_err());
-    set(&mut wizard, Field::IsoCmdline, "");
-    set(&mut wizard, Field::IsoInitrd, "");
-    assert!(wizard.build_plan().is_err());
-    set(&mut wizard, Field::IsoKernel, "");
-    assert!(wizard.build_plan().is_err());
 }
 
 #[test]
@@ -845,28 +788,6 @@ fn summary_displays_effective_trimmed_options_but_keeps_exact_password_whitespac
     assert!(summary.contains("Username: alice"));
     assert!(summary.contains("Hostname: my-vps"));
     assert!(summary.contains("frpc: Not set"));
-    choose(&mut wizard, 4);
-    wizard.draft_mut().iso_mode = IsoMode::Kernel;
-    set(&mut wizard, Field::IsoPath, " /images/live.iso ");
-    set(&mut wizard, Field::IsoKernel, " /live/vmlinuz ");
-    set(&mut wizard, Field::IsoInitrd, " /live/initrd ");
-    set(&mut wizard, Field::IsoCmdline, "   ");
-    assert!(
-        wizard
-            .build_plan()
-            .unwrap()
-            .iso
-            .as_ref()
-            .unwrap()
-            .cmdline
-            .is_none()
-    );
-    assert!(
-        wizard
-            .summary()
-            .join("\n")
-            .contains("ISO kernel command line: Not set")
-    );
 }
 
 #[test]
@@ -927,7 +848,7 @@ fn lists_and_review_scroll_and_tiny_terminal_blocks_hidden_actions() {
     press(&mut wizard, KeyCode::F(2));
     press(&mut wizard, KeyCode::End);
     let screen = render(&mut wizard, 55, 18);
-    assert!(screen.contains("BIOS/UEFI"));
+    assert!(screen.contains("compatibility."));
     assert!(matches!(wizard.view,View::Review {scroll} if scroll>0));
     render(&mut wizard, 12, 4);
     assert!(matches!(
@@ -1018,8 +939,8 @@ fn inactive_dns_and_minimal_overrides_are_not_submitted_or_exposed_for_rescue() 
     assert!(plan.system.is_default());
     wizard.draft_mut().dns_mode = DnsMode::Static;
     assert!(wizard.build_plan().is_err());
-    for index in [4, 5, 6, 7] {
-        choose(&mut wizard, index);
+    {
+        choose(&mut wizard, 4);
         assert!(!wizard.entries().iter().any(|entry| matches!(
             entry.action,
             Action::Open(Page::Installation | Page::Network)
@@ -1293,7 +1214,7 @@ fn preflight_is_a_separate_stage_and_failed_checks_cannot_execute() {
         wizard.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
         Progress::Preflight(_)
     ));
-    wizard.preflight_complete(Ok("verified host; test-password".into()));
+    wizard.preflight_complete(Ok("verified host; test-password".to_owned().into()));
     let View::Preflight { message, .. } = &wizard.view else {
         panic!("preflight report")
     };
@@ -1428,4 +1349,67 @@ fn directory_snapshots_share_unchanged_secrets_and_discard_only_the_edited_draft
         before.get(Field::Hostname)
     );
     assert_eq!(wizard.draft().get(Field::Password), "test-password");
+}
+
+#[test]
+fn current_and_target_panels_are_responsive_private_and_render_without_probing() {
+    use rustaller::host::inspect::PreflightReport;
+    let mut wizard = wizard();
+    choose(&mut wizard, 1);
+    credentials(&mut wizard);
+    wizard.preflight_complete(Ok(PreflightReport{
+        current:"OS: Debian (simulated)\nCPU: virtual CPU\nFirmware: bios\nDisk: /dev/vda\nUnknown: unknown\nSECRET test-password".into(),
+        target:"Distribution: Debian\nBootloader: Limine 9.6.5\nRoot: btrfs @\nFAT32: 512 MiB at /efi".into(),
+        warning:"ERASE ALL PARTITIONS ON /dev/vda".into(),
+    }));
+    for (width, height) in [(120, 40), (60, 40), (48, 25)] {
+        let text = render(&mut wizard, width, height);
+        assert!(!text.contains("test-password"));
+        assert!(text.contains("CURRENT SYSTEM") && text.contains("TARGET SYSTEM"));
+        assert!(text.contains("/dev/vda"));
+        assert!(text.contains("Limine"));
+        let lines: Vec<_> = text.lines().collect();
+        let current = lines
+            .iter()
+            .position(|v| v.contains("CURRENT SYSTEM"))
+            .unwrap();
+        let target = lines
+            .iter()
+            .position(|v| v.contains("TARGET SYSTEM"))
+            .unwrap();
+        assert_eq!(current == target, width >= 100);
+        if std::env::var_os("RUSTALLER_CAPTURE_TUI").is_some() {
+            std::fs::write(format!("/tmp/rustaller-tui-{width}.txt"), text).unwrap();
+        }
+    }
+    wizard.preflight_complete(Err("unsupported firmware".into()));
+    assert!(wizard.report.is_none());
+    assert!(matches!(
+        wizard.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        Progress::Continue
+    ));
+}
+#[test]
+fn btrfs_and_boot_size_tui_fields_share_cli_validation_and_target_drafts() {
+    for index in 0..4 {
+        let mut wizard = wizard();
+        choose(&mut wizard, index);
+        credentials(&mut wizard);
+        wizard.draft_mut().root_filesystem = rustaller::config::RootFilesystem::Btrfs;
+        set(&mut wizard, Field::Compression, "3");
+        set(&mut wizard, Field::BootSize, "1024");
+        let args = [
+            super::state::CHOICES[index].1,
+            "--username=root",
+            "--password=test-password",
+            "--filesystem=btrfs",
+            "--btrfs-compression=3",
+            "--boot-size-mib=1024",
+        ];
+        assert_same_plan(&wizard, &args);
+        assert!(wizard.validate_input(Field::Compression, "16").is_err());
+        assert!(wizard.validate_input(Field::BootSize, "511").is_err());
+        set(&mut wizard, Field::BootSize, "511");
+        assert_eq!(wizard.invalid_field(), Some(Field::BootSize));
+    }
 }

@@ -16,7 +16,8 @@ mod render;
 mod state;
 use state::{Progress, Wizard};
 
-const PREVIEW: &str = "Linux reinstallation and media boot. Installation erases disks; media boot reboots; SSH key generation writes files.";
+const PREVIEW: &str =
+    "Linux VPS reinstallation · Limine target bootloader · Installation erases the selected disk.";
 
 struct TerminalMode;
 impl Drop for TerminalMode {
@@ -32,7 +33,7 @@ impl Drop for TerminalMode {
 }
 
 pub fn run(
-    mut preflight: impl FnMut(&InstallPlan) -> Result<String, String>,
+    mut preflight: impl FnMut(&InstallPlan) -> Result<rustaller::host::inspect::PreflightReport, String>,
     mut execute: impl FnMut(&InstallPlan) -> Result<(), String>,
 ) -> Result<(), String> {
     enable_raw_mode().map_err(|error| error.to_string())?;

@@ -87,7 +87,7 @@ mod args {
             parse_args([
                 "alpine",
                 "--hold=1",
-                "--confirm-handoff",
+                "--confirm-erase",
                 "RESCUE disk identity"
             ]),
             Ok(CliOutcome::ConfirmedPlan { .. })
@@ -98,26 +98,6 @@ mod args {
             panic!("literal credential")
         };
         assert_eq!(plan.password.as_ref().unwrap().expose(), "--inspect");
-    }
-
-    #[test]
-    fn local_iso_options_are_kept_separate_from_automatic_targets() {
-        let CliOutcome::Plan(plan) = parse(&[
-            "iso",
-            "--iso",
-            "/images/live.iso",
-            "--iso-kernel",
-            "/live/vmlinuz",
-            "--iso-initrd",
-            "/live/initrd.img",
-            "--iso-cmdline",
-            "boot=live findiso=%ISO_PATH%",
-        ]) else {
-            panic!("expected plan");
-        };
-        assert_eq!(plan.target, Target::LocalIso);
-        assert_eq!(plan.iso.as_ref().unwrap().path, "/images/live.iso");
-        assert!(parse_args(["iso", "--iso", "/images/live.iso", "--ssh-port", "22"]).is_err());
     }
 
     #[test]
@@ -198,7 +178,7 @@ mod args {
                 "bad\nsecret",
             ],
             vec!["debian", "--root-password", "unused-secret"],
-            vec!["debian", "--filesystem=btrfs"],
+            vec!["debian", "--filesystem=btrfs", "--swapfile-mib=64"],
             vec!["debian", "--hold=1", "--filesystem=ext4"],
             vec!["netboot.xyz", "--filesystem=ext4"],
         ] {
@@ -210,8 +190,8 @@ mod args {
 
 mod model {
     use rustaller::model::{
-        BootMode, CURRENT_SCHEMA_VERSION, InstallPlan, IsoOptions, SecretString, Target,
-        validate_host_arch, validate_ram,
+        BootMode, CURRENT_SCHEMA_VERSION, InstallPlan, SecretString, Target, validate_host_arch,
+        validate_ram,
     };
 
     #[test]
@@ -220,8 +200,6 @@ mod model {
         assert_eq!(Target::Debian.minimum_ram_mb(), 512);
         assert_eq!(Target::Arch.minimum_ram_mb(), 1024);
         assert_eq!(Target::Gentoo.minimum_ram_mb(), 2048);
-        assert_eq!(Target::LocalIso.minimum_ram_mb(), 0);
-        assert_eq!(Target::NetbootXyz.minimum_ram_mb(), 0);
         assert_eq!(Target::Reset.minimum_ram_mb(), 0);
     }
 
@@ -301,29 +279,7 @@ mod model {
     }
 
     #[test]
-    fn local_iso_requires_iso_and_rejects_automatic_only_options() {
-        let mut plan = InstallPlan::new(Target::LocalIso);
-        assert!(plan.validate().is_err());
-
-        plan.iso = Some(IsoOptions {
-            path: "/images/live.iso".into(),
-            config: Some("/boot/grub/loopback.cfg".into()),
-            kernel: None,
-            initrd: None,
-            cmdline: None,
-        });
-        assert!(plan.validate().is_ok());
-
-        plan.ssh_port = Some(2222);
-        assert!(plan.validate().is_err());
-    }
-
-    #[test]
     fn netboot_and_reset_reject_automatic_install_fields() {
-        let mut netboot = InstallPlan::new(Target::NetbootXyz);
-        netboot.target_disk = Some("/dev/vda".into());
-        assert!(netboot.validate().is_err());
-
         let mut reset = InstallPlan::new(Target::Reset);
         reset.hold = Some(1);
         assert!(reset.validate().is_ok());
@@ -392,7 +348,7 @@ mod model {
             "ext4".parse::<RootFilesystem>().unwrap(),
             RootFilesystem::Ext4
         );
-        for invalid in ["", "btrfs", "ext4;reboot", "EXT4"] {
+        for invalid in ["", "zfs", "ext4;reboot", "EXT4"] {
             assert!(invalid.parse::<RootFilesystem>().is_err());
         }
         let mut plan = InstallPlan::new(Target::Debian);
@@ -409,7 +365,7 @@ mod model {
 mod plan_codec {
     use rustaller::codec::{PlanCodecError, decode_plan, encode_plan};
     use rustaller::model::{
-        BootMode, CURRENT_SCHEMA_VERSION, InstallPlan, IsoOptions, PlanError, SecretString, Target,
+        BootMode, CURRENT_SCHEMA_VERSION, InstallPlan, PlanError, SecretString, Target,
     };
     use rustaller::postinstall::KernelChoice;
 
@@ -472,25 +428,6 @@ mod plan_codec {
         let decoded = decode_plan(&encode_plan(&plan).expect("encode SSH key plan"))
             .expect("decode SSH key plan");
         assert_eq!(decoded.ssh_keys, plan.ssh_keys);
-    }
-
-    #[test]
-    fn local_iso_plan_round_trip_preserves_boot_options() {
-        let mut plan = InstallPlan::new(Target::LocalIso);
-        plan.iso = Some(IsoOptions {
-            path: "/images/rescue.iso".into(),
-            config: None,
-            kernel: Some("/live/vmlinuz".into()),
-            initrd: Some("/live/initrd.img".into()),
-            cmdline: Some("boot=live findiso=%ISO_PATH%".into()),
-        });
-        plan.force_boot_mode = None;
-        plan.validate().expect("valid local ISO plan");
-
-        let decoded =
-            decode_plan(&encode_plan(&plan).expect("encode ISO plan")).expect("decode ISO plan");
-        assert_eq!(decoded.target, Target::LocalIso);
-        assert_eq!(decoded.iso, plan.iso);
     }
 
     #[test]

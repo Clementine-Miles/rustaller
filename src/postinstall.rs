@@ -38,7 +38,7 @@ impl KernelChoice {
             Target::Debian => "standard/cloud/generic",
             Target::Arch => "standard/lts/cachyos",
             Target::Gentoo => "auto/standard",
-            Target::LocalIso | Target::NetbootXyz | Target::Reset => "auto",
+            Target::Reset => "auto",
         }
     }
 }
@@ -188,7 +188,7 @@ impl PostInstallConfig {
             (Target::Gentoo, KernelChoice::Auto | KernelChoice::Standard) => {
                 ("sys-kernel/gentoo-kernel-bin", None)
             }
-            (Target::LocalIso | Target::NetbootXyz | Target::Reset, _) => {
+            (Target::Reset, _) => {
                 return Err(PostInstallError::UnexpectedRoute);
             }
             _ => {

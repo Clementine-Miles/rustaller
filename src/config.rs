@@ -146,13 +146,15 @@ pub enum RootFilesystem {
     #[default]
     Xfs,
     Ext4,
+    Btrfs,
 }
 impl RootFilesystem {
-    pub const ALL: &'static [Self] = &[Self::Xfs, Self::Ext4];
+    pub const ALL: &'static [Self] = &[Self::Xfs, Self::Ext4, Self::Btrfs];
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Xfs => "xfs",
             Self::Ext4 => "ext4",
+            Self::Btrfs => "btrfs",
         }
     }
 }
@@ -162,6 +164,7 @@ impl FromStr for RootFilesystem {
         match value {
             "xfs" => Ok(Self::Xfs),
             "ext4" => Ok(Self::Ext4),
+            "btrfs" => Ok(Self::Btrfs),
             _ => Err(SystemConfigError::InvalidFilesystem),
         }
     }
@@ -169,6 +172,8 @@ impl FromStr for RootFilesystem {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SystemConfig {
+    pub boot_size_mib: Option<u32>,
+    pub btrfs_compression: Option<u8>,
     pub root_filesystem: RootFilesystem,
     pub profile: InstallProfile,
     pub with_tools: bool,
@@ -186,11 +191,25 @@ impl SystemConfig {
         if !self.is_default() && (!target.is_automatic() || hold == Some(1)) {
             return Err(SystemConfigError::UnexpectedRoute);
         }
+        if self
+            .boot_size_mib
+            .is_some_and(|n| !(512..=4096).contains(&n))
+        {
+            return Err(SystemConfigError::InvalidBootSize);
+        }
+        if self.btrfs_compression.is_some_and(|n| n > 15)
+            || (self.btrfs_compression.is_some() && self.root_filesystem != RootFilesystem::Btrfs)
+        {
+            return Err(SystemConfigError::InvalidCompression);
+        }
         self.dns.validate()?;
         self.network
             .validate(target)
             .map_err(SystemConfigError::Network)?;
         self.swap.validate().map_err(SystemConfigError::Swap)?;
+        if self.root_filesystem == RootFilesystem::Btrfs && self.swap.size_mib.is_some() {
+            return Err(SystemConfigError::BtrfsSwapUnsupported);
+        }
         if self.network.ipv6 == Ipv6Policy::Disable
             && self
                 .dns
@@ -233,6 +252,9 @@ impl SystemConfig {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SystemConfigError {
     InvalidFilesystem,
+    InvalidBootSize,
+    InvalidCompression,
+    BtrfsSwapUnsupported,
     InvalidProfile,
     InvalidDnsMode,
     AutomaticDnsWithValues,
@@ -253,15 +275,30 @@ impl fmt::Display for SystemConfigError {
             return error.fmt(f);
         }
         f.write_str(match self {
-            Self::InvalidFilesystem => "Root filesystem must be xfs or ext4",
+            Self::InvalidFilesystem => "Root filesystem must be xfs, ext4 or btrfs",
+            Self::InvalidBootSize => "FAT32 boot partition must be 512-4096 MiB",
+            Self::InvalidCompression => {
+                "Btrfs compression requires Btrfs and a zstd level 0-15 (0=off)"
+            }
+            Self::BtrfsSwapUnsupported => {
+                "Btrfs swapfile allocation is not implemented; omit swapfile"
+            }
             Self::InvalidProfile => "Profile must be standard or minimal",
             Self::InvalidDnsMode => "DNS mode must be auto or static",
-            Self::AutomaticDnsWithValues => "Automatic DNS cannot contain explicit servers or search domains",
+            Self::AutomaticDnsWithValues => {
+                "Automatic DNS cannot contain explicit servers or search domains"
+            }
             Self::InvalidDnsCount => "Static DNS requires 1-3 upstream IP addresses",
-            Self::InvalidDnsServer => "DNS requires a unicast upstream IPv4/IPv6 address without a port or scope",
+            Self::InvalidDnsServer => {
+                "DNS requires a unicast upstream IPv4/IPv6 address without a port or scope"
+            }
             Self::DuplicateDnsServer => "Duplicate DNS server address",
-            Self::InvalidSearchDomain => "DNS search domains must be unique ASCII domains (at most 6, total 255 bytes)",
-            Self::UnexpectedRoute => "Target system settings require an automatic installation, not rescue or interactive media",
+            Self::InvalidSearchDomain => {
+                "DNS search domains must be unique ASCII domains (at most 6, total 255 bytes)"
+            }
+            Self::UnexpectedRoute => {
+                "Target system settings require an automatic installation, not rescue or reset"
+            }
             Self::Network(_) | Self::Swap(_) => unreachable!(),
         })
     }

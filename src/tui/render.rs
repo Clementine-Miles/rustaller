@@ -78,7 +78,6 @@ impl Wizard {
                     Setting::Kernel => "Choose target kernel",
                     Setting::Boot => "Choose boot mode",
                     Setting::Hold => "Choose installation hold behavior",
-                    Setting::IsoMode => "Choose ISO boot method",
                     Setting::Profile => "Choose installation profile",
                     Setting::DnsMode => "Choose DNS policy",
                     Setting::RootFilesystem => {
@@ -136,13 +135,12 @@ impl Wizard {
                 "Enter: save  Esc: cancel  Left/Right/Home/End: move  Ctrl-U: clear"
             }
             View::Review { scroll } => {
-                render_text(
-                    frame,
-                    body,
-                    "Review installation",
-                    summary.join("\n"),
-                    scroll,
-                );
+                let report = rustaller::host::inspect::PreflightReport {
+                    current: self.report.as_ref().map(|r|r.current.clone()).unwrap_or_else(||"Not inspected yet. Enter runs read-only host and disk checks.\nFirmware, storage eligibility and network ownership remain unknown.".into()),
+                    target: summary.join("\n"),
+                    warning: self.report.as_ref().map(|r|r.warning.clone()).unwrap_or_else(||"DESTRUCTIVE INSTALLATION: the selected whole disk will be erased after successful preflight and exact disk-identity confirmation.".into()),
+                };
+                render_report(frame, body, &report, scroll);
                 "Enter: read-only preflight  Esc: edit  Up/Down/PgUp/PgDn: scroll"
             }
             View::Preflight {
@@ -150,17 +148,11 @@ impl Wizard {
                 message,
                 scroll,
             } => {
-                render_text(
-                    frame,
-                    body,
-                    if *success {
-                        "Read-only preflight passed"
-                    } else {
-                        "Preflight blocked"
-                    },
-                    message.clone(),
-                    scroll,
-                );
+                if *success && let Some(report) = &self.report {
+                    render_report(frame, body, report, scroll);
+                } else {
+                    render_text(frame, body, "Preflight blocked", message.clone(), scroll);
+                }
                 if *success {
                     "Enter: final confirmation  Esc: edit  Up/Down: scroll"
                 } else {
@@ -276,7 +268,7 @@ impl Wizard {
             centered_title,
         );
         frame.render_widget(
-            Paragraph::new("RUSTALLER | Linux reinstallation and media boot")
+            Paragraph::new("RUSTALLER | Linux VPS reinstallation | Limine")
                 .alignment(Alignment::Center)
                 .wrap(Wrap { trim: false }),
             subtitle,
@@ -371,4 +363,42 @@ fn render_text(frame: &mut Frame, area: Rect, title: &str, text: String, scroll:
         Paragraph::new(text).block(Block::bordered().title(title)),
         area,
     );
+}
+
+fn render_report(
+    frame: &mut Frame,
+    area: Rect,
+    report: &rustaller::host::inspect::PreflightReport,
+    scroll: &mut usize,
+) {
+    let [warning, panels] =
+        Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(area);
+    frame.render_widget(
+        Paragraph::new(report.warning.clone())
+            .wrap(Wrap { trim: false })
+            .style(Style::default().fg(Color::Red)),
+        warning,
+    );
+    let panels: [Rect; 2] = if area.width >= 100 {
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(panels)
+    } else {
+        Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(panels)
+    };
+    let mut current_scroll = *scroll;
+    let mut target_scroll = *scroll;
+    render_text(
+        frame,
+        panels[0],
+        "CURRENT SYSTEM · detected",
+        report.current.clone(),
+        &mut current_scroll,
+    );
+    render_text(
+        frame,
+        panels[1],
+        "TARGET SYSTEM · planned",
+        report.target.clone(),
+        &mut target_scroll,
+    );
+    *scroll = current_scroll.max(target_scroll);
 }

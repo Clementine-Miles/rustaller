@@ -15,10 +15,11 @@ cargo xtask bundle
 ```
 
 在交互终端无参数运行时打开英文 TUI。实际安装需要 root、通过预检并输入完整磁盘
-身份确认令牌；`--inspect` 只读。支持 XFS/ext4、发行版内核、SSH/账户、DNS/网络策略
+身份确认令牌；`--inspect` 只读。支持 XFS/ext4/Btrfs、发行版内核、SSH/账户、DNS/网络策略
 及可选目标 swapfile。自动流程要求 kexec，最后仅重启一次；失败保留 Live 救援。
-netboot.xyz 和本地 ISO 已接入需明确确认的 GRUB 单次启动流程；reset 不可执行。
-请先阅读安装文档中的限制；实际介质启动验收仍未完成。
+新系统统一使用 Limine 9.6.5，默认 FAT32（`/efi`）加根分区；BIOS 大盘使用带专用
+引导分区的 GPT。Btrfs 使用 `@` 和可选 zstd，暂不支持 Btrfs swapfile。
+TUI 对照展示检测到的当前系统与安装计划；保留 reset 基础设施，但执行仍不可用。
 
 当前原系统网络捕获要求已生效、显式配置的单文件 networkd 配置；不支持的网络管理器
 或路由策略会在清盘前终止准备。

@@ -2,7 +2,7 @@ use crate::config::{SystemConfig, SystemConfigError};
 use crate::postinstall::{PostInstallConfig, PostInstallError};
 use std::fmt;
 
-pub const CURRENT_SCHEMA_VERSION: u16 = 7;
+pub const CURRENT_SCHEMA_VERSION: u16 = 8;
 
 pub fn valid_account_name(value: &str) -> bool {
     !value.is_empty()
@@ -23,8 +23,6 @@ pub enum Target {
     Debian,
     Arch,
     Gentoo,
-    LocalIso,
-    NetbootXyz,
     Reset,
 }
 
@@ -34,7 +32,7 @@ impl Target {
             Self::Alpine | Self::Debian => 512,
             Self::Arch => 1024,
             Self::Gentoo => 2048,
-            Self::LocalIso | Self::NetbootXyz | Self::Reset => 0,
+            Self::Reset => 0,
         }
     }
 
@@ -104,8 +102,6 @@ impl fmt::Display for Target {
             Self::Debian => "Debian",
             Self::Arch => "Arch",
             Self::Gentoo => "Gentoo",
-            Self::LocalIso => "local ISO",
-            Self::NetbootXyz => "netboot.xyz",
             Self::Reset => "reset",
         })
     }
@@ -124,15 +120,6 @@ impl BootMode {
             Self::Efi => "efi",
         }
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct IsoOptions {
-    pub path: String,
-    pub config: Option<String>,
-    pub kernel: Option<String>,
-    pub initrd: Option<String>,
-    pub cmdline: Option<String>,
 }
 
 pub struct SecretString(Vec<u8>);
@@ -180,7 +167,6 @@ pub struct InstallPlan {
     pub system: SystemConfig,
     pub hold: Option<u8>,
     pub force_boot_mode: Option<BootMode>,
-    pub iso: Option<IsoOptions>,
     pub debug: bool,
 }
 
@@ -208,7 +194,6 @@ impl fmt::Debug for InstallPlan {
             .field("system", &self.system)
             .field("hold", &self.hold)
             .field("force_boot_mode", &self.force_boot_mode)
-            .field("iso", &self.iso)
             .field("debug", &self.debug)
             .finish()
     }
@@ -240,7 +225,6 @@ impl InstallPlan {
             system: SystemConfig::default(),
             hold: None,
             force_boot_mode: None,
-            iso: None,
             debug: false,
         }
     }
@@ -292,47 +276,6 @@ impl InstallPlan {
             return Err(PlanError::UnexpectedOption("root-password"));
         }
 
-        if self.target.is_automatic() {
-            if self.iso.is_some() {
-                return Err(PlanError::UnexpectedOption("ISO"));
-            }
-            return Ok(());
-        }
-
-        match self.target {
-            Target::LocalIso => {
-                let Some(iso) = self.iso.as_ref() else {
-                    return Err(PlanError::MissingIso);
-                };
-                if iso.path.is_empty() {
-                    return Err(PlanError::MissingIso);
-                }
-                let custom_boot = iso.kernel.is_some() || iso.initrd.is_some();
-                if custom_boot != (iso.kernel.is_some() && iso.initrd.is_some()) {
-                    return Err(PlanError::IncompleteIsoBoot);
-                }
-                if iso.cmdline.is_some() && !custom_boot {
-                    return Err(PlanError::IncompleteIsoBoot);
-                }
-                if iso.config.is_some() && custom_boot {
-                    return Err(PlanError::ConflictingIsoBoot);
-                }
-                if self.has_unsupported_interactive_options() {
-                    return Err(PlanError::UnexpectedOption("automatic-install"));
-                }
-            }
-            Target::NetbootXyz => {
-                if self.iso.is_some() || self.has_unsupported_interactive_options() {
-                    return Err(PlanError::UnexpectedOption("automatic-install"));
-                }
-            }
-            Target::Reset => {
-                if self.iso.is_some() {
-                    return Err(PlanError::UnexpectedOption("ISO"));
-                }
-            }
-            Target::Alpine | Target::Debian | Target::Arch | Target::Gentoo => unreachable!(),
-        }
         Ok(())
     }
 
@@ -349,19 +292,6 @@ impl InstallPlan {
         }
         Ok(())
     }
-
-    fn has_unsupported_interactive_options(&self) -> bool {
-        self.username.is_some()
-            || self.password.is_some()
-            || self.root_password.is_some()
-            || !self.ssh_keys.is_empty()
-            || self.ssh_port.is_some()
-            || self.web_port.is_some()
-            || self.frpc_config.is_some()
-            || self.target_disk.is_some()
-            || self.no_cloud_kernel
-            || self.hold.is_some()
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -373,9 +303,6 @@ pub enum PlanError {
     InvalidUsername,
     InvalidPassword,
     MissingRootPassword,
-    MissingIso,
-    IncompleteIsoBoot,
-    ConflictingIsoBoot,
     UnexpectedOption(&'static str),
     PostInstall(PostInstallError),
     SystemConfig(SystemConfigError),
@@ -393,13 +320,6 @@ impl fmt::Display for PlanError {
             Self::InvalidUsername => f.write_str("Invalid username"),
             Self::InvalidPassword => f.write_str("Password must be a nonempty single line of at most 8192 bytes without control characters"),
             Self::MissingRootPassword => f.write_str("A non-root installation account requires a separate root password"),
-            Self::MissingIso => f.write_str("Local ISO mode requires an ISO path"),
-            Self::IncompleteIsoBoot => {
-                f.write_str("Custom ISO boot requires both kernel and initrd")
-            }
-            Self::ConflictingIsoBoot => {
-                f.write_str("Use either ISO loopback config or custom kernel/initrd")
-            }
             Self::UnexpectedOption(name) => {
                 write!(f, "Options are not valid for this route: {name}")
             }
