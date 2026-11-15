@@ -25,12 +25,44 @@ binary do not establish that a VPS can reinstall successfully.
 | Target | Installation | Kernel choices |
 | --- | --- | --- |
 | Alpine latest stable | APK, OpenRC, ifupdown-ng/dhcpcd | standard/lts (`linux-lts`), virt (`linux-virt`) |
-| Debian latest stable | debootstrap minbase, APT, systemd/networkd/resolved | standard/generic, cloud |
-| Arch rolling | pacstrap/pacman, systemd/networkd/resolved | standard, lts, opt-in cachyos |
-| Gentoo rolling | systemd stage3, Portage, dracut, Limine | auto/standard (`gentoo-kernel-bin`) |
+| Debian latest stable | debootstrap minbase, APT, systemd/networkd/resolved | standard/generic (`linux-image-amd64`), cloud (`linux-image-cloud-amd64`) |
+| Arch rolling | pacstrap/pacman, systemd/networkd/resolved | standard (`linux`), lts (`linux-lts`), hardened (`linux-hardened`), zen (`linux-zen`), opt-in cachyos (`linux-cachyos`) |
+| Gentoo rolling | amd64-nomultilib stage3, OpenRC or systemd, Portage, dracut | auto/standard (`sys-kernel/gentoo-kernel-bin`) |
 
 No distribution version argument is accepted. All targets install from Alpine
 Live with Limine 9.6.5. XFS is default; ext4 and Btrfs are selectable.
+`--kernel` accepts the package spellings shown above as target-specific aliases;
+the older standard/generic/cloud/lts/virt/cachyos choices remain available where
+valid. Alpine's `cloud` alias selects `linux-virt`. The Alpine Live handoff kernel
+is selected separately from the installed target kernel. Package availability,
+root-filesystem/driver evidence and a complete kernel/initramfs pair are checked
+during installation; these choices do not imply completed VM boot acceptance.
+
+## Gentoo stage3 and init
+
+New Gentoo plans default to `--gentoo-init=openrc`; select
+`--gentoo-init=systemd` explicitly for systemd. This option is rejected for other
+distributions. The TUI exposes it under Gentoo's host settings and previews the
+stage3, init system and 64-bit-only ABI.
+
+| Init choice | Official stage3 category |
+| --- | --- |
+| OpenRC (default) | `stage3-amd64-nomultilib-openrc` |
+| systemd | `stage3-amd64-nomultilib-systemd` |
+
+Selection uses the corresponding official latest-stage3 metadata, authenticated
+signed metadata and SHA-512 payload verification. Architecture, ABI, init variant,
+timestamped archive name and size must match; there is no fallback across variants
+or to a generic multilib, musl or x32 archive. The matching no-multilib Portage
+profile and `ABI_X86=64` are validated. CPU ISA detection does not change the
+generic amd64 optimization baseline or the no-multilib ABI policy.
+OpenRC uses Gentoo netifrc, dhcpcd/openresolv, native OpenRC runlevels and SSH;
+systemd retains networkd/resolved and native units. Both share the binary
+distribution kernel, dracut, Limine and supported root filesystems. No source
+kernel compilation or v3-specific optimization is selected automatically.
+
+The new plan schema is 9 and uses a matching worker runtime. Older plans are
+rejected instead of reinterpreting their former systemd default as OpenRC.
 
 ## Disk layout and boot
 
@@ -40,23 +72,28 @@ Live with Limine 9.6.5. XFS is default; ext4 and Btrfs are selectable.
 | UEFI x86_64, 512/4096-byte sectors | GPT | 1: FAT32 ESP; 2: root |
 | BIOS, at least 2 TiB, 512-byte sectors | GPT | 1: 1 MiB BIOS stage2; 2: FAT32; 3: root |
 
-The FAT32 partition is 512 MiB by default and mounted at `/efi` in every target.
-Use `--boot-size-mib 1024` (512–4096) for large initramfs or multiple kernels.
+The FAT32 partition is 512 MiB by default and mounted at `/boot` in every target.
+Consider `--boot-size-mib 1024` or `2048` (512–4096) for large initramfs,
+multiple kernels and retained boot generations. Actual artifact size and recovery
+reserve must fit; the refresh fails safely if the selected capacity is insufficient.
 The first MiB is reserved for alignment/BIOS embedding; GPT BIOS stage2 uses its
-own partition. Root uses the remaining space, and native `/boot` stays on root.
+own partition. Root uses the remaining space. Distribution kernel/initramfs files
+and Rustaller's generation directories reside on the FAT32 filesystem.
 The geometry check rejects read-only/unknown sectors, BIOS/4Kn and insufficient
 space before erasure. The 512 MiB root formatting floor is not a distribution
 size recommendation; leave ample disk space for packages and updates.
 
-UEFI installs `/efi/EFI/BOOT/BOOTX64.EFI` without NVRAM entries. BIOS runs the
+UEFI installs `/boot/EFI/BOOT/BOOTX64.EFI` without NVRAM entries. BIOS runs the
 pinned native Limine installer against the identity-bound whole disk, with the
-explicit GPT stage2 partition when needed. `/efi/limine.conf` is authoritative;
+explicit GPT stage2 partition when needed. `/boot/limine.conf` is authoritative;
 serial Linux console remains `ttyS0,115200n8`. Firmware honoring the fallback
 path and serial behavior require real boot testing.
 
 Btrfs uses an `@` root subvolume and zstd:3 by default. Select compression 0–15
 with `--btrfs-compression` (0 disables it). Btrfs swapfiles are explicitly
 rejected; XFS/ext4 swapfiles remain supported. No snapshot manager is installed.
+FAT32 `/boot` is outside Btrfs snapshots: a root snapshot restore does not restore
+matching kernels/initramfs, which must be restored and verified separately.
 
 ## Build and inspect
 
@@ -70,9 +107,13 @@ A prebuilt release entry is `rustaller-x86_64-linux-musl`. Obtain its matching
 `SHA256SUMS`, verify the downloaded binary, then run the saved executable; release
 packaging and draft status are explained in [development](DEVELOPMENT.md).
 
-`--inspect` performs read-only preflight, displays detected host and computed target
-panels (including unknown facts), and reports disk identity and the exact
-confirmation token. Actual dispatch requires that full token, never a generic
+`--inspect` displays read-only host diagnostics and a computed target preview,
+including unknown or unavailable optional facts. It collects no benchmarks,
+third-party scripts, online IP/provider lookups or uploads. CPU features describe
+what the guest can use; hypervisors can mask the physical host's capabilities.
+Diagnostic collection is separate from installation authorization: incompatible
+firmware, source networking or disk identity still block installation. An eligible
+preflight reports disk identity and the exact confirmation token. Actual dispatch requires that full token, never a generic
 `--yes`. Interactive execution prompts for it; noninteractive execution requires
 `--confirm-erase 'EXACT_TOKEN_FROM_INSPECTION'`. Identity is checked again before
 handoff and in Live. Confirmation is not a substitute for backups.

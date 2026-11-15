@@ -51,8 +51,11 @@ mounted separately, normally at `/os`.
 
 `targets` owns native distribution bootstrap, package trust, accounts, kernel
 payloads, initramfs and Limine. Debian uses debootstrap minbase and systemd;
-Alpine uses OpenRC; Arch and Gentoo use systemd. Limine 9.6.5 is the only installed target bootloader. FAT32 is mounted at `/efi`,
-while native `/boot` stays on the root filesystem. BIOS normally uses MBR with
+Alpine uses OpenRC; Arch uses systemd. Gentoo uses a selected OpenRC (new-plan
+default) or systemd amd64 no-multilib stage3 and a matching Portage profile.
+Limine 9.6.5 is the only installed target bootloader. FAT32 is mounted at `/boot`;
+native kernel/initramfs files and immutable Rustaller generations share that
+filesystem. BIOS normally uses MBR with
 FAT32 + root; UEFI uses GPT with ESP + root. BIOS disks at least 2 TiB use GPT
 with a dedicated stage2 partition followed by FAT32 + root. Root can be XFS,
 ext4 or Btrfs (`@`, optional zstd).
@@ -64,16 +67,53 @@ kernel/initramfs generations on FAT32. Native package hooks invoke the same Rust
 worker to refresh boot artifacts. No additional executable crate or bootloader
 selection layer exists.
 
-`host/inspect.rs` builds the CLI/TUI current-versus-target report after preflight.
+Refresh scans only flat native `/boot` files, matches each kernel with its
+distribution-specific initramfs name, and stages complete ordinary-file copies
+in a unique generation directory. It checks the recorded FAT UUID, holds a
+Linux-root advisory lock, checks capacity, syncs all payloads, validates every
+configuration reference, and then publishes `limine.conf`. A self-contained
+previous configuration and its generation remain available, including previous
+entries in the active menu. FAT rename/sync cannot promise journaled-filesystem
+power-loss atomicity; recovery can restore the validated previous configuration.
+Root Btrfs snapshots do not include `/boot` or restore matching boot artifacts.
+
+`host/inspect.rs` collects typed optional system, memory, virtualization, storage,
+firmware and network facts independently of installation authorization.
+`host/inspect_cpu.rs` isolates CPU topology and psABI classification. CLI/TUI
+inspection uses offline inventory; it does not fetch source metadata. Failed
+installation compatibility leaves optional facts visible and blocks execution.
 The TUI renders cached facts, planned values and explicit unknowns without probing
 inside its render loop. Host firmware is authoritative; forced mode is an
 assertion and cannot switch it.
+
+## CPU capability methodology
+
+Inspection reports guest-visible capabilities without changing the generic target
+ISA baseline. A dedicated probe thread inherits the caller's affinity, pins itself
+to each allowed logical CPU, reads guarded CPUID leaves, and intersects their
+capabilities. It restores affinity before exiting; an incomplete scan or failed
+state check reports Unknown. CPU names never determine ISA support.
+
+Classification follows the cumulative
+[x86-64 psABI levels](https://gitlab.com/x86-psABIs/x86-64-ABI/-/raw/master/x86-64-ABI/low-level-sys-info.tex)
+and [GCC x86 options](https://gcc.gnu.org/onlinedocs/gcc/x86-Options.html).
+The baseline requires long mode, FPU, CMOV, CMPXCHG8B, FXSR, MMX, SSE/SSE2
+and syscall support, with OSFXSR/SCE supplied by the running Linux x86-64 ABI. v2 additionally
+requires CMPXCHG16B, LAHF/SAHF, POPCNT, SSE3, SSSE3, SSE4.1 and SSE4.2.
+v3 additionally requires AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT and MOVBE,
+plus XSAVE/OSXSAVE and OS-enabled XMM/YMM state: guarded XGETBV(0) must satisfy
+`XCR0 & 0x6 == 0x6`. v4 additionally requires AVX512F/BW/CD/DQ/VL and enabled
+opmask/ZMM state: `XCR0 & 0xe6 == 0xe6`. AES-NI and VMX/SVM are separate facts.
+Hypervisor masking and heterogeneous CPUs can lower the common usable level;
+missing procfs fields or unavailable affinity/OS-state checks never raise it.
 
 ## Configuration boundaries
 
 `InstallPlan` holds credentials and typed `SystemConfig`/`PostInstallConfig`.
 `DeploymentManifest` separately records disk identity and validated source
 network facts. Handoff encoding is bounded and rejects incompatible versions.
+Plan schema 9 and its matching worker marker encode Gentoo init selection;
+schema 8 is rejected instead of treating its old systemd selection as OpenRC.
 
 - `host/network.rs`: observe source addresses, applied policy and supported routing;
   `host/handoff.rs` retains authenticated installation preparation and kexec.

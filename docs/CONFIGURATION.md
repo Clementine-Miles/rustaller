@@ -1,11 +1,16 @@
 # Target configuration
 
-`InstallPlan.system: SystemConfig` holds filesystem, boot partition size, Btrfs
-compression, package profile, DNS,
+`InstallPlan.system: SystemConfig` holds Gentoo init selection, filesystem, boot
+partition size, Btrfs compression, package profile, DNS,
 network and optional swap policy. `InstallPlan.post_install: PostInstallConfig`
 holds kernel, hostname and timezone choices. Credentials and SSH settings belong
 to `InstallPlan`; `DeploymentManifest` carries source disk/network facts. These
 settings configure the new target, not the running source or Live network.
+
+Plan schema 9 serializes the Gentoo init choice explicitly and requires the
+matching embedded worker runtime. Older schemas, including schema 8's fixed
+systemd stage3, are rejected before body decoding. Recreate old plans explicitly;
+they are never silently assigned the new OpenRC default.
 
 ## Unified pipeline
 
@@ -28,6 +33,15 @@ ifupdown/OpenRC-managed networking), implicit defaults, changed profiles and
 conflicting owners stop preparation with a diagnostic. Apply an explicit supported
 profile before retrying; do not change a remote host without console access.
 This constraint does not restrict Alpine target networking.
+It also does not prevent read-only diagnostic inspection; unsupported source
+network policy blocks installation authorization, while available facts remain
+visible in the CLI and TUI.
+Gentoo OpenRC targets use Gentoo's netifrc/dhcpcd/openresolv conventions, rather
+than Alpine's ifupdown-ng files. Per-interface `/etc/conf.d/net` settings preserve
+supported static addresses, DHCPv4/DHCPv6/RA and off-link default routes. MAC-bound
+udev rules stabilize the target interface names; the matching `net.INTERFACE`
+services and SSH are added to OpenRC runlevels. Static DNS suppresses client
+resolver replacement. The systemd variant retains networkd and resolved.
 DHCP/RA address, route and client-identity overrides outside the supported policy
 are refused. DNS overrides are selected through the installation plan.
 Only supported Ethernet-style links and simple main-table routing are inherited.
@@ -121,6 +135,14 @@ Native package/service policy preserves SSH, DNS, CA roots, modules, boot files,
 licenses and package databases. Minimal profile trims documentation/cache unless
 explicitly retained; it is not a measured final size guarantee.
 
+Gentoo uses `--gentoo-init=openrc|systemd` with OpenRC as the new-plan default.
+Both select only the matching official `amd64-nomultilib` stage3. The extracted
+matching stable no-multilib profile is preserved when possible; any replacement
+must contain the exact no-multilib profile segment and match the selected init.
+The final selected profile and `ABI_X86="64"` are checked. OpenRC enables native
+udev, hostname, hwclock, modules, sysctl, local and SSH services; systemd enables
+its existing native units. Kernel configuration, dracut and Limine remain shared.
+
 ## Optional swap
 
 `--swapfile-mib 64..65536` creates a new `/swapfile` only on the checked XFS/ext4
@@ -133,7 +155,7 @@ preflight floors. Runtime activation still requires [acceptance](TESTING.md).
 ## Storage, Limine and kernel updates
 
 `--filesystem xfs|ext4|btrfs` selects the root filesystem. `--boot-size-mib`
-sets FAT32 size (512–4096 MiB, default 512) at `/efi`. Explicit partition roles
+sets FAT32 size (512–4096 MiB, default 512) at `/boot`. Explicit partition roles
 determine device numbering, mount paths and UUID fstab bindings. ext4 fsck pass
 is 1; XFS/Btrfs use 0; FAT uses 2. BIOS/UEFI layouts are described in
 [installation](INSTALLATION.md#disk-layout-and-boot).
@@ -144,9 +166,13 @@ options require Btrfs. Limine passes `rootflags=subvol=@`. Each distribution
 installs its filesystem tools and includes Btrfs support through mkinitfs,
 initramfs-tools, mkinitcpio or dracut. Swapfiles on Btrfs fail plan validation;
 there is no snapshot or Btrfs swap management.
+FAT32 `/boot` is outside root-subvolume snapshots. Restoring a Btrfs root snapshot
+does not restore its matching kernel/modules/initramfs; restore and verify matching
+boot artifacts separately before rebooting.
 
-Limine 9.6.5 loads Linux kernel/initramfs copies from FAT, independent of root
-filesystem bootloader support. Native kernels remain in `/boot`. The Rust
+Limine 9.6.5 loads Linux kernel/initramfs from FAT, independent of root
+filesystem bootloader support. Native distribution artifacts and isolated Rustaller
+generations share FAT32 `/boot`. The Rust
 refresh worker accepts 1–8 complete `vmlinuz-*` pairs with matching
 `initrd.img-*`, `initramfs-*.img` or `initramfs-*`. Standalone Intel/AMD
 microcode images, when present, precede initramfs. Numeric versions sort newest
@@ -154,19 +180,36 @@ first; Gentoo same-version `.old` backups are skipped.
 
 | Target | Native update integration |
 | --- | --- |
-| Alpine | APK post-commit hook, after package triggers |
+| Alpine | APK pre/post-commit hook and successful mkinitfs completion |
 | Debian | kernel postinst/postrm and initramfs post-update hooks |
 | Arch | ALPM post-transaction hook on kernel pkgbase/initcpio paths, after mkinitcpio |
 | Gentoo | traditional installkernel postinst, dracut; alternate boot-generator USE flags disabled |
 | Opt-in CachyOS | native full upgrade, initramfs rebuild, Rust Limine refresh |
 
-Hook entry points link to the installed matching static Rust worker; there are
-no independent Shell update scripts. The refresh requires FAT `/efi` mounted with the recorded boot UUID,
+Hook entry points link to the installed matching static Rust worker. Generated
+minimal generator guards and a dracut PATH wrapper call that worker; no separate
+boot-management implementation is maintained. The refresh requires FAT `/boot` mounted with the recorded boot UUID,
 valid pinned boot state, safe sources and space for a complete new generation.
-It streams copies and syncs files before replacing `/efi/limine.conf`.
-The previous generation survives that replacement; later refreshes prune only
-unreferenced managed generations. This is not an atomic multi-file transaction or
-automatic boot rollback. If updates fail, inspect the package-manager error and
+It scans only top-level native files, avoiding recursive copies of existing
+generation directories. Debian's kernel symlink updates are disabled; Gentoo
+uses installkernel's compatible traditional backend. FAT mount options explicitly
+tolerate unsupported chmod/chown, while Rustaller publishes ordinary files without
+symlinks, hard links or per-file Unix permission changes.
+
+Before writing a new generation, free space must hold all new payloads plus a
+1 MiB reserve while preserving native files and currently referenced generations.
+Consider 1024–2048 MiB for multiple kernels or large initramfs; 512 MiB can fail
+this check. The worker syncs payloads before replacing `/boot/limine.conf`. That
+configuration includes current and `Previous-*` entries; `/boot/limine.conf.previous`
+and each retained generation's own `limine.conf` provide independent fallback
+configuration. Two referenced generations survive successful publication, and
+only unreferenced managed generations are pruned. Boot state from the
+old `/efi` layout is rejected, requiring explicit migration/reinstallation.
+
+This is not an atomic multi-file transaction or automatic boot rollback. FAT
+rename/sync has weaker power-loss guarantees than Linux journaled filesystems;
+independent previous files cannot protect against corruption of the FAT itself.
+If updates fail, inspect the package-manager error and
 use console/rescue before rebooting. After fixing the cause, run
 `/usr/local/libexec/rustaller-limine-worker limine-refresh`.
 
@@ -176,3 +219,11 @@ Limine itself requires a reviewed version/hash change and boot acceptance.
 APK post-commit errors are reported but cannot roll back an already committed
 package transaction; check its output before rebooting. Native update-hook and
 reboot behavior remain unverified in VMs.
+
+For Gentoo, ordinary PATH calls such as `dracut --force --regenerate-all` refresh
+Limine after success. Explicit/custom output paths defer publication so
+installkernel can finish staging and invoke its postinst hook. If invoking
+`/usr/bin/dracut` directly or generating custom files manually, finish with
+`/usr/local/libexec/rustaller-limine-worker limine-refresh`. Native dracut config
+still verifies the FAT mount before writes. Diagnostic flags preserve native
+status and do not trigger publication.

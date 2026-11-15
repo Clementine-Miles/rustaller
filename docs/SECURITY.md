@@ -14,7 +14,7 @@ in [testing](TESTING.md), not inferred from compilation or generated files.
 | Debian | Debian archive keyring, authenticated release metadata, package index hashes and APT signatures |
 | Arch | Trusted archlinux-keyring, required package signatures; database signatures remain optional |
 | Opt-in CachyOS | Pinned official archive SHA-256 and full release-key fingerprint; native package signatures remain required |
-| Gentoo | Trusted release primary/subkey binding, signed DIGESTS and exact selected stage3 SHA-512 |
+| Gentoo | Trusted release primary/subkey binding, signed DIGESTS, archive signature and SHA-512; exact amd64-nomultilib init/timestamp/size identity |
 | Limine 9.6.5 | Fixed official commit and independent hard-coded SHA-256 values for utility source/header, BIOS payload, x86_64 EFI payload and license; checked before erasure |
 | Rustaller release | Matching static host/worker, SHA-256 checksums, source/build metadata and license |
 
@@ -89,10 +89,17 @@ partitioning; it is a native bootloader utility, not application-level Shell
 logic. Download, hash or compiler failures leave disk preparation unstarted.
 FAT boot files, boot state and native update hooks use existing target-path
 checks. FAT mounts use file mask 0177 and directory mask 0077 so generated
-0600 files/0700 directories agree with filesystem permission emulation; boot
+0600 files/0700 directories agree with filesystem permission emulation; `quiet`
+explicitly tolerates native chmod/chown requests that FAT cannot store; boot
 executables are read by firmware, not Linux execution permissions. Refresh rejects unsafe links/hardlinks, malformed paths, missing pairs,
-unmounted or wrong-UUID `/efi`, insufficient space and malformed EFI images. Complete new
-payloads are written and synced before the configuration rename. A power loss,
+unmounted or wrong-UUID `/boot`, insufficient space and malformed EFI images. Native
+update guards verify the mount before boot-file writes. Debian versionless kernel
+links are disabled; Gentoo uses the legacy regular-file installkernel backend.
+Complete new payloads are written and synced before the configuration rename.
+Previous generation payloads and `limine.conf.previous` are retained. Capacity
+failure preserves the published boot configuration; it requires freeing space
+or increasing the partition rather than deleting the only recovery generation.
+A power loss,
 filesystem failure or concurrent privileged writer still requires recovery;
 this is not a signed or transactional boot chain.
 
@@ -101,3 +108,13 @@ Firmware bitness and Secure Boot are checked independently of CPU architecture.
 DMI/vendor/hypervisor information is supplementary. A forced mode cannot bypass
 these checks. The same disk geometry and firmware assumptions are rechecked in
 Live before destructive operations.
+
+## Diagnostic collection
+
+Normal host inspection performs bounded reads of procfs/sysfs and bounded local
+utility calls (two seconds and 64 KiB per captured command). It installs nothing,
+does not escalate privileges, execute reference scripts, benchmark, upload data,
+or contact external lookup APIs. Optional facts can be unavailable independently;
+strict disk identity, virtualization, firmware and source checks still govern
+installation. Diagnostic addresses are not classified as public or used to infer
+NAT, provider, ASN or location. CPU model names never authorize an ISA level.

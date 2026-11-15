@@ -27,17 +27,26 @@ continuation or reboot. Rendering tests are not native boot or connectivity test
 Fixture timezone files are compiled IANA public-domain data; they do not read the
 host timezone database. No test activates host swap or changes host networking.
 
-## Current refactor evidence
+## Current migration evidence (2026-11-15)
 
-The reviewed starting revision was `31cbac103175d61582f9300f882989ed6a8840a299`.
-The new plan schema is 8, with a matching embedded-worker runtime marker.
-Static/mocked checks are separate from real installation evidence. Formatting,
-strict workspace Clippy, workspace tests, `xtask check` and static musl bundle
-verification passed. The production Limine resource-preparation function was run
-against a private temporary directory: all five pinned resources downloaded,
-matched their SHA-256 values and compiled the native utility successfully. Only
-resource preparation and help were executed; no bootloader/disk was modified.
-This does not prove firmware booting.
+Remote HEAD was checked before editing and matched
+`4601ce9036fdf494f77463b1ec15fdb9517ac635` (Limine/Btrfs baseline).
+The untouched revision passed 293 workspace tests in a separate checkout.
+Plan schema is now 9 with a matching embedded-worker runtime marker; schema 8
+is rejected rather than reinterpreting its fixed systemd Gentoo policy.
+
+Validation commands and their final results are recorded in
+[MIGRATION-REVIEW.md](MIGRATION-REVIEW.md). Unit/mock success, static bundling,
+metadata reachability, and native command fixtures are separate from a real
+installation. The current environment has no QEMU/qemu-img, `/dev/kvm`, OVMF,
+or prepared source image. No current target installation, kernel update, reboot,
+or SSH/network VM pass is claimed.
+
+The read-only source audit reached Alpine 3.24.4, Debian 13/trixie, Arch databases,
+and both Gentoo no-multilib variants at timestamp `20261108T170107Z`.
+It parsed metadata and checked payload/signature endpoint reachability; it did
+not download stage3 archives or authenticate OpenPGP signatures. Production
+installation still requires its pinned keys/signature/hash checks.
 
 ## Integration test ownership
 
@@ -47,7 +56,7 @@ fixture exercises real command I/O without a second installer.
 
 | Files under `tests/` | Responsibility |
 | --- | --- |
-| `planning.rs`, `configuration.rs` | CLI/plan encoding, validation, target accounts/settings and safe publication |
+| `planning.rs`, `gentoo_plan.rs`, `configuration.rs` | CLI/plan encoding, validation, target accounts/settings and safe publication |
 | `host.rs`, `sources.rs` | Inspection, disk confirmation, authenticated handoff and source metadata |
 | `network_config.rs`, `live_network.rs` | Complete target output and temporary Live connectivity |
 | `storage.rs`, `installation.rs`, `targets.rs` | Storage guards, lifecycle and distribution requirements |
@@ -104,13 +113,26 @@ proxy relay preserves the configured proxy and public CA; it does not bypass TLS
 
 A full pass requires authenticated source SSH, Live/install-complete markers,
 exactly one final QMP reset, installed-disk boot, target SSH, correct kernel,
-filesystem/UUID fstab, mounted FAT32, Limine configuration/payloads, default
+filesystem/UUID fstab, FAT32 `/boot` UUID against fstab/boot state, Limine configuration/payloads, default
 route/DNS/package refresh and filesystem-specific swap policy. The probe validates
 XFS/ext4 swap activation; Btrfs must use `@`, zstd and no swapfile.
 
-`--filesystem all --target all --firmware both` runs the 24 primary combinations.
-Individual filesystems can be selected. `--disk-size-gib 3072 --firmware bios`
-expands only a fresh sparse overlay to exercise the three-partition GPT case.
+`--filesystem all --target all --firmware both` runs 24 default-family cases.
+Add `--kernel all --gentoo-init both` to run 60 official-family/init combinations.
+Arch CachyOS remains a separate explicit `--target arch --kernel cachyos` case.
+Use `--target gentoo --gentoo-init both --filesystem all --firmware both` for
+12 Gentoo cases. `--kernel` also accepts a target-specific individual choice.
+`--boot-size-mib 1024` (512–4096) allows acceptance of larger images/generations.
+`--disk-size-gib 3072 --firmware bios` expands only a fresh sparse overlay to
+exercise the three-partition GPT case.
+
+`--kernel-update yes` runs a native selected-package update, initramfs rebuild,
+Limine refresh, another reboot and target SSH/network probe. Logs preserve the
+before/after kernel release: a repository with no newer candidate establishes
+rebuild/reboot evidence only. Neither upgrade-hook correctness nor a new kernel
+version is inferred from a mock command succeeding. The standalone probe also
+verifies the selected kernel package/family and Gentoo init/profile/64-bit ABI.
+
 The `smoke --iso` input is the official Alpine Live test image, not an installer
 feature. Its stock boot files and source-image bootloader remain harness inputs;
 new target installations use Limine exclusively.
@@ -125,7 +147,8 @@ Live smoke above is not evidence of target booting.
 | Alpine | Not run | Not run | Not run | Not run | Not run | Not run |
 | Debian | Not run | Not run | Not run | Not run | Not run | Not run |
 | Arch | Not run | Not run | Not run | Not run | Not run | Not run |
-| Gentoo | Not run | Not run | Not run | Not run | Not run | Not run |
+| Gentoo OpenRC no-multilib | Not run | Not run | Not run | Not run | Not run | Not run |
+| Gentoo systemd no-multilib | Not run | Not run | Not run | Not run | Not run | Not run |
 
 BIOS/GPT stage2, 4Kn UEFI, native kernel upgrades, package-hook ordering, CachyOS
 first boot, serial output and provider-specific firmware also need fresh VM or
@@ -134,12 +157,22 @@ environment, so no current real installation/reboot pass is claimed.
 
 ## Regression boundaries
 
-`boot.rs` table-tests all 24 plan/layout/render combinations, GPT stage2 commands,
+`boot.rs` table-tests plan/layout/render combinations, GPT stage2 commands,
 UUID fstab/fsck rules, Btrfs formatting and subvolume cleanup, compression/schema
 roundtrips, kernel version ordering and update generations. Mocked resource tests
 reject digest mismatch before compilation. Native temporary-file tests exercise
 missing initramfs, unsafe symlinks/hardlinks, invalid firmware payloads, unmounted
-FAT and low capacity without replacing the published configuration.
+or wrong-UUID FAT, low capacity, interrupted copies, corrupted active config,
+previous-generation recovery, numeric ordering, microcode and kernel removals.
+Generator guard syntax and dracut wrapper staging/diagnostic deferral use controlled
+local fixtures; they do not establish actual distribution package transaction behavior.
+
+ISA tests cover every cumulative v1/v2/v3 feature, all required v4 features,
+missing OSXSAVE, incomplete XCR0 state, heterogeneous/feature-masked CPUs, malformed
+CPU fields, topology, and caller affinity preservation. Inspection tests exercise
+missing utilities/proc/sys facts, malformed lsblk/routes/mounts, changing inventories,
+memory/swap/zram, firmware unknowns and cached responsive panels. Controlled native
+command tests enforce output bounds/deadlines, including descendant output pipes.
 
 TUI tests preserve per-target drafts, fresh-key submission, cancellation, focused
 validation, credential masking and terminal recovery, and add current/target
