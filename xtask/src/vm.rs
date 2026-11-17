@@ -749,6 +749,9 @@ fn install_case(
         format!("--kernel={kernel}"),
         format!("--hostname=rustaller-{target}"),
         "--timezone=Etc/UTC".into(),
+        // The source uses static SLIRP addressing; there is no target DHCP
+        // lease from which systemd-resolved can learn its DNS server.
+        "--dns=10.0.2.3".into(),
         format!("--filesystem={filesystem}"),
     ];
     if let Some(size) = boot_size_mib {

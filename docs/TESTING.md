@@ -109,8 +109,10 @@ On memory-constrained hosts, use `--memory-mib 1536` (default 3072).
 Use `--accel kvm` only after verifying nested KVM; the default remains TCG and
 there is no silent fallback. Both settings are recorded in `hardware.txt`.
 The source seed uses the fixed private SLIRP address 10.0.2.15/24 and networkd;
-cloud-init reapplies its profile before preflight. This avoids DHCP-added host
-routes unsupported by the installer's strict source routing contract.
+cloud-init reapplies its profile before preflight. Target plans explicitly select
+SLIRP DNS `10.0.2.3`, since static addressing supplies no DHCP DNS lease. This
+avoids DHCP-added host routes unsupported by the installer's strict source
+routing contract.
 `source-state.log` records initial disk/network state. Recovery SSH periodically
 captures `live-install.log` and stops the case early on a reported worker failure.
 
