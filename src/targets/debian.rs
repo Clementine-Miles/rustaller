@@ -131,6 +131,8 @@ fn apt_package_list_with_kernel(
         kernel_package.to_owned(),
         "dosfstools".to_owned(),
         "initramfs-tools".to_owned(),
+        "iproute2".to_owned(),
+        "e2fsprogs".to_owned(),
     ];
     if username != "root" {
         packages.push("sudo".to_owned());

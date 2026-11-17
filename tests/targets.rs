@@ -63,6 +63,8 @@ mod debian {
                 "linux-image-cloud-amd64",
                 "dosfstools",
                 "initramfs-tools",
+                "iproute2",
+                "e2fsprogs",
                 "sudo",
                 "firmware-linux"
             ]
@@ -77,7 +79,9 @@ mod debian {
                 "xfsprogs",
                 "linux-image-amd64",
                 "dosfstools",
-                "initramfs-tools"
+                "initramfs-tools",
+                "iproute2",
+                "e2fsprogs"
             ]
         );
 
