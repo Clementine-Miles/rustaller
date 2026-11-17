@@ -210,9 +210,13 @@ fn install_generator_guards(root: &Path, target: Target) -> Result<()> {
     const CHECK: &str = "/usr/local/libexec/rustaller-limine-worker limine-check || exit 1\n";
     let (relative, mut guard) = match target {
         Target::Arch => ("etc/mkinitcpio.conf", CHECK.to_owned()),
-        // mkinitramfs sources this before touching its output. Its ordinary
-        // hooks run later, after an output file may already have been created.
-        Target::Debian => ("etc/initramfs-tools/initramfs.conf", CHECK.to_owned()),
+        // Build-only package configuration is sourced before output is touched.
+        // Do not use initramfs.conf/conf.d: mkinitramfs copies those into the
+        // image and /init sources them without the installed Rust worker.
+        Target::Debian => (
+            "usr/share/initramfs-tools/conf-hooks.d/00-rustaller-mount",
+            CHECK.to_owned(),
+        ),
         Target::Gentoo => (
             "etc/dracut.conf.d/00-rustaller-mount.conf",
             CHECK.to_owned(),

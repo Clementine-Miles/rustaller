@@ -62,11 +62,20 @@ fn run() -> Result<(), String> {
     }
     if target == "debian" {
         // Native initramfs-tools silently skips hooks that fail this check.
-        run_capture(
-            "sh",
-            &["-n", "/etc/initramfs-tools/hooks/zz-rustaller-limine-check"],
-            &transport,
-        )?;
+        for path in [
+            "/etc/initramfs-tools/hooks/zz-rustaller-limine-check",
+            "/usr/share/initramfs-tools/conf-hooks.d/00-rustaller-mount",
+        ] {
+            run_capture("sh", &["-n", path], &transport)?;
+        }
+        if fs::read_to_string("/etc/initramfs-tools/initramfs.conf")
+            .map_err(|e| e.to_string())?
+            .contains("rustaller-limine-worker")
+        {
+            return Err(
+                "build-only mount guard leaked into runtime initramfs configuration".into(),
+            );
+        }
     }
     let mounts = fs::read_to_string("/proc/mounts").map_err(|e| e.to_string())?;
     if !mounts.lines().any(|line| {

@@ -980,6 +980,9 @@ fn install_case(
         let _ = destination.capture(&["reboot"], Duration::from_secs(15));
         let mut rebooted = false;
         while Instant::now() < deadline {
+            if read_log(&case.join("serial.log")).contains("Kernel panic - not syncing:") {
+                return Err("kernel update reboot panicked; see serial.log".into());
+            }
             if guest.child.try_wait().map_err(|e| e.to_string())?.is_some() {
                 break;
             }

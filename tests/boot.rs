@@ -391,6 +391,9 @@ mod limine {
         for target in [Target::Alpine, Target::Debian, Target::Arch, Target::Gentoo] {
             let d = Scratch::new("limine-hooks");
             assert!(install_hooks(&d.0, target, b"wrong worker").is_err());
+            if target == Target::Debian {
+                d.write("etc/initramfs-tools/initramfs.conf", "MODULES=most\n");
+            }
             install_hooks(&d.0, target, rustaller::RUNTIME_VERSION.as_bytes()).unwrap();
             assert!(
                 d.0.join("usr/local/libexec/rustaller-limine-worker")
@@ -404,6 +407,10 @@ mod limine {
             };
             assert!(fs::symlink_metadata(d.0.join(path)).is_ok());
             if target == Target::Debian {
+                assert_eq!(
+                    d.read("etc/initramfs-tools/initramfs.conf"),
+                    "MODULES=most\n"
+                );
                 let hook =
                     d.0.join("etc/initramfs-tools/hooks/zz-rustaller-limine-check");
                 assert!(!fs::symlink_metadata(&hook).unwrap().is_symlink());
@@ -448,7 +455,7 @@ mod limine {
             }
             let generator_config = match target {
                 Target::Arch => Some("etc/mkinitcpio.conf"),
-                Target::Debian => Some("etc/initramfs-tools/initramfs.conf"),
+                Target::Debian => Some("usr/share/initramfs-tools/conf-hooks.d/00-rustaller-mount"),
                 Target::Alpine => Some("etc/mkinitfs/mkinitfs.conf"),
                 Target::Gentoo => Some("etc/dracut.conf.d/00-rustaller-mount.conf"),
                 _ => None,
