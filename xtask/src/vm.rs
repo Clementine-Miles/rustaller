@@ -1690,7 +1690,12 @@ fn write_private(path: &Path, data: &[u8]) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 fn read_log(path: &Path) -> String {
-    fs::read_to_string(path).unwrap_or_default()
+    // Firmware/kernel console writes can interleave inside UTF-8 sequences.
+    // Keep the raw file as evidence, but never discard every ASCII stage marker
+    // just because one console byte is invalid UTF-8.
+    fs::read(path)
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+        .unwrap_or_default()
 }
 fn free_port() -> Result<u16, String> {
     TcpListener::bind("127.0.0.1:0")
@@ -1770,6 +1775,26 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn console_markers_survive_interleaved_invalid_utf8() {
+        let path = std::env::temp_dir().join(format!(
+            "rustaller-console-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        write_private(
+            &path,
+            b"systemd \xe2[kernel interleave]\nRUSTALLER_INSTALL_COMPLETE\n\xff",
+        )
+        .unwrap();
+        assert!(read_log(&path).contains("RUSTALLER_INSTALL_COMPLETE"));
+        assert!(fs::read(&path).unwrap().contains(&0xff));
+        fs::remove_file(path).unwrap();
     }
 
     #[test]
