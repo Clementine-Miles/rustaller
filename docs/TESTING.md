@@ -150,21 +150,27 @@ new target installations use Limine exclusively.
 
 ## Limine/filesystem acceptance matrix
 
-All entries below are **NOT RUN** for the current Limine implementation. Historical
-Live smoke above is not evidence of target booting.
+Fresh KVM acceptance on 2026-11-17 is recorded in
+[ACCEPTANCE-2026-11-17.md](ACCEPTANCE-2026-11-17.md), including exact revisions,
+failed retries, fixes and local serial/QMP/SSH evidence paths. Debian UEFI/ext4
+passed installation and native regeneration/reboot. Alpine BIOS/ext4 installed
+and passed guest probes but failed the strict raw QMP reset-count check.
+The baseline pair is not accepted; broader combinations remain gated.
+Historical Live smoke above is not evidence of target booting.
 
 | Distribution | BIOS/MBR XFS | BIOS/MBR ext4 | BIOS/MBR Btrfs | UEFI/GPT XFS | UEFI/GPT ext4 | UEFI/GPT Btrfs |
 | --- | --- | --- | --- | --- | --- | --- |
-| Alpine | Not run | Not run | Not run | Not run | Not run | Not run |
-| Debian | Not run | Not run | Not run | Not run | Not run | Not run |
+| Alpine | Not run | FAIL: reset count | Not run | Not run | Not run | Not run |
+| Debian | Not run | Not run | Not run | Not run | PASS | Not run |
 | Arch | Not run | Not run | Not run | Not run | Not run | Not run |
 | Gentoo OpenRC no-multilib | Not run | Not run | Not run | Not run | Not run | Not run |
 | Gentoo systemd no-multilib | Not run | Not run | Not run | Not run | Not run | Not run |
 
 BIOS/GPT stage2, 4Kn UEFI, native kernel upgrades, package-hook ordering, CachyOS
 first boot, serial output and provider-specific firmware also need fresh VM or
-hardware evidence. QEMU and `/dev/kvm` are unavailable in the development
-environment, so no current real installation/reboot pass is claimed.
+hardware evidence. The original development environment lacked QEMU and
+`/dev/kvm`; the linked 2026-11-17 report records the separate KVM VPS acceptance
+and its remaining limitations.
 
 ## Regression boundaries
 
