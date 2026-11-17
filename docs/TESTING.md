@@ -123,7 +123,7 @@ serial/QMP/SSH/probe logs and explicit pass/fail/not-run status. The harness's
 proxy relay preserves the configured proxy and public CA; it does not bypass TLS.
 
 A full pass requires authenticated source SSH, Live/install-complete markers,
-exactly one final QMP reset, installed-disk boot, target SSH, correct kernel,
+exactly one OS-requested final firmware reboot, installed-disk boot, target SSH, correct kernel,
 filesystem/UUID fstab, FAT32 `/boot` UUID against fstab/boot state, Limine configuration/payloads, default
 route/DNS/package refresh and filesystem-specific swap policy. The probe validates
 XFS/ext4 swap activation; Btrfs must use `@`, zstd and no swapfile.
@@ -136,6 +136,14 @@ Use `--target gentoo --gentoo-init both --filesystem all --firmware both` for
 `--boot-size-mib 1024` (512–4096) allows acceptance of larger images/generations.
 `--disk-size-gib 3072 --firmware bios` expands only a fresh sparse overlay to
 exercise the three-partition GPT case.
+
+Raw QMP RESETs remain in `qmp.log`. For SeaBIOS, a soft reset may enter
+`handle_resume32` and explicitly request a second hard reset. Two raw events are
+accepted only with exactly one matching full soft-to-hard sequence in the
+captured `firmware-debug.log`; extra resets, missing evidence and UEFI pairs fail.
+The rule is also checked for the native-update reboot, with no time debouncing.
+Use `--keep-disks yes` to retain successful disposable overlays for subsequent
+recovery testing (the default still removes successful overlays).
 
 `--kernel-update yes` runs a native selected-package update, initramfs rebuild,
 Limine refresh, another reboot and target SSH/network probe. Logs preserve the

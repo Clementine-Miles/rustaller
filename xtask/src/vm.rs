@@ -14,7 +14,7 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const HELP: &str = "Usage: cargo xtask vm-acceptance ACTION [OPTIONS]\n\nActions:\n  smoke           BIOS/UEFI Alpine Live boot smoke, not an installation test\n  prepare-source  Provision a disposable Debian Cloud source for kexec tests\n  install         Reinstall disposable source overlays and verify target boots\n\nCommon options:\n  --tools PATH       Extracted Debian QEMU/OVMF/xorriso root\n  --accel MODE       tcg|kvm (default tcg; no automatic fallback)\n  --memory-mib N     Guest RAM in MiB (512-65536; default 3072)\n  --output PATH      New private result directory (must not exist)\n  --firmware MODE    bios|efi|both (default both)\n  --timeout SECONDS  Per-case deadline (default 1800)\n\nSmoke: --iso FILE --sha256 HEX\nSource/install: --base FILE --sha512 HEX --key FILE --public-key FILE\n  --disk-bus BUS     virtio-blk|virtio-scsi|sata|nvme|pvscsi (default virtio-blk)\nInstall: --installer STATIC_ELF --target alpine|debian|arch|gentoo|all\n  --filesystem FS   xfs|ext4|btrfs|all (default xfs)\n  --kernel CHOICE    Target kernel choice or all official families\n  --gentoo-init INIT openrc|systemd|both (default openrc; Gentoo only)\n  --kernel-update B  yes|no (default no); upgrade, regenerate, reboot, verify\n  --boot-size-mib N  FAT32 capacity (512-4096); consider 1024 for upgrades\n  --disk-size-gib N  Optional sparse overlay expansion (3072 tests BIOS/GPT)\n\nAll disk files and EFI variables are fresh disposable copies. No host devices,\nnetwork-policy changes, host reboot, or privileged mounts are used.\n";
+const HELP: &str = "Usage: cargo xtask vm-acceptance ACTION [OPTIONS]\n\nActions:\n  smoke           BIOS/UEFI Alpine Live boot smoke, not an installation test\n  prepare-source  Provision a disposable Debian Cloud source for kexec tests\n  install         Reinstall disposable source overlays and verify target boots\n\nCommon options:\n  --tools PATH       Extracted Debian QEMU/OVMF/xorriso root\n  --accel MODE       tcg|kvm (default tcg; no automatic fallback)\n  --memory-mib N     Guest RAM in MiB (512-65536; default 3072)\n  --output PATH      New private result directory (must not exist)\n  --firmware MODE    bios|efi|both (default both)\n  --timeout SECONDS  Per-case deadline (default 1800)\n\nSmoke: --iso FILE --sha256 HEX\nSource/install: --base FILE --sha512 HEX --key FILE --public-key FILE\n  --disk-bus BUS     virtio-blk|virtio-scsi|sata|nvme|pvscsi (default virtio-blk)\nInstall: --installer STATIC_ELF --target alpine|debian|arch|gentoo|all\n  --filesystem FS   xfs|ext4|btrfs|all (default xfs)\n  --kernel CHOICE    Target kernel choice or all official families\n  --gentoo-init INIT openrc|systemd|both (default openrc; Gentoo only)\n  --kernel-update B  yes|no (default no); upgrade, regenerate, reboot, verify\n  --boot-size-mib N  FAT32 capacity (512-4096); consider 1024 for upgrades\n  --keep-disks B     yes|no (default no); retain successful guest overlays\n  --disk-size-gib N  Optional sparse overlay expansion (3072 tests BIOS/GPT)\n\nAll disk files and EFI variables are fresh disposable copies. No host devices,\nnetwork-policy changes, host reboot, or privileged mounts are used.\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Firmware {
@@ -101,6 +101,7 @@ impl Options {
                     | "--gentoo-init"
                     | "--kernel-update"
                     | "--boot-size-mib"
+                    | "--keep-disks"
             ) {
                 return Err(format!("unknown acceptance option: {flag}"));
             }
@@ -567,6 +568,16 @@ fn install_matrix(
     if options.values.contains_key("--gentoo-init") && !targets.contains(&"gentoo") {
         return Err("gentoo-init requires --target gentoo or all".into());
     }
+    let keep_disks = match options
+        .values
+        .get("--keep-disks")
+        .map(String::as_str)
+        .unwrap_or("no")
+    {
+        "yes" => true,
+        "no" => false,
+        _ => return Err("keep-disks must be yes or no".into()),
+    };
     let kernel_update = options.kernel_update()?;
     let boot_size_mib = options.boot_size_mib()?;
     // Resolve the full choice matrix before creating any guest overlays.
@@ -630,7 +641,7 @@ fn install_matrix(
                             ).as_bytes(),
                         )?;
                         // Failed images remain available for offline guest/boot diagnosis.
-                        if passed {
+                        if passed && !keep_disks {
                             let _ = fs::remove_file(case.join("disk.qcow2"));
                         }
                     }
@@ -800,6 +811,7 @@ fn install_case(
         );
     }
     let reset_before = guest.resets.load(Ordering::Relaxed);
+    let firmware_before = read_log(&case.join("firmware-debug.log")).len();
     let mut install = arguments;
     install.extend(["--confirm-erase".into(), token[0].into()]);
     let mut command = source.command_owned(&install);
@@ -876,16 +888,20 @@ fn install_case(
         .resets
         .load(Ordering::Relaxed)
         .saturating_sub(reset_before);
-    let reset_failure = (resets != 1).then(|| {
-        format!("expected exactly one firmware reset after kexec dispatch, observed {resets}")
-    });
+    let firmware_log = read_log(&case.join("firmware-debug.log"));
+    let reset_check = validate_final_reboot(
+        mode,
+        resets,
+        firmware_log.get(firmware_before..).unwrap_or_default(),
+    );
     write_private(
         &case.join("firmware-reset-check.log"),
-        reset_failure
-            .as_deref()
-            .unwrap_or("PASS: exactly one firmware reset")
+        reset_check
+            .as_ref()
+            .unwrap_or_else(|error| error)
             .as_bytes(),
     )?;
+    let reset_failure = reset_check.err();
     // A reset-count failure must remain a failure, but should not discard the
     // opportunity to collect installed-target and native-update diagnostics.
     destination.checked(
@@ -959,6 +975,8 @@ fn install_case(
         }
         // Reboot through the target's own init, then require a different kernel
         // boot ID before accepting SSH; a still-live old session cannot pass.
+        let update_reset_before = guest.resets.load(Ordering::Relaxed);
+        let update_firmware_before = read_log(&case.join("firmware-debug.log")).len();
         let _ = destination.capture(&["reboot"], Duration::from_secs(15));
         let mut rebooted = false;
         while Instant::now() < deadline {
@@ -1008,11 +1026,27 @@ fn install_case(
             &case.join("post-update-probe.log"),
             remaining(deadline)?,
         )?;
+        let firmware_log = read_log(&case.join("firmware-debug.log"));
+        let check = validate_final_reboot(
+            mode,
+            guest
+                .resets
+                .load(Ordering::Relaxed)
+                .saturating_sub(update_reset_before),
+            firmware_log
+                .get(update_firmware_before..)
+                .unwrap_or_default(),
+        );
+        write_private(
+            &case.join("post-update-reset-check.log"),
+            check.as_ref().unwrap_or_else(|error| error).as_bytes(),
+        )?;
+        check?;
     }
     if let Some(error) = reset_failure {
         return Err(error);
     }
-    write_private(&case.join("accepted.txt"),format!("target={target}\nkernel_choice={kernel}\ninit={init}\nkernel_update_requested={kernel_update}\nfirmware={}\nfirmware_resets_after_dispatch={resets}\nSSH public-key authentication, native package update, kernel, hostname, {filesystem}/UUID fstab, Limine boot artifacts, DNS lookup, IPv4 route, filesystem-specific swap policy: PASS\nIPv6 Internet connectivity: NOT TESTED\n",mode.label()).as_bytes())?;
+    write_private(&case.join("accepted.txt"),format!("target={target}\nkernel_choice={kernel}\ninit={init}\nkernel_update_requested={kernel_update}\nfirmware={}\nraw_qmp_resets_after_dispatch={resets}\nos_requested_final_reboots=1\nSSH public-key authentication, native package update, kernel, hostname, {filesystem}/UUID fstab, Limine boot artifacts, DNS lookup, IPv4 route, filesystem-specific swap policy: PASS\nIPv6 Internet connectivity: NOT TESTED\n",mode.label()).as_bytes())?;
     guest.stop();
     Ok(())
 }
@@ -1301,6 +1335,14 @@ impl Guest {
         command
             .arg("-serial")
             .arg(format!("file:{}", serial.display()));
+        // SeaBIOS turns a soft guest reset into a second hard reset. Keep
+        // firmware evidence so acceptance distinguishes this from an OS loop.
+        let firmware_debug = case.join("firmware-debug.log");
+        let _ = private_file(&firmware_debug)?;
+        command
+            .arg("-debugcon")
+            .arg(format!("file:{}", firmware_debug.display()))
+            .args(["-global", "isa-debugcon.iobase=0x402"]);
         let qmp = case.join("qmp.sock");
         command
             .arg("-qmp")
@@ -1357,6 +1399,25 @@ impl Drop for Guest {
         self.stop();
     }
 }
+fn validate_final_reboot(mode: Firmware, resets: u64, firmware: &str) -> Result<String, String> {
+    const SOFT_TO_HARD: &str = "In resume (status=0)\nIn 32bit resume\nAttempting a hard reboot\n";
+    let conversions = firmware.matches(SOFT_TO_HARD).count();
+    let valid = (resets == 1 && conversions == 0)
+        || (mode == Firmware::Bios
+            && resets == 2
+            && conversions == 1
+            && firmware.contains("SeaBIOS (version")
+            && !firmware.contains("Unable to hard-reboot machine"));
+    if !valid {
+        return Err(format!(
+            "expected one OS-requested firmware reboot; raw QMP RESETs={resets}, SeaBIOS soft-to-hard sequences={conversions}; see qmp.log and firmware-debug.log"
+        ));
+    }
+    Ok(format!(
+        "PASS: one OS-requested firmware reboot; raw QMP RESETs={resets}; SeaBIOS soft-to-hard sequences={conversions}\n"
+    ))
+}
+
 fn record_qmp(mut stream: UnixStream, resets: Arc<AtomicU64>, mut log: File) {
     let Ok(reader) = stream.try_clone() else {
         return;
@@ -1682,6 +1743,33 @@ mod tests {
             assert!(args.windows(2).any(|a| a == ["-cpu", cpu]));
             assert!(args.windows(2).any(|a| a == ["-m", "1536"]));
         }
+    }
+
+    #[test]
+    fn reboot_validation_requires_exact_firmware_evidence_not_time_debouncing() {
+        let conversion = "In resume (status=0)\nIn 32bit resume\nAttempting a hard reboot\nSeaBIOS (version 1.16.3)\n";
+        assert!(validate_final_reboot(Firmware::Bios, 1, "").is_ok());
+        assert!(validate_final_reboot(Firmware::Efi, 1, "").is_ok());
+        assert!(validate_final_reboot(Firmware::Bios, 2, conversion).is_ok());
+        for (mode, resets, log) in [
+            (Firmware::Bios, 0, ""),
+            (Firmware::Bios, 2, ""),
+            (Firmware::Efi, 2, conversion),
+            (Firmware::Bios, 1, conversion),
+            (Firmware::Bios, 3, conversion),
+            (Firmware::Bios, 2, "Attempting a hard reboot\n"),
+        ] {
+            assert!(validate_final_reboot(mode, resets, log).is_err());
+        }
+        assert!(validate_final_reboot(Firmware::Bios, 4, &conversion.repeat(2)).is_err());
+        assert!(
+            validate_final_reboot(
+                Firmware::Bios,
+                2,
+                &format!("{conversion}Unable to hard-reboot machine")
+            )
+            .is_err()
+        );
     }
 
     #[test]
