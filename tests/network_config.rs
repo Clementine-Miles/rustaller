@@ -257,6 +257,30 @@ fn automatic_and_static_resolvers_are_published_after_packages_without_following
 }
 
 #[test]
+fn debian_relative_resolved_links_are_replaced_without_following_them() {
+    for target in [
+        "../run/systemd/resolve/stub-resolv.conf",
+        "../run/systemd/resolve/resolv.conf",
+    ] {
+        let scratch = Scratch::new("relative-resolved");
+        fs::create_dir(scratch.0.join("etc")).unwrap();
+        scratch.write("run/systemd/resolve/stub-resolv.conf", "do not overwrite\n");
+        std::os::unix::fs::symlink(target, scratch.0.join("etc/resolv.conf")).unwrap();
+        scratch
+            .apply(InstallPlan::new(Target::Debian), &manifest())
+            .unwrap();
+        assert_eq!(
+            fs::read_link(scratch.0.join("etc/resolv.conf")).unwrap(),
+            Path::new("/run/systemd/resolve/stub-resolv.conf")
+        );
+        assert_eq!(
+            scratch.read("run/systemd/resolve/stub-resolv.conf"),
+            "do not overwrite\n"
+        );
+    }
+}
+
+#[test]
 fn multiple_interfaces_have_independent_mac_matching_and_byte_identical_reapplication() {
     let scratch = Scratch::new("network_config");
     let mut m = manifest();

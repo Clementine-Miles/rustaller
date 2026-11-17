@@ -468,7 +468,12 @@ fn validate_resolver(path: &Path) -> Result<(), ConfigurationError> {
     if fs::symlink_metadata(path).is_ok_and(|meta| meta.is_symlink())
         && !matches!(
             fs::read_link(path)?.to_str(),
-            Some(RESOLVED | "/run/systemd/resolve/resolv.conf")
+            Some(
+                RESOLVED
+                    | "/run/systemd/resolve/resolv.conf"
+                    | "../run/systemd/resolve/stub-resolv.conf"
+                    | "../run/systemd/resolve/resolv.conf"
+            )
         )
     {
         return Err(ConfigurationError::InvalidNetwork(
