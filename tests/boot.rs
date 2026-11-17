@@ -448,6 +448,7 @@ mod limine {
             }
             let generator_config = match target {
                 Target::Arch => Some("etc/mkinitcpio.conf"),
+                Target::Debian => Some("etc/initramfs-tools/initramfs.conf"),
                 Target::Alpine => Some("etc/mkinitfs/mkinitfs.conf"),
                 Target::Gentoo => Some("etc/dracut.conf.d/00-rustaller-mount.conf"),
                 _ => None,
