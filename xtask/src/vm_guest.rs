@@ -60,6 +60,14 @@ fn run() -> Result<(), String> {
     if target == "gentoo" {
         verify_gentoo_init(selected_init, &transport)?;
     }
+    if target == "debian" {
+        // Native initramfs-tools silently skips hooks that fail this check.
+        run_capture(
+            "sh",
+            &["-n", "/etc/initramfs-tools/hooks/zz-rustaller-limine-check"],
+            &transport,
+        )?;
+    }
     let mounts = fs::read_to_string("/proc/mounts").map_err(|e| e.to_string())?;
     if !mounts.lines().any(|line| {
         let fields: Vec<_> = line.split_whitespace().collect();

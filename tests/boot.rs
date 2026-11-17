@@ -403,6 +403,31 @@ mod limine {
                 _ => unreachable!(),
             };
             assert!(fs::symlink_metadata(d.0.join(path)).is_ok());
+            if target == Target::Debian {
+                let hook =
+                    d.0.join("etc/initramfs-tools/hooks/zz-rustaller-limine-check");
+                assert!(!fs::symlink_metadata(&hook).unwrap().is_symlink());
+                assert!(
+                    std::process::Command::new("sh")
+                        .arg("-n")
+                        .arg(&hook)
+                        .status()
+                        .unwrap()
+                        .success()
+                );
+                assert!(
+                    std::process::Command::new(&hook)
+                        .arg("prereqs")
+                        .status()
+                        .unwrap()
+                        .success()
+                );
+                assert!(
+                    fs::read_to_string(hook)
+                        .unwrap()
+                        .contains("exec /usr/local/libexec/rustaller-limine-worker limine-check")
+                );
+            }
             if target == Target::Gentoo {
                 assert!(
                     fs::symlink_metadata(

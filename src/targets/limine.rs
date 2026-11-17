@@ -185,7 +185,17 @@ pub fn install_hooks(root: &Path, target: Target, worker: &[u8]) -> Result<()> {
         let path = root.join(name);
         validate_planned_file(&path).map_err(|e| e.to_string())?;
         crate::shared::configure::ensure_parent(&path).map_err(|e| e.to_string())?;
-        symlink(format!("/{WORKER}"), &path).map_err(|e| e.to_string())?;
+        if *name == "etc/initramfs-tools/hooks/zz-rustaller-limine-check" {
+            // initramfs-tools runs `sh -n` before accepting hooks. An ELF
+            // symlink is rejected as shell syntax and silently skipped.
+            write_config::<crate::shared::configure::ConfigurationError>(
+                &path,
+                b"#!/bin/sh\ncase \"${1:-}\" in prereqs) exit 0 ;; esac\nexec /usr/local/libexec/rustaller-limine-worker limine-check\n",
+                0o755,
+            ).map_err(|e| e.to_string())?;
+        } else {
+            symlink(format!("/{WORKER}"), &path).map_err(|e| e.to_string())?;
+        }
     }
     install_generator_guards(root, target)?;
     if target == Target::Arch {
