@@ -345,6 +345,34 @@ pub fn read_disk_identity<R: CommandRunner>(
         }
         values.push(text.trim().to_owned());
     }
+    // Minimal Live systems may not run udev, leaving lsblk SERIAL empty even
+    // though the kernel exports the same stable serial used by the source OS.
+    // Keep every supplied identity comparison mandatory; never fall back to a
+    // device name or partition-table UUID alone.
+    if values[1].is_empty() {
+        let name = device.strip_prefix("/dev/").expect("validated device");
+        for path in [
+            format!("/sys/class/block/{name}/serial"),
+            format!("/sys/class/block/{name}/device/serial"),
+        ] {
+            if let Ok(text) = capture(
+                runner,
+                &spec("cat", [path.as_str()], "handoff-disk-sysfs-serial"),
+            ) {
+                let serial = text.trim();
+                if text.lines().count() > 1
+                    || serial.len() > 256
+                    || serial.chars().any(char::is_control)
+                {
+                    return Err(HandoffError::Invalid("ambiguous disk identity"));
+                }
+                if !serial.is_empty() {
+                    values[1] = serial.to_owned();
+                    break;
+                }
+            }
+        }
+    }
     let size_bytes = values[0]
         .parse()
         .map_err(|_| HandoffError::Invalid("invalid disk byte size"))?;

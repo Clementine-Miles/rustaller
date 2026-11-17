@@ -383,6 +383,30 @@ mod handoff {
     }
 
     #[test]
+    fn live_disk_serial_falls_back_to_kernel_without_udev() {
+        let mut runner = MockRunner::new([
+            output("8589934592\n"),
+            output("\n"),
+            output("\n"),
+            output("1234abcd\n"),
+            output("acceptance-disk\n"),
+        ]);
+        assert_eq!(read_disk_identity(&mut runner, "/dev/vda").unwrap(), disk());
+        assert_eq!(
+            runner.calls()[4].args[0].to_str().unwrap(),
+            "/sys/class/block/vda/serial"
+        );
+        let mut malformed = MockRunner::new([
+            output("8589934592\n"),
+            output("\n"),
+            output("\n"),
+            output("1234abcd\n"),
+            output("serial-one\nserial-two\n"),
+        ]);
+        assert!(read_disk_identity(&mut malformed, "/dev/vda").is_err());
+    }
+
+    #[test]
     fn confirmation_firmware_and_source_identity_fail_before_workspace_or_downloads() {
         let scratch = Scratch::new("handoff");
         let plan = plan();
