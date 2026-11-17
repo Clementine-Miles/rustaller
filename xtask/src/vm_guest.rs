@@ -49,7 +49,7 @@ fn run() -> Result<(), String> {
     if actual_hostname.trim() != format!("rustaller-{target}") {
         return Err("target hostname is not applied".into());
     }
-    if Path::new("/sys/firmware/boot").is_dir() != (firmware == "efi") {
+    if Path::new("/sys/firmware/efi").is_dir() != (firmware == "efi") {
         return Err("guest firmware does not match requested boot mode".into());
     }
     if run_capture("uname", &["-m"], &transport)?.trim() != "x86_64" {
@@ -455,6 +455,9 @@ fn run_capture(
         .envs(transport.iter().map(|(key, value)| (key, value)))
         .output()
         .map_err(|e| format!("cannot start {program}: {e}"))?;
+    println!("$ {program} {}", args.join(" "));
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
     if !output.status.success() {
         return Err(format!("{program} failed with {:?}", output.status.code()));
     }

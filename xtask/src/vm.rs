@@ -840,7 +840,10 @@ fn install_case(
                 && log.success
             {
                 write_private(&case.join("live-install.log"), &log.stdout)?;
-                if String::from_utf8_lossy(&log.stdout).contains("Live installation stopped:") {
+                if String::from_utf8_lossy(&log.stdout)
+                    .lines()
+                    .any(|line| line.starts_with("rustaller-worker:"))
+                {
                     return Err("Live worker stopped; see live-install.log".into());
                 }
             }
@@ -870,11 +873,18 @@ fn install_case(
         .resets
         .load(Ordering::Relaxed)
         .saturating_sub(reset_before);
-    if resets != 1 {
-        return Err(format!(
-            "expected exactly one firmware reset after kexec dispatch, observed {resets}"
-        ));
-    }
+    let reset_failure = (resets != 1).then(|| {
+        format!("expected exactly one firmware reset after kexec dispatch, observed {resets}")
+    });
+    write_private(
+        &case.join("firmware-reset-check.log"),
+        reset_failure
+            .as_deref()
+            .unwrap_or("PASS: exactly one firmware reset")
+            .as_bytes(),
+    )?;
+    // A reset-count failure must remain a failure, but should not discard the
+    // opportunity to collect installed-target and native-update diagnostics.
     destination.checked(
         &["mkdir", "-m", "700", "-p", "/run/rustaller-vm"],
         &case.join("target-mkdir.log"),
@@ -995,6 +1005,9 @@ fn install_case(
             &case.join("post-update-probe.log"),
             remaining(deadline)?,
         )?;
+    }
+    if let Some(error) = reset_failure {
+        return Err(error);
     }
     write_private(&case.join("accepted.txt"),format!("target={target}\nkernel_choice={kernel}\ninit={init}\nkernel_update_requested={kernel_update}\nfirmware={}\nfirmware_resets_after_dispatch={resets}\nSSH public-key authentication, native package update, kernel, hostname, {filesystem}/UUID fstab, Limine boot artifacts, DNS lookup, IPv4 route, filesystem-specific swap policy: PASS\nIPv6 Internet connectivity: NOT TESTED\n",mode.label()).as_bytes())?;
     guest.stop();
