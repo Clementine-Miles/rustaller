@@ -14,7 +14,7 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const HELP: &str = "Usage: cargo xtask vm-acceptance ACTION [OPTIONS]\n\nActions:\n  smoke           BIOS/UEFI Alpine Live boot smoke, not an installation test\n  prepare-source  Provision a disposable Debian Cloud source for kexec tests\n  install         Reinstall disposable source overlays and verify target boots\n\nCommon options:\n  --tools PATH       Extracted Debian QEMU/OVMF/xorriso root\n  --output PATH      New private result directory (must not exist)\n  --firmware MODE    bios|efi|both (default both)\n  --timeout SECONDS  Per-case deadline (default 1800)\n\nSmoke: --iso FILE --sha256 HEX\nSource/install: --base FILE --sha512 HEX --key FILE --public-key FILE\n  --disk-bus BUS     virtio-blk|virtio-scsi|sata|nvme|pvscsi (default virtio-blk)\nInstall: --installer STATIC_ELF --target alpine|debian|arch|gentoo|all\n  --filesystem FS   xfs|ext4|btrfs|all (default xfs)\n  --kernel CHOICE    Target kernel choice or all official families\n  --gentoo-init INIT openrc|systemd|both (default openrc; Gentoo only)\n  --kernel-update B  yes|no (default no); upgrade, regenerate, reboot, verify\n  --boot-size-mib N  FAT32 capacity (512-4096); consider 1024 for upgrades\n  --disk-size-gib N  Optional sparse overlay expansion (3072 tests BIOS/GPT)\n\nAll disk files and EFI variables are fresh disposable copies. No host devices,\nnetwork-policy changes, host reboot, or privileged mounts are used.\n";
+const HELP: &str = "Usage: cargo xtask vm-acceptance ACTION [OPTIONS]\n\nActions:\n  smoke           BIOS/UEFI Alpine Live boot smoke, not an installation test\n  prepare-source  Provision a disposable Debian Cloud source for kexec tests\n  install         Reinstall disposable source overlays and verify target boots\n\nCommon options:\n  --tools PATH       Extracted Debian QEMU/OVMF/xorriso root\n  --accel MODE       tcg|kvm (default tcg; no automatic fallback)\n  --memory-mib N     Guest RAM in MiB (512-65536; default 3072)\n  --output PATH      New private result directory (must not exist)\n  --firmware MODE    bios|efi|both (default both)\n  --timeout SECONDS  Per-case deadline (default 1800)\n\nSmoke: --iso FILE --sha256 HEX\nSource/install: --base FILE --sha512 HEX --key FILE --public-key FILE\n  --disk-bus BUS     virtio-blk|virtio-scsi|sata|nvme|pvscsi (default virtio-blk)\nInstall: --installer STATIC_ELF --target alpine|debian|arch|gentoo|all\n  --filesystem FS   xfs|ext4|btrfs|all (default xfs)\n  --kernel CHOICE    Target kernel choice or all official families\n  --gentoo-init INIT openrc|systemd|both (default openrc; Gentoo only)\n  --kernel-update B  yes|no (default no); upgrade, regenerate, reboot, verify\n  --boot-size-mib N  FAT32 capacity (512-4096); consider 1024 for upgrades\n  --disk-size-gib N  Optional sparse overlay expansion (3072 tests BIOS/GPT)\n\nAll disk files and EFI variables are fresh disposable copies. No host devices,\nnetwork-policy changes, host reboot, or privileged mounts are used.\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Firmware {
@@ -81,6 +81,8 @@ impl Options {
             if !matches!(
                 flag.as_str(),
                 "--tools"
+                    | "--accel"
+                    | "--memory-mib"
                     | "--output"
                     | "--firmware"
                     | "--timeout"
@@ -262,6 +264,8 @@ impl Options {
 }
 struct Tools {
     root: PathBuf,
+    accel: String,
+    memory_mib: String,
 }
 impl Tools {
     fn program(&self, name: &str) -> Command {
@@ -280,13 +284,17 @@ impl Tools {
             "-machine",
             "q35",
             "-accel",
-            "tcg,thread=multi",
+            if self.accel == "kvm" {
+                "kvm"
+            } else {
+                "tcg,thread=multi"
+            },
             "-cpu",
-            "max",
+            if self.accel == "kvm" { "host" } else { "max" },
             "-smp",
             "2",
             "-m",
-            "3072",
+            &self.memory_mib,
             "-display",
             "none",
         ]);
@@ -312,8 +320,27 @@ pub fn run(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let options = Options::parse(args)?;
+    let accel = options
+        .values
+        .get("--accel")
+        .map(String::as_str)
+        .unwrap_or("tcg");
+    if !matches!(accel, "tcg" | "kvm") {
+        return Err("accel must be tcg or kvm".into());
+    }
+    let memory_mib = options
+        .values
+        .get("--memory-mib")
+        .map(String::as_str)
+        .unwrap_or("3072")
+        .parse::<u32>()
+        .ok()
+        .filter(|n| (512..=65536).contains(n))
+        .ok_or("memory-mib must be 512-65536")?;
     let tools = Tools {
         root: options.path("--tools")?,
+        accel: accel.to_owned(),
+        memory_mib: memory_mib.to_string(),
     };
     let output = options.path("--output")?;
     private_directory(&output)?;
@@ -662,7 +689,9 @@ fn install_case(
     write_private(
         &case.join("hardware.txt"),
         format!(
-            "accelerator=tcg\nmachine=q35\nfirmware={}\ndisk_bus={bus:?}\n",
+            "accelerator={}\nmemory_mib={}\nvcpus=2\nmachine=q35\nfirmware={}\ndisk_bus={bus:?}\n",
+            tools.accel,
+            tools.memory_mib,
             mode.label()
         )
         .as_bytes(),
@@ -731,6 +760,11 @@ fn install_case(
     if filesystem != "btrfs" {
         arguments.extend(["--swapfile-mib=64".into(), "--swappiness=10".into()]);
     }
+    source.checked(
+        &["sh", "-c", "uname -a; lsblk -o NAME,TYPE,SIZE,SERIAL,FSTYPE,MOUNTPOINTS; ip -brief address; ip route; cat /etc/resolv.conf; networkctl status --no-pager; free -m"],
+        &case.join("source-state.log"),
+        Duration::from_secs(30),
+    )?;
     let mut inspect = arguments.clone();
     inspect.push("--inspect".into());
     let output = source.capture_owned(&inspect, Duration::from_secs(120))?;
@@ -777,6 +811,12 @@ fn install_case(
         key: key.to_owned(),
         known: case.join("known-target"),
     };
+    let live = Ssh {
+        port,
+        key: key.to_owned(),
+        known: case.join("known-live"),
+    };
+    let mut last_live_log = Instant::now();
     let expected = format!("rustaller-{target}");
     let mut ready = false;
     while Instant::now() < deadline {
@@ -790,6 +830,20 @@ fn install_case(
                 "source installer exited with {:?}; see install.stderr",
                 status.code()
             ));
+        }
+        if last_live_log.elapsed() >= Duration::from_secs(10)
+            && read_log(&case.join("serial.log")).contains("RUSTALLER_LIVE_START")
+        {
+            last_live_log = Instant::now();
+            if let Ok(log) =
+                live.capture(&["cat", "/var/log/rustaller.log"], Duration::from_secs(5))
+                && log.success
+            {
+                write_private(&case.join("live-install.log"), &log.stdout)?;
+                if String::from_utf8_lossy(&log.stdout).contains("Live installation stopped:") {
+                    return Err("Live worker stopped; see live-install.log".into());
+                }
+            }
         }
         if read_log(&case.join("serial.log")).contains("RUSTALLER_INSTALL_COMPLETE")
             && let Ok(result) = destination.capture(&["hostname"], Duration::from_secs(10))
@@ -1094,8 +1148,8 @@ fn create_seed(
     cloud.push_str("  - path: /etc/default/kexec\n    permissions: '0644'\n    content: |\n      LOAD_KEXEC=false\n      USE_GRUB_CONFIG=false\n");
     // The prepared image boots with one explicit networkd owner on the next
     // run. No live interface migration is required during source provisioning.
-    cloud.push_str("  - path: /etc/systemd/network/05-rustaller-source.network\n    permissions: '0644'\n    content: |\n      [Match]\n      MACAddress=52:54:00:12:34:56\n      [Network]\n      DHCP=ipv4\n      IPv6AcceptRA=no\n");
-    cloud.push_str("runcmd:\n  - [systemctl, mask, networking.service, NetworkManager.service]\n  - [systemctl, enable, systemd-networkd.service]\n");
+    cloud.push_str("  - path: /etc/systemd/network/05-rustaller-source.network\n    permissions: '0644'\n    content: |\n      [Match]\n      MACAddress=52:54:00:12:34:56\n      [Network]\n      DHCP=no\n      IPv6AcceptRA=no\n      Address=10.0.2.15/24\n      Gateway=10.0.2.2\n      DNS=10.0.2.3\n");
+    cloud.push_str("runcmd:\n  - [systemctl, mask, networking.service, NetworkManager.service]\n  - [systemctl, enable, systemd-networkd.service]\n  - [sh, -c, 'if systemctl is-active --quiet systemd-networkd; then networkctl reload && networkctl reconfigure $(ls /sys/class/net | grep -vx lo) && /usr/lib/systemd/systemd-networkd-wait-online --timeout=60; fi']\n");
     if let Some(proxy) = relay.guest_url() {
         cloud.push_str(&format!(
             "apt:\n  http_proxy: {}\n  https_proxy: {}\n",
@@ -1529,7 +1583,10 @@ fn public_key(path: &Path) -> Result<String, String> {
 fn regular(path: &Path) -> Result<(), String> {
     let metadata = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
     if !metadata.is_file() || metadata.len() == 0 {
-        return Err("VM input must be a nonempty regular file, never a device/symlink".into());
+        return Err(format!(
+            "VM input must be a nonempty regular file, never a device/symlink: {}",
+            path.display()
+        ));
     }
     Ok(())
 }
@@ -1595,6 +1652,22 @@ mod tests {
         assert!(Options::parse(&["smoke".into(), "--drive".into(), "/dev/sda".into()]).is_err());
         assert!(regular(Path::new("/dev/null")).is_err());
     }
+    #[test]
+    fn qemu_acceleration_and_memory_are_explicit() {
+        for (accel, expected, cpu) in [("tcg", "tcg,thread=multi", "max"), ("kvm", "kvm", "host")] {
+            let tools = Tools {
+                root: "/unused".into(),
+                accel: accel.into(),
+                memory_mib: "1536".into(),
+            };
+            let command = tools.qemu();
+            let args: Vec<_> = command.get_args().map(|a| a.to_str().unwrap()).collect();
+            assert!(args.windows(2).any(|a| a == ["-accel", expected]));
+            assert!(args.windows(2).any(|a| a == ["-cpu", cpu]));
+            assert!(args.windows(2).any(|a| a == ["-m", "1536"]));
+        }
+    }
+
     #[test]
     fn quotes_remote_native_arguments_without_shell_substitution() {
         assert_eq!(quote("a'$(secret)"), "'a'\\''$(secret)'");
