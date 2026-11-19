@@ -672,7 +672,18 @@ const LIVE_MODULE_SERVICE: &str = "#!/sbin/openrc-run\nname=\"verified rustaller
 fn live_package_world(plan: &InstallPlan) -> String {
     // Alpine 3.24 util-linux is an empty compatibility metapackage. The Live
     // guard runs findmnt/lsblk before it can install any further prerequisites.
-    let mut world = "alpine-base\nca-certificates\ncurl\ngnupg\nopenssh\nfindmnt\nlsblk\nblkid\nmount\numount\nutil-linux-misc\n".to_owned();
+    // alpine-conf and arch-install-scripts both provide cmd:genfstab. Arch's
+    // private Live needs Alpine's runtime, not its setup scripts. Use the
+    // alpine-base runtime dependencies without alpine-conf for this target;
+    // APK still authenticates and resolves every package normally.
+    let base = if plan.target == Target::Arch {
+        "alpine-baselayout\nalpine-release\napk-tools\nbusybox\nbusybox-mdev-openrc\nbusybox-openrc\nbusybox-suid\nmusl-utils\nopenrc\n"
+    } else {
+        "alpine-base\n"
+    };
+    let mut world = format!(
+        "{base}ca-certificates\ncurl\ngnupg\nopenssh\nfindmnt\nlsblk\nblkid\nmount\numount\nutil-linux-misc\n"
+    );
     if plan.username.as_deref().is_some_and(|name| name != "root") {
         world.push_str("sudo\n");
     }
@@ -1556,6 +1567,36 @@ mod tests {
         plan.username = Some("admin".into());
         assert!(live_package_world(&plan).lines().any(|line| line == "sudo"));
     }
+    #[test]
+    fn arch_live_world_keeps_runtime_without_conflicting_alpine_setup_tools() {
+        let world = live_package_world(&InstallPlan::new(Target::Arch));
+        for package in [
+            "alpine-baselayout",
+            "alpine-release",
+            "apk-tools",
+            "busybox",
+            "busybox-mdev-openrc",
+            "busybox-openrc",
+            "busybox-suid",
+            "musl-utils",
+            "openrc",
+        ] {
+            assert!(world.lines().any(|line| line == package));
+        }
+        assert!(
+            !world
+                .lines()
+                .any(|line| matches!(line, "alpine-base" | "alpine-conf"))
+        );
+        for target in [Target::Alpine, Target::Debian, Target::Gentoo] {
+            assert!(
+                live_package_world(&InstallPlan::new(target))
+                    .lines()
+                    .any(|line| line == "alpine-base")
+            );
+        }
+    }
+
     #[test]
     fn native_kexec_handoff_checks_loaded_state_and_preserves_init_adapter() {
         for init in [HostInit::Systemd, HostInit::OpenRcInit] {
