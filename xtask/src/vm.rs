@@ -859,6 +859,10 @@ fn install_case(
                     .lines()
                     .any(|line| line.starts_with("rustaller-worker:"))
                 {
+                    if let Ok(detail) = live.capture(&["sh", "-c",
+                        "ps; findmnt -R /os; for p in /proc/[0-9]*; do for link in \"$p/root\" \"$p/cwd\" \"$p\"/fd/*; do value=$(readlink \"$link\" 2>/dev/null) || continue; case \"$value\" in /os|/os/*) printf '%s -> %s: ' \"$link\" \"$value\"; tr '\\000' ' ' < \"$p/cmdline\"; printf '\\n';; esac; done; done"], Duration::from_secs(30)) {
+                        write_private(&case.join("live-failure-state.log"), &detail.stdout)?;
+                    }
                     return Err("Live worker stopped; see live-install.log".into());
                 }
             }
