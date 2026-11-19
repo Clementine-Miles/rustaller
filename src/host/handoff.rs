@@ -677,9 +677,9 @@ fn live_package_world(plan: &InstallPlan) -> String {
     // alpine-base runtime dependencies without alpine-conf for this target;
     // APK still authenticates and resolves every package normally.
     let base = if plan.target == Target::Arch {
-        "alpine-baselayout\nalpine-release\napk-tools\nbusybox\nbusybox-mdev-openrc\nbusybox-openrc\nbusybox-suid\nmusl-utils\nopenrc\n"
+        format!("{}\n", initrd::ARCH_LIVE_BASE_PACKAGES.join("\n"))
     } else {
-        "alpine-base\n"
+        "alpine-base\n".to_owned()
     };
     let mut world = format!(
         "{base}ca-certificates\ncurl\ngnupg\nopenssh\nfindmnt\nlsblk\nblkid\nmount\numount\nutil-linux-misc\n"

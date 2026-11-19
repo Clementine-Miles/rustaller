@@ -11,9 +11,24 @@ use std::path::{Path, PathBuf};
 const START_MARKER: &str = "# BEGIN RUSTALLER initrd network worker";
 const END_MARKER: &str = "# END RUSTALLER initrd network worker";
 
+// alpine-base runtime dependencies, excluding alpine-conf's setup tools which
+// conflict with Arch's signed arch-install-scripts cmd:genfstab provider.
+pub(super) const ARCH_LIVE_BASE_PACKAGES: &[&str] = &[
+    "alpine-baselayout",
+    "alpine-release",
+    "apk-tools",
+    "busybox",
+    "busybox-mdev-openrc",
+    "busybox-openrc",
+    "busybox-suid",
+    "musl-utils",
+    "openrc",
+];
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InitrdError {
     ConfigureIpAnchorNotUnique,
+    BasePackageAnchorNotUnique,
     AlreadyPatched,
     WorkerVersionMismatch,
     InvalidWorker,
@@ -41,6 +56,9 @@ impl fmt::Display for InitrdError {
         match self {
             Self::ConfigureIpAnchorNotUnique => {
                 f.write_str("Alpine initrd configure_ip() anchor is missing or ambiguous")
+            }
+            Self::BasePackageAnchorNotUnique => {
+                f.write_str("Alpine initrd base package anchor is missing or ambiguous")
             }
             Self::AlreadyPatched => {
                 f.write_str("Alpine initrd already contains the Rust network hook")
@@ -194,7 +212,10 @@ pub fn stage_alpine_initrd(
     }
     let mode = metadata.permissions().mode() & 0o777;
     let source = fs::read_to_string(&init_path)?;
-    let patched = inject_network_bootstrap(&source, network_configs)?;
+    let mut patched = inject_network_bootstrap(&source, network_configs)?;
+    if plan.target == crate::model::Target::Arch {
+        patched = inject_arch_live_base(&patched)?;
+    }
     let payload = install_worker_and_plan(initrd_root, plan, worker_elf)?;
     atomic_replace(&init_path, patched.as_bytes(), mode)?;
     Ok(payload)
@@ -314,6 +335,27 @@ pub fn inject_network_bootstrap(
     Ok(output)
 }
 
+fn inject_arch_live_base(source: &str) -> Result<String, InitrdError> {
+    // Stock Alpine adds alpine-base even when an apkovl supplies its own world.
+    // Replace only that known assignment in the publisher-verified initrd.
+    const ANCHOR: &str = "pkgs=\"$pkgs alpine-base\"";
+    if source.lines().filter(|line| *line == ANCHOR).count() != 1 {
+        return Err(InitrdError::BasePackageAnchorNotUnique);
+    }
+    Ok(source
+        .lines()
+        .map(|line| {
+            if line == ANCHOR {
+                format!("pkgs=\"$pkgs {}\"", ARCH_LIVE_BASE_PACKAGES.join(" "))
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n")
+}
+
 fn render_network_hook(configs: &[InitrdNetworkConfig]) -> String {
     let mut hook = format!(
         "        {START_MARKER}\n        depmod\n        [ -d /sys/module/ipv6 ] || modprobe ipv6\n"
@@ -341,4 +383,21 @@ fn render_network_hook(configs: &[InitrdNetworkConfig]) -> String {
 
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(test)]
+mod arch_live_tests {
+    use super::*;
+    #[test]
+    fn arch_base_patch_keeps_openrc_and_rejects_unknown_or_ambiguous_initrds() {
+        let source = "#!/bin/sh\npkgs=\"$pkgs alpine-base\"\n# copy keys\n";
+        let patched = inject_arch_live_base(source).unwrap();
+        assert!(!patched.contains("alpine-base\""));
+        assert!(!patched.contains("alpine-conf"));
+        assert!(patched.contains("busybox-mdev-openrc"));
+        assert!(patched.contains("musl-utils openrc\"\n# copy keys"));
+        assert!(inject_arch_live_base("#!/bin/sh\n").is_err());
+        assert!(inject_arch_live_base(&format!("{source}{source}")).is_err());
+        assert!(inject_arch_live_base(&patched).is_err());
+    }
 }
