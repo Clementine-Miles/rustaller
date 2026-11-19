@@ -868,7 +868,10 @@ fn install_case(
             }
         }
         if read_log(&case.join("serial.log")).contains("RUSTALLER_INSTALL_COMPLETE")
-            && let Ok(result) = destination.capture(&["hostname"], Duration::from_secs(10))
+            && let Ok(result) = destination.capture(
+                &["cat", "/proc/sys/kernel/hostname"],
+                Duration::from_secs(10),
+            )
             && result.success
             && String::from_utf8_lossy(&result.stdout).trim() == expected
         {

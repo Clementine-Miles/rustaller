@@ -45,7 +45,9 @@ fn run() -> Result<(), String> {
     if id != target {
         return Err(format!("expected {target}, got {id}"));
     }
-    let actual_hostname = run_capture("hostname", &[], &transport)?;
+    let actual_hostname =
+        fs::read_to_string("/proc/sys/kernel/hostname").map_err(|e| e.to_string())?;
+    println!("hostname={}", actual_hostname.trim());
     if actual_hostname.trim() != format!("rustaller-{target}") {
         return Err("target hostname is not applied".into());
     }
