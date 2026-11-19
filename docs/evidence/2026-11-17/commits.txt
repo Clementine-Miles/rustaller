@@ -1,0 +1,17 @@
+cfb79a22449f369aa65a0db7c6719eacc33e1629 fix(xtask): read kernel hostname without optional guest utilities
+4e800803c3f94e0d3f60bd8683e1dd58c0d78253 fix(arch): stop target keyring agents before unmounting installation
+4b54f0c208000cd1661b9ff67c9038971fc79ae9 fix(xtask): retain Live process and mount evidence on worker failures
+91a357445112127d2c28b972b01532b00f3d522a fix(arch): replace forced alpine-base in verified Live initrd
+823a6dc59677995e7db7f37d83bfc595bfa97c86 fix(arch): avoid conflicting genfstab providers in private Alpine Live
+e0e4d890a8c9dc82d32569450a81c722d8bd059b fix(debian): keep early boot-mount guard in build-only initramfs config
+145c915994dde85acabeb0d2508709d0c2ed8506 fix(xtask): preserve stage markers in non-UTF8 serial consoles
+d443b7093ee54d9ef79ea31b19aa76e3a3497a47 fix(debian): check boot mount before mkinitramfs creates output
+20423ee42779dd142d5df76b8d827473713b06b3 fix(xtask): verify SeaBIOS soft-to-hard reboot using firmware evidence
+6fc8ff8cf9f8b3a2c5ad7f2e306ad401c076413e docs: record real KVM BIOS and UEFI acceptance evidence and limitations
+db5d0609bd35f5c5d10ecd234e2de8d9b8c1ac90 fix(debian): provide a shell-parseable native initramfs precheck hook
+5181761236af1998ef63a380ec2b54e53422207d fix(xtask): select SLIRP DNS explicitly for static guest network
+a9a2f77911c50d38d16bd8264efcdad3612d37c1 fix(debian): install required route and ext4 recovery utilities
+068c15de2b694f73c73c87a8d5aeafdc1ad30858 fix(xtask): preserve post-boot diagnostics on reset failure and detect EFI correctly
+4ee1069baa3e5ab1cfa9d047e6259d57bb04d294 fix: accept Debian relative systemd-resolved links without following them
+3057c5edafbc95c7bd615f870695ac1de712c9b5 fix(xtask): support constrained KVM hosts and preflight-ready source networking
+7b78293a2e96ea7ac9ceded8b02ec3b7a828b760 fix: recover kernel disk serial when Live lsblk lacks udev data

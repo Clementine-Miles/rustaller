@@ -1,0 +1,43 @@
+$ hostname 
+rustaller-alpine
+$ uname -m
+x86_64
+$ uname -r
+6.18.63-0-virt
+$ apk info --exists linux-virt
+linux-virt
+$ free -h
+              total        used        free      shared  buff/cache   available
+Mem:           1.4G       96.4M        1.3G        4.0M       28.0M        1.3G
+Swap:         64.0M           0       64.0M
+              total        used        free      shared  buff/cache   available
+Mem:           1.4G       96.4M        1.3G        4.0M       28.0M        1.3G
+Swap:         64.0M           0       64.0M
+
+$ swapon --show
+NAME      TYPE SIZE USED PRIO
+/swapfile file  64M   0B   -2
+NAME      TYPE SIZE USED PRIO
+/swapfile file  64M   0B   -2
+
+UUID=bcd7b37f-73f7-4461-85c4-6b1e10699ecc / xfs defaults 0 0
+UUID=8345-AA49 /boot vfat fmask=0177,dmask=0077,quiet 0 2
+/swapfile none swap defaults 0 0
+
+$ findmnt -nro UUID --mountpoint /boot
+8345-AA49
+$ ip -4 route show default
+default via 10.0.2.2 dev eth0 onlink 
+RUSTALLER_VM_TARGET_BOOT target=alpine firmware=bios kernel=6.18.63-0-virt
+RUSTALLER_VM_TARGET_NETWORK IPv4 default route and DNS lookup passed; public-key-only SSH authenticated by host harness
+RUSTALLER_VM_TARGET_SWAP policy verified for xfs
+v3.24.4-100-g95055a9ba15 [https://dl-cdn.alpinelinux.org/alpine/v3.24/main]
+v3.24.4-104-g2bdd29599e6 [https://dl-cdn.alpinelinux.org/alpine/v3.24/community]
+OK: 28670 distinct packages available
+$ apk upgrade --available linux-virt
+OK: 73.2 MiB in 67 packages
+$ mkinitfs 6.18.63-0-virt
+creating /boot/initramfs-virt for 6.18.63-0-virt
+$ /usr/local/libexec/rustaller-limine-worker limine-check
+RUSTALLER_VM_KERNEL_UPDATE transaction/rebuild completed; version change depends on repository candidates
+RUSTALLER_VM_ACCEPTANCE_PASS target=alpine firmware=bios

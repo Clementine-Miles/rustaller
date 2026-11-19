@@ -1,0 +1,15 @@
+[    0.000000] Linux version 6.12.117+deb13-amd64 (debian-kernel@lists.debian.org) (x86_64-linux-gnu-gcc-14 (Debian 14.2.0-19) 14.2.0, GNU ld (GNU Binutils for Debian) 2.44) #1 SMP PREEMPT_DYNAMIC Debian 6.12.117-1 (2026-11-12)
+[   83.730986] kexec_core: Starting new kernel
+[    0.000000] Linux version 6.18.60-0-virt (buildozer@build-3-24-x86_64) (cc (Alpine 15.2.0) 15.2.0, GNU ld (GNU Binutils) 2.45.1) #1-Alpine SMP PREEMPT_DYNAMIC 2026-11-01 07:26:31
+RUSTALLER_LIVE_START target=Alpine firmware=bios
+RUSTALLER_LIVE_START target=Alpine firmware=bios
+localhost login: RUSTALLER_INSTALL_COMPLETE target=Alpine firmware=bios
+RUSTALLER_INSTALL_COMPLETE target=Alpine firmware=bios
+ * Terminating remaining processes ...[   80.000604] reboot: Restarting system
+Limine 9.6.5 (x86-64, BIOS)
+Booting automatically in 3, press any key to stop the countdown...Booting automatically in 2, press any key to stop the countdown...Booting automatically in 1, press any key to stop the countdown...linux: Loading kernel `boot():/rustaller-2174-1794932741154044467/kernel-0`...
+[    0.000000] Linux version 6.18.63-0-virt (buildozer@build-3-24-x86_64) (cc (Alpine 15.2.0) 15.2.0, GNU ld (GNU Binutils) 2.45.1) #1-Alpine SMP PREEMPT_DYNAMIC 2026-11-11 03:02:54
+[   24.447341] reboot: Restarting system
+Limine 9.6.5 (x86-64, BIOS)
+Booting automatically in 3, press any key to stop the countdown...Booting automatically in 2, press any key to stop the countdown...Booting automatically in 1, press any key to stop the countdown...linux: Loading kernel `boot():/rustaller-2783-1794932769308714667/kernel-0`...
+[    0.000000] Linux version 6.18.63-0-virt (buildozer@build-3-24-x86_64) (cc (Alpine 15.2.0) 15.2.0, GNU ld (GNU Binutils) 2.45.1) #1-Alpine SMP PREEMPT_DYNAMIC 2026-11-11 03:02:54

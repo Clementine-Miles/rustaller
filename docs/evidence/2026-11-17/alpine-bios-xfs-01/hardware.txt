@@ -1,0 +1,6 @@
+accelerator=kvm
+memory_mib=1536
+vcpus=2
+machine=q35
+firmware=bios
+disk_bus=VirtioBlk

@@ -1,0 +1,7 @@
+Limine 9.6.5 (x86-64, BIOS)
+Booting automatically in 3, press any key to stop the countdown...Booting automatically in 2, press any key to stop the countdown...Booting automatically in 1, press any key to stop the countdown...linux: Loading kernel `boot():/rustaller-2783-1794932769308714667/kernel-0`...
+[    0.000000] Linux version 6.18.63-0-virt (buildozer@build-3-24-x86_64) (cc (Alpine 15.2.0) 15.2.0, GNU ld (GNU Binutils) 2.45.1) #1-Alpine SMP PREEMPT_DYNAMIC 2026-11-11 03:02:54
+[    7.074124] reboot: Restarting system
+Limine 9.6.5 (x86-64, BIOS)
+Booting automatically in 3, press any key to stop the countdown...Booting automatically in 2, press any key to stop the countdown...Booting automatically in 1, press any key to stop the countdown...linux: Loading kernel `boot():/rustaller-2369-1794932767736888590/kernel-0`...
+[    0.000000] Linux version 6.18.63-0-virt (buildozer@build-3-24-x86_64) (cc (Alpine 15.2.0) 15.2.0, GNU ld (GNU Binutils) 2.45.1) #1-Alpine SMP PREEMPT_DYNAMIC 2026-11-11 03:02:54

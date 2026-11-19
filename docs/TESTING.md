@@ -158,27 +158,29 @@ new target installations use Limine exclusively.
 
 ## Limine/filesystem acceptance matrix
 
-Fresh KVM acceptance on 2026-11-17 is recorded in
-[ACCEPTANCE-2026-11-17.md](ACCEPTANCE-2026-11-17.md), including exact revisions,
-failed retries, fixes and local serial/QMP/SSH evidence paths. Debian UEFI/ext4
-passed installation and native regeneration/reboot. Alpine BIOS/ext4 installed
-and passed guest probes but failed the strict raw QMP reset-count check.
-The baseline pair is not accepted; broader combinations remain gated.
-Historical Live smoke above is not evidence of target booting.
+Fresh KVM acceptance and reviewed evidence are recorded in
+[VERIFICATION-FOLLOWUP-2026-11-19.md](VERIFICATION-FOLLOWUP-2026-11-19.md).
+Both baseline cases passed after the evidenced SeaBIOS reset correction. Gated
+expansion passed Alpine BIOS/XFS, Debian UEFI/Btrfs and Arch UEFI/ext4, including
+native regeneration/reboot. Alpine and Debian previous-generation boots and
+unmounted-boot generator rejection were also exercised in disposable guests.
+The [initial report](ACCEPTANCE-2026-11-17.md) preserves failed retries and fixes.
+PASS applies to the recorded revision/kernel/controller, not every combination.
+Historical Live smoke above is not evidence of target installation.
 
 | Distribution | BIOS/MBR XFS | BIOS/MBR ext4 | BIOS/MBR Btrfs | UEFI/GPT XFS | UEFI/GPT ext4 | UEFI/GPT Btrfs |
 | --- | --- | --- | --- | --- | --- | --- |
-| Alpine | Not run | FAIL: reset count | Not run | Not run | Not run | Not run |
-| Debian | Not run | Not run | Not run | Not run | PASS | Not run |
-| Arch | Not run | Not run | Not run | Not run | Not run | Not run |
+| Alpine | PASS | PASS | Not run | Not run | Not run | Not run |
+| Debian | Not run | Not run | Not run | Not run | PASS | PASS |
+| Arch | Not run | Not run | Not run | Not run | PASS | Not run |
 | Gentoo OpenRC no-multilib | Not run | Not run | Not run | Not run | Not run | Not run |
 | Gentoo systemd no-multilib | Not run | Not run | Not run | Not run | Not run | Not run |
 
-BIOS/GPT stage2, 4Kn UEFI, native kernel upgrades, package-hook ordering, CachyOS
-first boot, serial output and provider-specific firmware also need fresh VM or
-hardware evidence. The original development environment lacked QEMU and
-`/dev/kvm`; the linked 2026-11-17 report records the separate KVM VPS acceptance
-and its remaining limitations.
+BIOS/GPT stage2, 4Kn UEFI, transitions to newer kernel versions, unexercised
+package-hook combinations, CachyOS and provider-specific firmware still need
+fresh VM or hardware evidence. Gentoo was not run within this host role's
+conservative 1536 MiB RAM budget. The linked reports distinguish available-host
+KVM results from blocked multi-host coverage and the unexecuted full matrix.
 
 ## Regression boundaries
 

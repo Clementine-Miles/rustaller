@@ -1,0 +1,9 @@
+target=alpine
+kernel_choice=virt
+init=native
+kernel_update_requested=true
+firmware=bios
+raw_qmp_resets_after_dispatch=2
+os_requested_final_reboots=1
+SSH public-key authentication, native package update, kernel, hostname, xfs/UUID fstab, Limine boot artifacts, DNS lookup, IPv4 route, filesystem-specific swap policy: PASS
+IPv6 Internet connectivity: NOT TESTED

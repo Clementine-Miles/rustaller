@@ -1,0 +1,44 @@
+exit=0
+PASS: previous generation remains selected after firmware reboot
+6.12.117+deb13-cloud-amd64
+6.12.117+deb13-cloud-amd64 SMP preempt mod_unload modversions 
+PASS: virtio_net module vermagic matches running recovery kernel
+$ hostname 
+rustaller-debian
+$ uname -m
+x86_64
+$ uname -r
+6.12.117+deb13-cloud-amd64
+$ dpkg-query -W -f=${Status} linux-image-cloud-amd64
+install ok installed$ sh -n /etc/initramfs-tools/hooks/zz-rustaller-limine-check
+$ sh -n /usr/share/initramfs-tools/conf-hooks.d/00-rustaller-mount
+$ free -h
+               total        used        free      shared  buff/cache   available
+Mem:           1.4Gi       190Mi       1.3Gi       388Ki        56Mi       1.2Gi
+Swap:           63Mi          0B        63Mi
+               total        used        free      shared  buff/cache   available
+Mem:           1.4Gi       190Mi       1.3Gi       388Ki        56Mi       1.2Gi
+Swap:           63Mi          0B        63Mi
+
+$ swapon --show
+NAME      TYPE SIZE USED PRIO
+/swapfile file  64M   0B   -2
+NAME      TYPE SIZE USED PRIO
+/swapfile file  64M   0B   -2
+
+UUID=4b7f517f-f1c4-4b20-a08c-86ef9ee7df81 / ext4 defaults 0 1
+UUID=679C-AF49 /boot vfat fmask=0177,dmask=0077,quiet 0 2
+/swapfile none swap defaults 0 0
+
+$ findmnt -nro UUID --mountpoint /boot
+679C-AF49
+$ ip -4 route show default
+default via 10.0.2.2 dev enp0s4 proto static onlink 
+RUSTALLER_VM_TARGET_BOOT target=debian firmware=efi kernel=6.12.117+deb13-cloud-amd64
+RUSTALLER_VM_TARGET_NETWORK IPv4 default route and DNS lookup passed; public-key-only SSH authenticated by host harness
+RUSTALLER_VM_TARGET_SWAP policy verified for ext4
+Hit:1 https://security.debian.org/debian-security trixie-security InRelease
+Hit:2 https://deb.debian.org/debian trixie InRelease
+Hit:3 https://deb.debian.org/debian trixie-updates InRelease
+Reading package lists...
+RUSTALLER_VM_ACCEPTANCE_PASS target=debian firmware=efi

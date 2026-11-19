@@ -1,0 +1,67 @@
+hostname=rustaller-arch
+$ uname -m
+x86_64
+$ uname -r
+7.3.4-arch1-2
+$ pacman -Q linux
+linux 7.3.4.arch1-2
+$ free -h
+               total        used        free      shared  buff/cache   available
+Mem:           1.4Gi       286Mi       1.1Gi       4.5Mi       178Mi       1.1Gi
+Swap:           63Mi          0B        63Mi
+               total        used        free      shared  buff/cache   available
+Mem:           1.4Gi       286Mi       1.1Gi       4.5Mi       178Mi       1.1Gi
+Swap:           63Mi          0B        63Mi
+
+$ swapon --show
+NAME      TYPE SIZE USED PRIO
+/swapfile file  64M   0B   -1
+NAME      TYPE SIZE USED PRIO
+/swapfile file  64M   0B   -1
+
+UUID=4b0dedf5-1e4e-43cc-b21a-b381becf57b0 / ext4 defaults 0 1
+UUID=6CEB-5062 /boot vfat fmask=0177,dmask=0077,quiet 0 2
+/swapfile none swap defaults 0 0
+
+$ findmnt -nro UUID --mountpoint /boot
+6CEB-5062
+$ ip -4 route show default
+default via 10.0.2.2 dev enp0s4 proto static onlink 
+RUSTALLER_VM_TARGET_BOOT target=arch firmware=efi kernel=7.3.4-arch1-2
+RUSTALLER_VM_TARGET_NETWORK IPv4 default route and DNS lookup passed; public-key-only SSH authenticated by host harness
+RUSTALLER_VM_TARGET_SWAP policy verified for ext4
+:: Synchronizing package databases...
+ core downloading...
+ extra downloading...
+$ pacman -Syu --noconfirm
+:: Synchronizing package databases...
+ core downloading...
+ extra downloading...
+:: Starting full system upgrade...
+ there is nothing to do
+$ mkinitcpio -P -S autodetect
+==> Building image from preset: /etc/mkinitcpio.d/linux.preset: 'default'
+==> Using default configuration file: '/etc/mkinitcpio.conf'
+  -> -k /boot/vmlinuz-linux -g /boot/initramfs-linux.img
+==> Starting build: '7.3.4-arch1-2'
+  -> Running build hook: [base]
+  -> Running build hook: [systemd]
+  -> Running build hook: [autodetect]
+  -> Running build hook: [microcode]
+  -> Running build hook: [modconf]
+  -> Running build hook: [kms]
+  -> Running build hook: [keyboard]
+  -> Running build hook: [sd-vconsole]
+  -> Running build hook: [block]
+  -> Running build hook: [filesystems]
+  -> Running build hook: [fsck]
+==> Generating module dependencies
+==> Creating zstd-compressed initcpio image: '/boot/initramfs-linux.img'
+  -> Early uncompressed CPIO image generation successful
+==> Initcpio image generation successful
+==> Running post hooks
+  -> Running post hook: [zz-rustaller-limine]
+==> Post processing done
+$ /usr/local/libexec/rustaller-limine-worker limine-check
+RUSTALLER_VM_KERNEL_UPDATE transaction/rebuild completed; version change depends on repository candidates
+RUSTALLER_VM_ACCEPTANCE_PASS target=arch firmware=efi

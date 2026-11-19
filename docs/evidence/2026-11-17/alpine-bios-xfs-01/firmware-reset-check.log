@@ -1,0 +1,1 @@
+PASS: one OS-requested firmware reboot; raw QMP RESETs=2; SeaBIOS soft-to-hard sequences=1

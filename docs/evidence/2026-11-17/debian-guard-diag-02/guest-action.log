@@ -1,0 +1,14 @@
+exit=1
+INITIAL BOOT CONFIGURATIONS
+9c4edf66604f1285ebd8947bfe09416cfa2b82271556ac928e72766ad97e8451  /boot/limine.conf
+54848b3f38738e3a85a77fe478c82adcaf7f9cbb1789152b204deacced6d5292  /boot/limine.conf.previous
+NATIVE GENERATOR WITH UNMOUNTED BOOT: exit=1
+W: No zstd in /usr/bin:/sbin:/bin, using gzip
+W: Kernel configuration /boot/config-6.12.117+deb13-cloud-amd64 is missing, gzip compression support (CONFIG_RD_GZIP) cannot be checked and is assumed to be available
+rustaller-worker: Command findmnt failed with status Some(1)
+E: /etc/initramfs-tools/hooks/zz-rustaller-limine-check failed with return 1.
+HIDDEN BOOT FILES BEFORE
+HIDDEN BOOT FILES AFTER
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  /boot/rustaller-guard-test.img
+rustaller-worker: Command findmnt failed with status Some(1)
+cmp: EOF on /var/tmp/rustaller-vm/hidden-before.sha256 which is empty

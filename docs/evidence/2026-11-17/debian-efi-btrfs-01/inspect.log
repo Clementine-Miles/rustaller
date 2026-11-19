@@ -1,0 +1,119 @@
+CURRENT SYSTEM — detected
+[System]
+OS: Debian GNU/Linux 13 (trixie)
+Kernel: 6.12.117+deb13-amd64
+CPU Architecture: x86_64
+Hostname: rustaller-source
+Uptime: 0d 0h 0m
+Init / PID 1: systemd
+libc: glibc 2.41
+
+[CPU and ISA]
+Architecture: x86_64 (guest-visible)
+Vendor: AuthenticAMD
+Model: AMD Ryzen 9 9950X 16-Core Processor
+Logical CPUs: 2; allowed CPUs: 2
+Visible sockets / cores: 1 / 2
+Threads/core: 1
+Frequency: 4292–4292 MHz (reported sample)
+Caches (one visible CPU): L1 Data 64K; L1 Instruction 64K; L2 Unified 512K; L3 Unified 16384K
+Microarch level: x86-64-v4
+AES-NI: Supported
+AVX: Supported
+AVX2: Supported
+FMA: Supported
+BMI1 / BMI2: Supported
+AVX-512 (v4 set): Supported
+Virtualization extensions: VMX=Unavailable SVM=Supported
+Capabilities describe this execution environment; hypervisors may mask features. Physical host CPU unverified.
+
+[Virtualization]
+Environment: KVM/QEMU
+DMI manufacturer/product: QEMU / Standard PC (Q35 + ICH9, 2009)
+Physical host CPU: Unverifiable; capabilities are guest-visible
+
+[Memory]
+RAM total / available / used: 1463.7 MiB / 1231.6 MiB / 232.1 MiB
+Swap total / used: 0.0 MiB / 0.0 MiB
+Balloon indicators: No loaded known balloon driver detected (availability unknown)
+zram: No devices detected
+
+[Storage]
+/dev/sr0 (rom): 0.6 MiB; model QEMU DVD-ROM
+Identity: QM00005 / 2026-11-17-17-03-42-00; transport sata; parent Unknown
+Sectors logical/physical: 2048/2048; table Unknown; FS iso9660
+Rotational: yes; discard max: 0 bytes
+/dev/vda (disk): 8192.0 MiB; model Unknown
+Identity: rustaller-debian-efi; transport virtio; parent Unknown
+Sectors logical/physical: 512/512; table gpt; FS Unknown
+Rotational: yes; discard max: 2147483136 bytes
+/dev/vda1 (part): 8064.0 MiB; model Unknown
+Identity: af01cf6d-3c1a-46f8-9d6f-70e2338496fd; transport virtio; parent vda
+Sectors logical/physical: 512/512; table gpt; FS ext4
+Rotational: yes; discard max: 2147483136 bytes
+/dev/vda14 (part): 3.0 MiB; model Unknown
+Identity: Unknown; transport virtio; parent vda
+Sectors logical/physical: 512/512; table gpt; FS Unknown
+Rotational: yes; discard max: 2147483136 bytes
+/dev/vda15 (part): 124.0 MiB; model Unknown
+Identity: 75FC-691D; transport virtio; parent vda
+Sectors logical/physical: 512/512; table gpt; FS vfat
+Rotational: yes; discard max: 2147483136 bytes
+Mount /: /dev/vda1 ext4; options rw,relatime; rw,discard,errors=remount-ro
+Mount /boot/efi: /dev/vda15 vfat; options rw,relatime; rw,fmask=0077,dmask=0077,codepage=437,iocharset=ascii,shortname=mixed,utf8,errors=remount-ro
+Disk utilization (bytes):
+Filesystem       1-blocks       Used  Available Capacity Mounted on
+/dev/vda1      8242348032 1020461056 6836072448      13% /
+/dev/vda1      8242348032 1020461056 6836072448      13% /
+RAID status:
+Unknown
+
+[Firmware]
+Boot mode: UEFI
+UEFI bitness: 64
+Secure Boot: Unknown
+Firmware vendor: Debian distribution of EDK II
+Current bootloader: Unknown (not inferred from files)
+
+[Network]
+enp0s4: MAC 52:54:00:12:34:56; MTU 1500; state up; speed Unavailable
+Addresses: 10.0.2.15/24, fe80::5054:ff:fe12:3456/64
+Address policy: validated source policy: DHCPv4=false; DHCPv6=false; RA=false
+lo: MAC 00:00:00:00:00:00; MTU 65536; state unknown; speed Unavailable
+Addresses: 127.0.0.1/8, ::1/128
+Address policy: Unknown (not inferred from address)
+Default IPv4: via 10.0.2.2 dev enp0s4 metric Unknown
+DNS: nameserver 127.0.0.53; search .
+SSH policy: port 22; permitrootlogin without-password; pubkeyauthentication yes; passwordauthentication no
+
+[Installation compatibility]
+No unsupported virtualization indicators; firmware/disk checks remain required
+Diagnostics do not authorize installation; strict preflight and disk identity checks remain required.
+Selected disk (recorded preflight identity): /dev/vda (8589934592 bytes)
+Serial: rustaller-debian-efi WWN:  PTUUID: d70992ee-74e4-4c1f-af38-d32f140a50f2
+
+TARGET SYSTEM — planned
+Distribution: Debian
+Init: systemd
+Kernel package/family: linux-image-cloud-amd64 (version determined after installation)
+Bootloader: Limine 9.6.5
+Firmware: efi (detected)
+Partition table: GPT; count: 2
+FAT32: 1024 MiB at /boot
+Root: btrfs at /
+Btrfs: @; zstd level 3 (0=off)
+Swapfile: disabled; swappiness kernel default
+Hostname: rustaller-debian
+Timezone: Etc/UTC
+Network: inherited validated source policy; MTU target defaults; not inherited
+IPv6: inherit; address preference: default
+TCP congestion / queue: default / default
+DNS: static [10.0.2.3]; search []
+SSH port: 22; account: root
+Public keys: 1 sources; credentials hidden
+Profile: minimal; tools=false; retain docs=false; cache=false
+Warning: FAT32 /boot is outside root snapshots; restore matching kernel/initramfs separately.
+
+ERASE ALL PARTITIONS ON /dev/vda (8589934592 bytes). Exact disk-identity confirmation required. Limine method: UEFI fallback EFI/BOOT/BOOTX64.EFI; no NVRAM.
+Offline inventory checked. Source authentication, kexec readiness and package availability are checked during installation preparation.
+Confirmation token: ERASE /dev/vda 8589934592 SERIAL=rustaller-debian-efi WWN= PTUUID=d70992ee-74e4-4c1f-af38-d32f140a50f2

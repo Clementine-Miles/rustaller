@@ -1,0 +1,3 @@
+# Preserve captured console/probe/QMP bytes, including padding and CRLF.
+# Whitespace checks remain enabled for source code and Markdown reports.
+**/*.log -text -whitespace

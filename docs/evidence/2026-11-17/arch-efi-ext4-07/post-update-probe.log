@@ -1,0 +1,36 @@
+hostname=rustaller-arch
+$ uname -m
+x86_64
+$ uname -r
+7.3.4-arch1-2
+$ pacman -Q linux
+linux 7.3.4.arch1-2
+$ free -h
+               total        used        free      shared  buff/cache   available
+Mem:           1.4Gi       289Mi       1.1Gi       4.5Mi       114Mi       1.1Gi
+Swap:           63Mi          0B        63Mi
+               total        used        free      shared  buff/cache   available
+Mem:           1.4Gi       289Mi       1.1Gi       4.5Mi       114Mi       1.1Gi
+Swap:           63Mi          0B        63Mi
+
+$ swapon --show
+NAME      TYPE SIZE USED PRIO
+/swapfile file  64M   0B   -1
+NAME      TYPE SIZE USED PRIO
+/swapfile file  64M   0B   -1
+
+UUID=4b0dedf5-1e4e-43cc-b21a-b381becf57b0 / ext4 defaults 0 1
+UUID=6CEB-5062 /boot vfat fmask=0177,dmask=0077,quiet 0 2
+/swapfile none swap defaults 0 0
+
+$ findmnt -nro UUID --mountpoint /boot
+6CEB-5062
+$ ip -4 route show default
+default via 10.0.2.2 dev enp0s4 proto static onlink 
+RUSTALLER_VM_TARGET_BOOT target=arch firmware=efi kernel=7.3.4-arch1-2
+RUSTALLER_VM_TARGET_NETWORK IPv4 default route and DNS lookup passed; public-key-only SSH authenticated by host harness
+RUSTALLER_VM_TARGET_SWAP policy verified for ext4
+:: Synchronizing package databases...
+ core downloading...
+ extra downloading...
+RUSTALLER_VM_ACCEPTANCE_PASS target=arch firmware=efi

@@ -1,0 +1,10 @@
+{"QMP": {"version": {"qemu": {"micro": 13, "minor": 0, "major": 10}, "package": "Debian 1:10.0.13+ds-0+deb13u1"}, "capabilities": ["oob"]}}
+{"return": {}}
+{"timestamp": {"seconds": 1794934268, "microseconds": 469748}, "event": "RTC_CHANGE", "data": {"offset": 0, "qom-path": "/machine/unattached/device[4]/rtc"}}
+{"timestamp": {"seconds": 1794934276, "microseconds": 388876}, "event": "NIC_RX_FILTER_CHANGED", "data": {"path": "/machine/peripheral-anon/device[3]/virtio-backend"}}
+{"timestamp": {"seconds": 1794934313, "microseconds": 504938}, "event": "RTC_CHANGE", "data": {"offset": 0, "qom-path": "/machine/unattached/device[4]/rtc"}}
+{"timestamp": {"seconds": 1794934518, "microseconds": 526355}, "event": "RTC_CHANGE", "data": {"offset": 0, "qom-path": "/machine/unattached/device[4]/rtc"}}
+{"timestamp": {"seconds": 1794934520, "microseconds": 639838}, "event": "RESET", "data": {"guest": true, "reason": "guest-reset"}}
+{"timestamp": {"seconds": 1794934520, "microseconds": 920669}, "event": "RTC_CHANGE", "data": {"offset": 0, "qom-path": "/machine/unattached/device[4]/rtc"}}
+{"timestamp": {"seconds": 1794934543, "microseconds": 388896}, "event": "RESET", "data": {"guest": true, "reason": "guest-reset"}}
+{"timestamp": {"seconds": 1794934543, "microseconds": 662936}, "event": "RTC_CHANGE", "data": {"offset": -1, "qom-path": "/machine/unattached/device[4]/rtc"}}

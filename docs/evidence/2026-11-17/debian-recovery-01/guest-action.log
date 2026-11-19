@@ -1,0 +1,21 @@
+exit=0
+INITIAL BOOT CONFIGURATIONS
+6e6612e9524c35f4f7d562dd48ad8090ca640d245657c1d7ffc2bb8d203dbd94  /boot/limine.conf
+0d52da271295f0c784439577ee0d2e57286eff7407f1f9cf1302e63546859ca9  /boot/limine.conf.previous
+NATIVE GENERATOR WITH UNMOUNTED BOOT: exit=1
+rustaller-worker: Command findmnt failed with status Some(1)
+HIDDEN BOOT FILES BEFORE
+HIDDEN BOOT FILES AFTER
+rustaller-worker: Command findmnt failed with status Some(1)
+/boot/limine.conf: OK
+PASS: failed generator left active config and hidden /boot files unchanged
+SELECTED PREVIOUS GENERATION
+0d52da271295f0c784439577ee0d2e57286eff7407f1f9cf1302e63546859ca9  /boot/limine.conf
+timeout: 3
+serial: yes
+serial_baudrate: 115200
+/6.12.117+deb13-cloud-amd64
+ protocol: linux
+ path: boot():/rustaller-2183-1794934517800087982/kernel-0
+ module_path: boot():/rustaller-2183-1794934517800087982/initrd-0
+ cmdline: root=UUID=4b7f517f-f1c4-4b20-a08c-86ef9ee7df81 rootfstype=ext4 rw console=ttyS0,115200n8 console=tty0

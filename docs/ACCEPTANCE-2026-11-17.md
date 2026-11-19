@@ -1,5 +1,8 @@
 # Rustaller QEMU acceptance report — 2026-11-17
 
+> Historical snapshot. See [the follow-up report](VERIFICATION-FOLLOWUP-2026-11-19.md)
+> for the resolved baseline, recovery tests, expanded matrix and later fixes.
+
 ## Scope and verdict
 
 Real installations were exercised with the repository's `cargo xtask vm-acceptance` runner, not a substitute framework. **Debian + OVMF + ext4: PASS** after fixes, including native kernel transaction/regeneration and another reboot. **Alpine + SeaBIOS + ext4: FAIL** on the retained strict QMP reset-count check, despite passing installation/target/rebuild/reboot probes. The baseline pair is therefore **not accepted** and the broader matrix was not expanded. Multi-VPS coverage is blocked by missing access to any second host.

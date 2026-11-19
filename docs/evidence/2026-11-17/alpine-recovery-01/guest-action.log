@@ -1,0 +1,21 @@
+exit=0
+INITIAL BOOT CONFIGURATIONS
+87a78a9aed5143be01e0399490f25e85855c5501732675657dda3e2312c4d064  /boot/limine.conf
+bcf305bb3abb06713e8ef99da541e39a375d332dde0792422410aade1a0fec1b  /boot/limine.conf.previous
+NATIVE GENERATOR WITH UNMOUNTED BOOT: exit=1
+rustaller-worker: Command findmnt failed with status Some(1)
+HIDDEN BOOT FILES BEFORE
+HIDDEN BOOT FILES AFTER
+rustaller-worker: Command findmnt failed with status Some(1)
+/boot/limine.conf: OK
+PASS: failed generator left active config and hidden /boot files unchanged
+SELECTED PREVIOUS GENERATION
+bcf305bb3abb06713e8ef99da541e39a375d332dde0792422410aade1a0fec1b  /boot/limine.conf
+timeout: 3
+serial: yes
+serial_baudrate: 115200
+/virt
+ protocol: linux
+ path: boot():/rustaller-2369-1794932767736888590/kernel-0
+ module_path: boot():/rustaller-2369-1794932767736888590/initrd-0
+ cmdline: root=UUID=b893e2ae-4227-4abe-85e9-f8401276af51 rootfstype=ext4 rw console=ttyS0,115200n8 console=tty0

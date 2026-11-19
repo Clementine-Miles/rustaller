@@ -1,0 +1,105 @@
+$ hostname 
+rustaller-debian
+$ uname -m
+x86_64
+$ uname -r
+6.12.117+deb13-cloud-amd64
+$ dpkg-query -W -f=${Status} linux-image-cloud-amd64
+install ok installed$ sh -n /etc/initramfs-tools/hooks/zz-rustaller-limine-check
+$ sh -n /usr/share/initramfs-tools/conf-hooks.d/00-rustaller-mount
+$ free -h
+               total        used        free      shared  buff/cache   available
+Mem:           1.4Gi       161Mi       1.3Gi       400Ki        66Mi       1.3Gi
+Swap:           63Mi          0B        63Mi
+               total        used        free      shared  buff/cache   available
+Mem:           1.4Gi       161Mi       1.3Gi       400Ki        66Mi       1.3Gi
+Swap:           63Mi          0B        63Mi
+
+$ swapon --show
+NAME      TYPE SIZE USED PRIO
+/swapfile file  64M   0B   -2
+NAME      TYPE SIZE USED PRIO
+/swapfile file  64M   0B   -2
+
+UUID=4b7f517f-f1c4-4b20-a08c-86ef9ee7df81 / ext4 defaults 0 1
+UUID=679C-AF49 /boot vfat fmask=0177,dmask=0077,quiet 0 2
+/swapfile none swap defaults 0 0
+
+$ findmnt -nro UUID --mountpoint /boot
+679C-AF49
+$ ip -4 route show default
+default via 10.0.2.2 dev enp0s4 proto static onlink 
+RUSTALLER_VM_TARGET_BOOT target=debian firmware=efi kernel=6.12.117+deb13-cloud-amd64
+RUSTALLER_VM_TARGET_NETWORK IPv4 default route and DNS lookup passed; public-key-only SSH authenticated by host harness
+RUSTALLER_VM_TARGET_SWAP policy verified for ext4
+Get:1 https://security.debian.org/debian-security trixie-security InRelease [43.4 kB]
+Get:2 https://deb.debian.org/debian trixie InRelease [140 kB]
+Get:3 https://deb.debian.org/debian trixie-updates InRelease [47.3 kB]
+Get:4 https://security.debian.org/debian-security trixie-security/main amd64 Packages [306 kB]
+Get:5 https://deb.debian.org/debian trixie/main amd64 Packages [9678 kB]
+Get:6 https://security.debian.org/debian-security trixie-security/main Translation-en [184 kB]
+Get:7 https://security.debian.org/debian-security trixie-security/contrib amd64 Packages [3152 B]
+Get:8 https://security.debian.org/debian-security trixie-security/contrib Translation-en [2564 B]
+Get:9 https://security.debian.org/debian-security trixie-security/non-free-firmware amd64 Packages [544 B]
+Get:10 https://security.debian.org/debian-security trixie-security/non-free-firmware Translation-en [352 B]
+Get:11 https://deb.debian.org/debian trixie/main Translation-en [6486 kB]
+Get:12 https://deb.debian.org/debian trixie/contrib amd64 Packages [53.9 kB]
+Get:13 https://deb.debian.org/debian trixie/contrib Translation-en [49.6 kB]
+Get:14 https://deb.debian.org/debian trixie/non-free amd64 Packages [100 kB]
+Get:15 https://deb.debian.org/debian trixie/non-free Translation-en [67.1 kB]
+Get:16 https://deb.debian.org/debian trixie/non-free-firmware amd64 Packages [6884 B]
+Get:17 https://deb.debian.org/debian trixie/non-free-firmware Translation-en [4704 B]
+Get:18 https://deb.debian.org/debian trixie-updates/main amd64 Packages [1108 B]
+Get:19 https://deb.debian.org/debian trixie-updates/main Translation-en [1032 B]
+Fetched 17.2 MB in 1s (16.1 MB/s)
+Reading package lists...
+$ apt-get install -y --only-upgrade linux-image-cloud-amd64
+Reading package lists...
+Building dependency tree...
+Reading state information...
+linux-image-cloud-amd64 is already the newest version (6.12.117-1).
+0 upgraded, 0 newly installed, 0 to remove and 8 not upgraded.
+$ update-initramfs -u -k all
+update-initramfs: Generating /boot/initrd.img-6.12.117+deb13-cloud-amd64
+$ /usr/local/libexec/rustaller-limine-worker limine-check
+RUSTALLER_VM_KERNEL_UPDATE transaction/rebuild completed; version change depends on repository candidates
+RUSTALLER_VM_ACCEPTANCE_PASS target=debian firmware=efi
+perl: warning: Setting locale failed.
+perl: warning: Please check that your locale settings:
+	LANGUAGE = (unset),
+	LC_ALL = (unset),
+	LC_CTYPE = (unset),
+	LC_NUMERIC = (unset),
+	LC_COLLATE = (unset),
+	LC_TIME = (unset),
+	LC_MESSAGES = (unset),
+	LC_MONETARY = (unset),
+	LC_ADDRESS = (unset),
+	LC_IDENTIFICATION = (unset),
+	LC_MEASUREMENT = (unset),
+	LC_PAPER = (unset),
+	LC_TELEPHONE = (unset),
+	LC_NAME = (unset),
+	LANG = "en_US.UTF-8"
+    are supported and installed on your system.
+perl: warning: Falling back to the standard locale ("C").
+perl: warning: Setting locale failed.
+perl: warning: Please check that your locale settings:
+	LANGUAGE = (unset),
+	LC_ALL = (unset),
+	LC_CTYPE = (unset),
+	LC_NUMERIC = (unset),
+	LC_COLLATE = (unset),
+	LC_TIME = (unset),
+	LC_MESSAGES = (unset),
+	LC_MONETARY = (unset),
+	LC_ADDRESS = (unset),
+	LC_IDENTIFICATION = (unset),
+	LC_MEASUREMENT = (unset),
+	LC_PAPER = (unset),
+	LC_TELEPHONE = (unset),
+	LC_NAME = (unset),
+	LANG = "en_US.UTF-8"
+    are supported and installed on your system.
+perl: warning: Falling back to the standard locale ("C").
+W: No zstd in /usr/bin:/sbin:/bin, using gzip

@@ -1,0 +1,55 @@
+Linux rustaller-source 6.12.117+deb13-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.117-1 (2026-11-12) x86_64 GNU/Linux
+NAME    TYPE  SIZE SERIAL             FSTYPE  MOUNTPOINTS
+sr0     rom   608K QM00005            iso9660 
+vda     disk    8G rustaller-arch-efi         
+├─vda1  part  7.9G                    ext4    /
+├─vda14 part    3M                            
+└─vda15 part  124M                    vfat    /boot/efi
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+enp0s4           UP             10.0.2.15/24 fe80::5054:ff:fe12:3456/64 
+default via 10.0.2.2 dev enp0s4 proto static 
+10.0.2.0/24 dev enp0s4 proto kernel scope link src 10.0.2.15 
+# This is /run/systemd/resolve/stub-resolv.conf managed by man:systemd-resolved(8).
+# Do not edit.
+#
+# This file might be symlinked as /etc/resolv.conf. If you're looking at
+# /etc/resolv.conf and seeing this text, you have followed the symlink.
+#
+# This is a dynamic resolv.conf file for connecting local clients to the
+# internal DNS stub resolver of systemd-resolved. This file lists all
+# configured search domains.
+#
+# Run "resolvectl status" to see details about the uplink DNS servers
+# currently in use.
+#
+# Third party programs should typically not access this file directly, but only
+# through the symlink at /etc/resolv.conf. To manage man:resolv.conf(5) in a
+# different way, replace this symlink by a static file or a different symlink.
+#
+# See man:systemd-resolved.service(8) for details about the supported modes of
+# operation for /etc/resolv.conf.
+
+nameserver 127.0.0.53
+options edns0 trust-ad
+search .
+● Interfaces: 1, 2
+       State: routable
+Online state: online
+     Address: 10.0.2.15 on enp0s4
+              fe80::5054:ff:fe12:3456 on enp0s4
+     Gateway: 10.0.2.2 on enp0s4
+         DNS: 10.0.2.3
+
+Nov 19 00:44:40 rustaller-source systemd-networkd[617]: enp0s4: Configuring with /etc/systemd/network/05-rustaller-source.network.
+Nov 19 00:44:40 rustaller-source systemd-networkd[617]: enp0s4: Link UP
+Nov 19 00:44:40 rustaller-source systemd-networkd[617]: enp0s4: Gained carrier
+Nov 19 00:44:40 rustaller-source systemd[1]: Starting systemd-networkd-wait-online.service - Wait for Network to be Configured...
+Nov 19 00:44:40 rustaller-source systemd-networkd[617]: enp0s4: DHCPv4 address 10.0.2.15/24, gateway 10.0.2.2 acquired from 10.0.2.2
+Nov 19 00:44:42 rustaller-source systemd-networkd[617]: enp0s4: Gained IPv6LL
+Nov 19 00:44:42 rustaller-source systemd[1]: Finished systemd-networkd-wait-online.service - Wait for Network to be Configured.
+Nov 19 00:44:46 rustaller-source systemd-networkd[617]: enp0s4: Reconfiguring with /etc/systemd/network/05-rustaller-source.network.
+Nov 19 00:44:46 rustaller-source systemd-networkd[617]: enp0s4: DHCP lease lost
+Nov 19 00:44:46 rustaller-source systemd-networkd[617]: enp0s4: Reconfiguring with /etc/systemd/network/05-rustaller-source.network.
+               total        used        free      shared  buff/cache   available
+Mem:            1463         225        1049           1         323        1238
+Swap:              0           0           0

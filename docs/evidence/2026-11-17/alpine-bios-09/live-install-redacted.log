@@ -1,0 +1,167 @@
+RUSTALLER_LIVE_START target=Alpine firmware=bios
+passwd: password for root changed by root
+ssh-keygen: generating new host keys: RSA ECDSA ED25519 
+ * Starting sshd ... [ ok ]
+( 1/50) Installing coreutils-env (9.11-r0)
+( 2/50) Installing coreutils-fmt (9.11-r0)
+( 3/50) Installing coreutils-sha512sum (9.11-r0)
+( 4/50) Installing acl-libs (2.3.2-r1)
+( 5/50) Installing libattr (2.5.2-r2)
+( 6/50) Installing coreutils (9.11-r0)
+( 7/50) Installing dosfstools (4.2-r2)
+( 8/50) Installing libcom_err (1.47.4-r0)
+( 9/50) Installing e2fsprogs-libs (1.47.4-r0)
+(10/50) Installing e2fsprogs (1.47.4-r0)
+(11/50) Installing libgcc (15.2.0-r5)
+(12/50) Installing jansson (2.15.0-r0)
+(13/50) Installing libstdc++ (15.2.0-r5)
+(14/50) Installing binutils (2.45.1-r1)
+(15/50) Installing libgcc-static (15.2.0-r5)
+(16/50) Installing libgomp (15.2.0-r5)
+(17/50) Installing libatomic (15.2.0-r5)
+(18/50) Installing isl26 (0.26-r2)
+(19/50) Installing mpfr4 (4.2.2-r0)
+(20/50) Installing mpc1 (1.3.1-r1)
+(21/50) Installing gcc (15.2.0-r5)
+(22/50) Installing musl-dev (1.2.6-r3)
+(23/50) Installing device-mapper-libs (2.03.35-r3)
+(24/50) Installing readline (8.3.3-r1)
+(25/50) Installing parted (3.7-r0)
+(26/50) Installing tar (1.35-r5)
+(27/50) Installing util-linux (2.42.3-r1)
+(28/50) Installing dmesg (2.42.3-r1)
+(29/50) Installing linux-pam (1.7.1-r2)
+(30/50) Installing runuser (2.42.3-r1)
+(31/50) Installing losetup (2.42.3-r1)
+(32/50) Installing hexdump (2.42.3-r1)
+(33/50) Installing uuidgen (2.42.3-r1)
+(34/50) Installing sfdisk (2.42.3-r1)
+(35/50) Installing mcookie (2.42.3-r1)
+(36/50) Installing agetty (2.42.3-r1)
+(37/50) Installing agetty-openrc (0.63.2-r0)
+(38/50) Installing wipefs (2.42.3-r1)
+(39/50) Installing cfdisk (2.42.3-r1)
+(40/50) Installing util-linux-openrc (2.42.3-r1)
+(41/50) Installing flock (2.42.3-r1)
+(42/50) Installing libcap-ng (0.8.5-r2)
+(43/50) Installing setpriv (2.42.3-r1)
+(44/50) Installing lscpu (2.42.3-r1)
+(45/50) Installing logger (2.42.3-r1)
+(46/50) Installing partx (2.42.3-r1)
+(47/50) Installing fstrim (2.42.3-r1)
+(48/50) Installing websocketd (0.4.2-r3)
+(49/50) Installing xz-libs (5.8.4-r0)
+(50/50) Installing xz (5.8.4-r0)
+Executing busybox-1.37.0-r31.trigger
+OK: 240.6 MiB in 142 packages
+ * Caching service dependencies ... [ ok ]
+ * Starting rustaller-web ... [ ok ]
+[ephemeral guest web-log URL redacted]
+OK: 240.6 MiB in 142 packages
+OK: 240.6 MiB in 142 packages
+OK: 240.6 MiB in 142 packages
+/dev/vda: 8 bytes were erased at offset 0x00000200 (gpt): 45 46 49 20 50 41 52 54
+/dev/vda: 8 bytes were erased at offset 0x1fffffe00 (gpt): 45 46 49 20 50 41 52 54
+/dev/vda: 2 bytes were erased at offset 0x000001fe (PMBR): 55 aa
+World updated, but the following packages are not removed due to:
+  wipefs: util-linux
+
+OK: 240.6 MiB in 142 packages
+mkfs.fat 4.2 (2021-01-31)
+mke2fs 1.47.4 (6-Mar-2025)
+Creating filesystem with 1834752 4k blocks and 458752 inodes
+Filesystem UUID: b893e2ae-4227-4abe-85e9-f8401276af51
+Superblock backups stored on blocks: 
+	32768, 98304, 163840, 229376, 294912, 819200, 884736, 1605632
+
+Allocating group tables:  0/56     done                            
+Writing inode tables:  0/56     done                            
+Creating journal (16384 blocks): done
+Writing superblocks and filesystem accounting information:  0/56     done
+
+(1/3) Purging parted (3.7-r0)
+(2/3) Purging readline (8.3.3-r1)
+(3/3) Purging device-mapper-libs (2.03.35-r3)
+Executing busybox-1.37.0-r31.trigger
+OK: 239.6 MiB in 139 packages
+( 1/50) Installing alpine-baselayout-data (3.7.2-r1)
+( 2/50) Installing musl (1.2.6-r3)
+( 3/50) Installing busybox (1.37.0-r31)
+  Executing busybox-1.37.0-r31.post-install
+( 4/50) Installing busybox-binsh (1.37.0-r31)
+( 5/50) Installing alpine-baselayout (3.7.2-r1)
+  Executing alpine-baselayout-3.7.2-r1.pre-install
+  Executing alpine-baselayout-3.7.2-r1.post-install
+( 6/50) Installing bridge (1.5-r5)
+( 7/50) Installing ifupdown-ng (0.13.0-r0)
+( 8/50) Installing openrc-user (0.63.2-r0)
+( 9/50) Installing libcap2 (2.78-r0)
+(10/50) Installing openrc (0.63.2-r0)
+  Executing openrc-0.63.2-r0.post-install
+(11/50) Installing mdev-conf (4.10-r0)
+(12/50) Installing busybox-mdev-openrc (1.37.0-r31)
+(13/50) Installing alpine-conf (3.22.0-r0)
+(14/50) Installing alpine-keys (2.6-r0)
+(15/50) Installing alpine-release (3.24.4-r0)
+(16/50) Installing libcrypto3 (3.5.9-r0)
+(17/50) Installing libssl3 (3.5.9-r0)
+(18/50) Installing ssl_client (1.37.0-r31)
+(19/50) Installing zlib (1.4-r0)
+(20/50) Installing libapk (3.0.9-r0)
+(21/50) Installing ca-certificates-bundle (20261020-r0)
+(22/50) Installing apk-tools (3.0.9-r0)
+(23/50) Installing busybox-openrc (1.37.0-r31)
+(24/50) Installing busybox-suid (1.37.0-r31)
+(25/50) Installing scanelf (1.3.9-r1)
+(26/50) Installing musl-utils (1.2.6-r3)
+(27/50) Installing alpine-base (3.24.4-r0)
+(28/50) Installing ca-certificates (20261020-r0)
+(29/50) Installing dhcpcd (10.5.2-r1)
+  Executing dhcpcd-10.5.2-r1.pre-install
+(30/50) Installing dhcpcd-openrc (10.5.2-r1)
+(31/50) Installing libeconf (0.8.3-r0)
+(32/50) Installing libblkid (2.42.3-r1)
+(33/50) Installing libcom_err (1.47.4-r0)
+(34/50) Installing e2fsprogs-libs (1.47.4-r0)
+(35/50) Installing libuuid (2.42.3-r1)
+(36/50) Installing e2fsprogs (1.47.4-r0)
+(37/50) Installing libmount (2.42.3-r1)
+(38/50) Installing libsmartcols (2.42.3-r1)
+(39/50) Installing findmnt (2.42.3-r1)
+(40/50) Installing openssh-keygen (10.3_p1-r2)
+(41/50) Installing ncurses-terminfo-base (6.6_p20260516-r0)
+(42/50) Installing libncursesw (6.6_p20260516-r0)
+(43/50) Installing libedit (20260508.3.1-r1)
+(44/50) Installing openssh-client-common (10.3_p1-r2)
+(45/50) Installing openssh-client-default (10.3_p1-r2)
+(46/50) Installing openssh-sftp-server (10.3_p1-r2)
+(47/50) Installing openssh-server-common (10.3_p1-r2)
+(48/50) Installing openssh-server-common-openrc (10.3_p1-r2)
+(49/50) Installing openssh-server (10.3_p1-r2)
+(50/50) Installing openssh (10.3_p1-r2)
+Executing busybox-1.37.0-r31.trigger
+Executing ca-certificates-20261020-r0.trigger
+OK: 17.8 MiB in 50 packages
+( 1/10) Installing xz-libs (5.8.4-r0)
+( 2/10) Installing zstd-libs (1.5.7-r2)
+( 3/10) Installing kmod (34.2-r1)
+( 4/10) Installing lddtree (1.27-r0)
+( 5/10) Installing device-mapper-libs (2.03.35-r3)
+( 6/10) Installing json-c (0.18-r1)
+( 7/10) Installing cryptsetup-libs (2.8.6-r0)
+( 8/10) Installing kmod-libs (34.2-r1)
+( 9/10) Installing mkinitfs (3.14.1-r0)
+(10/10) Installing linux-virt (6.18.63-r0)
+OK: 69.3 MiB in 60 packages
+( 1/17) Installing dosfstools (4.2-r2)
+( 2/17) Installing xz-libs (5.8.4-r0)
+( 3/17) Installing zstd-libs (1.5.7-r2)
+( 4/17) Installing kmod (34.2-r1)
+( 5/17) Installing lddtree (1.27-r0)
+( 6/17) Installing device-mapper-libs (2.03.35-r3)
+( 7/17) Installing json-c (0.18-r1)
+( 8/17) Installing cryptsetup-libs (2.8.6-r0)
+( 9/17) Installing kmod-libs (34.2-r1)
+(10/17) Installing mkinitfs (3.14.1-r0)
+  Executing mkinitfs-3.14.1-r0.post-install
+(11/17) Installing linux-virt (6.18.63-r0)
