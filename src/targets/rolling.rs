@@ -163,6 +163,41 @@ pub(super) fn bootstrap_arch_rootfs<R: CommandRunner>(
     Ok(())
 }
 
+/// Stop only the agents belonging to the target pacman keyring. pacstrap can
+/// launch an agent from Live with its homedir under the target, while later
+/// chroot commands can launch a target-local agent. Both can pin the filesystem.
+pub(super) fn stop_arch_keyring_daemons<R: CommandRunner>(
+    runner: &mut R,
+    root: &Path,
+    plan: &ValidatedLivePlan,
+) -> Result<(), RollingError> {
+    validate_route(root, plan, Target::Arch)?;
+    chroot_checked(
+        runner,
+        root,
+        [
+            "gpgconf",
+            "--homedir",
+            "/etc/pacman.d/gnupg",
+            "--kill",
+            "all",
+        ],
+        "arch-target-keyring-stop",
+    )?;
+    let home = root.join("etc/pacman.d/gnupg");
+    checked(
+        runner,
+        "gpgconf",
+        [
+            OsStr::new("--homedir"),
+            home.as_os_str(),
+            OsStr::new("--kill"),
+            OsStr::new("all"),
+        ],
+        "arch-live-target-keyring-stop",
+    )
+}
+
 /// Run after the driver mounts /proc,/sys,/dev,/run inside the new root.
 /// pacstrap owns and tears down its own temporary API mounts; kernel package
 /// hooks need the driver's persistent mounts for the following phase.
@@ -598,6 +633,32 @@ mod tests {
     fn successful_calls(count: usize) -> MockRunner {
         MockRunner::new((0..count).map(|_| CommandOutput::new(Some(0), vec![], vec![])))
     }
+    #[test]
+    fn arch_keyring_shutdown_is_scoped_to_both_target_views() {
+        let scratch = Scratch::new();
+        let root = scratch.0.join("root");
+        let mut runner = successful_calls(2);
+        stop_arch_keyring_daemons(&mut runner, &root, &arch_plan()).unwrap();
+        assert_eq!(runner.calls()[0].program, "chroot");
+        assert_eq!(
+            runner.calls()[0].args,
+            [
+                root.as_os_str(),
+                OsStr::new("gpgconf"),
+                OsStr::new("--homedir"),
+                OsStr::new("/etc/pacman.d/gnupg"),
+                OsStr::new("--kill"),
+                OsStr::new("all")
+            ]
+        );
+        assert_eq!(runner.calls()[1].program, "gpgconf");
+        assert_eq!(
+            runner.calls()[1].args[1],
+            root.join("etc/pacman.d/gnupg").as_os_str()
+        );
+        assert_eq!(runner.calls()[1].args[2..], ["--kill", "all"]);
+    }
+
     #[test]
     fn arch_configuration_never_disables_package_signatures() {
         for minimal in [false, true] {

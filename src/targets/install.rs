@@ -563,6 +563,9 @@ pub fn configure<R: CommandRunner>(
         cleanup_cache(runner, root, plan)?;
         crate::shared::network::apply_network_configuration(root, plan, manifest, &kernel_config)?;
         verify_installed_target(runner, root)?;
+        if plan.plan().target == Target::Arch {
+            rolling::stop_arch_keyring_daemons(runner, root, plan)?;
+        }
         remove_live_transport(root)?;
         Ok(())
     })();
