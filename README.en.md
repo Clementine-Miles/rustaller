@@ -8,6 +8,13 @@ Live through kexec, installs Alpine/Debian/Arch/Gentoo and configures the target
 **Development preview with real disk-erasing actions. Full distribution BIOS/UEFI
 acceptance is pending. Back up data and keep independent console access.**
 
+Five real KVM/QEMU installation cases passed: Alpine BIOS/ext4 and BIOS/XFS,
+Debian UEFI/ext4 and UEFI/Btrfs, and Arch UEFI/ext4, including target SSH,
+network/DNS, native kernel-package transactions, initramfs/Limine regeneration
+and reboot. Alpine/Debian also passed
+previous-generation recovery boots. The [acceptance report and evidence](docs/VERIFICATION-FOLLOWUP-2026-11-19.md)
+record exact revisions, reproducible failures and coverage limits.
+
 ```console
 cargo xtask bundle
 ./target/x86_64-unknown-linux-musl/release/rustaller --help
@@ -29,8 +36,9 @@ virtualization, firmware and networking without benchmarks or third-party script
 Arch adds hardened and Zen kernels; Gentoo offers authenticated
 `amd64-nomultilib-openrc` (new-plan default) and `amd64-nomultilib-systemd` stage3
 variants via `--gentoo-init`. Root snapshots do not include FAT32 `/boot`.
-Native update hooks and new kernel/init combinations still require real VM
-reboot/SSH acceptance; see the testing limits below.
+Native regeneration/reboot passed at the tested kernel versions. Transitions to
+newer kernel versions, additional kernel/init combinations and multi-host coverage
+still require further real VM acceptance; see the testing limits below.
 
 Source network capture currently requires an applied explicit flat networkd
 profile; unsupported managers and routing stop preparation before erasure.
@@ -40,6 +48,7 @@ profile; unsupported managers and routing stop preparation before erasure.
 - [Target configuration](docs/CONFIGURATION.md)
 - [Security and trust boundaries](docs/SECURITY.md)
 - [Testing and actual acceptance limits](docs/TESTING.md)
+- [Real QEMU acceptance report and evidence](docs/VERIFICATION-FOLLOWUP-2026-11-19.md)
 - [Development, builds, releases and provenance](docs/DEVELOPMENT.md)
 
 [中文](README.md) · [License](LICENSE)

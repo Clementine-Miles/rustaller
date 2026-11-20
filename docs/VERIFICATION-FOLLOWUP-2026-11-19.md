@@ -9,7 +9,7 @@ This supersedes the outstanding-baseline verdict in [the initial report](ACCEPTA
 - **PASS:** Alpine and Debian previous-generation recovery boots, sampled module compatibility, and safe native-generator rejection with `/boot` unmounted.
 - **PASS:** gated expansion to Alpine / SeaBIOS / XFS and Debian / OVMF / Btrfs, including update/regeneration/reboot probes.
 - **PASS:** Arch / OVMF / ext4, including native regeneration and firmware reboot after package/bootstrap, keyring-lifecycle and harness portability fixes.
-- GitHub publication is separate from verification. The initial push was blocked by missing credentials; final delivery is attempted after the reviewed report/evidence commit, with the result recorded in the private campaign delivery log. This report does not infer push success from successful public remote reads.
+- **DELIVERED (2026-11-20):** GitHub SSH authentication succeeded and the reviewed report/evidence commit `30d380df25a5c5d9bd1347d604767ad6aea345a3` was pushed to `main`; its remote SHA was read back and matched. Earlier credential-blocked attempts remain historical failures, not the current delivery status.
 
 These are real QEMU results using `cargo xtask vm-acceptance`, not conclusions from mocks or compilation. This is selected available-host coverage, **not** acceptance of the entire distribution/kernel/controller/provider matrix.
 
@@ -129,7 +129,7 @@ Run sequentially, not concurrently. `run-case.sh` records complete commands, sta
 
 Supporting validation: **352 workspace tests passed**, the standalone guest-probe test passed, Clippy with all targets/features and `-D warnings` passed, both formatting checks and `git diff --check` passed, and the matching static host/worker bundle passed validation. Logs end in `final-2026-11-19.log`. These checks do not replace the real guest results.
 
-The requested GitHub delivery is attempted only after verification and the reviewed evidence/report commit, using a normal fast-forward push. Earlier `git push origin main` failed with `could not read Username ... terminal prompts disabled`; no credentials are guessed, printed or published. The actual final push/remote verification and any offline bundle are recorded under `/root/rustaller-acceptance/evidence/` and reported separately to the requester. Publication requires authorized credentials; a verified local commit alone is not called a successful push.
+GitHub delivery completed on **2026-11-20**, after verification and the reviewed evidence/report commit. SSH authenticated as `Clementine-Miles`; the normal fast-forward push advanced remote `main` from `eb58f8a` to `30d380df25a5c5d9bd1347d604767ad6aea345a3`, and a separate remote read confirmed the exact SHA. Earlier HTTPS credential failures are preserved in the private delivery logs. The encrypted user-provided SSH key was unlocked in a temporary, short-lived agent; the agent and helper were removed after use. No passphrase, private key, authentication helper or credential was committed. This publication note does not change any tested code revision or reinterpret unexecuted cases as passes.
 
 ## Remaining limitations and next tests
 

@@ -8,6 +8,11 @@ Arch 或 Gentoo，并配置新系统。
 **当前为具有真实清盘能力的开发预览，四发行版 BIOS/UEFI 完整验收尚未完成。
 请备份数据并保留独立控制台/VNC，不要用于唯一生产机。**
 
+已通过五组真实 KVM/QEMU 安装验收：Alpine BIOS/ext4、BIOS/XFS，
+Debian UEFI/ext4、UEFI/Btrfs，以及 Arch UEFI/ext4；均验证了目标 SSH、网络、
+DNS，以及原生内核事务、initramfs/Limine 重建后的重启。Alpine/Debian 还验证了上一代恢复启动。
+[验收报告与证据](docs/VERIFICATION-FOLLOWUP-2026-11-19.md)列出了精确提交、失败重现和覆盖限制。
+
 ```console
 cargo xtask bundle
 ./target/x86_64-unknown-linux-musl/release/rustaller --help
@@ -25,7 +30,8 @@ TUI 对照展示检测到的当前系统与安装计划；保留 reset 基础设
 不运行基准测试或第三方脚本。Arch 新增 hardened、Zen 内核；Gentoo 通过
 `--gentoo-init` 选择经过认证的 `amd64-nomultilib-openrc`（新计划默认）或
 `amd64-nomultilib-systemd` stage3。根子卷快照不包含 FAT32 `/boot`。
-原生内核更新钩子及新增内核/init 组合仍需真实虚拟机重启、SSH 和网络验收。
+已测内核版本下的原生重建/重启通过；跨内核版本升级、新增内核/init 组合和多 VPS
+覆盖仍需进一步真实虚拟机验收。
 
 当前原系统网络捕获要求已生效、显式配置的单文件 networkd 配置；不支持的网络管理器
 或路由策略会在清盘前终止准备。
@@ -35,6 +41,7 @@ TUI 对照展示检测到的当前系统与安装计划；保留 reset 基础设
 - [目标系统配置](docs/CONFIGURATION.md)
 - [安全与信任边界](docs/SECURITY.md)
 - [测试与实际验收限制](docs/TESTING.md)
+- [真实 QEMU 验收报告与证据](docs/VERIFICATION-FOLLOWUP-2026-11-19.md)
 - [开发、构建、发布与来源](docs/DEVELOPMENT.md)
 
 [English](README.en.md) · [许可证](LICENSE)
