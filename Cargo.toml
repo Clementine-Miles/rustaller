@@ -1,5 +1,6 @@
 [workspace]
-members = [".", "xtask"]
+members = [".", "xtask", "boot/core", "boot/uefi", "boot/bios"]
+default-members = [".", "xtask", "boot/core"]
 resolver = "3"
 
 [package]
@@ -14,6 +15,7 @@ default = []
 tui = ["dep:ratatui", "dep:crossterm"]
 
 [dependencies]
+rustaller-boot-core = { path = "boot/core", features = ["edit"] }
 ratatui = { version = "0.29", default-features = false, features = ["crossterm"], optional = true }
 crossterm = { version = "0.28", default-features = false, features = ["events", "bracketed-paste"], optional = true }
 
