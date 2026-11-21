@@ -368,16 +368,14 @@ fn native_kernel_update(
 ) -> Result<(), String> {
     let package = kernel_package(target, choice)?;
     let before = fs::read_to_string(config_path()).map_err(|e| e.to_string())?;
-    {
-        let edited = before.replace(
-            "extra_cmdline = \"\"",
-            "extra_cmdline = \"rustaller_vm=preserved\" # acceptance",
-        );
-        if edited == before {
-            return Err("no installer-generated extra_cmdline field".into());
-        }
-        fs::write(config_path(), edited).map_err(|e| e.to_string())?;
+    let edited = before.replace(
+        "extra_cmdline = \"\"",
+        "extra_cmdline = \"rustaller_vm=preserved\" # acceptance",
+    );
+    if edited == before {
+        return Err("no installer-generated extra_cmdline field".into());
     }
+    fs::write(config_path(), &edited).map_err(|e| e.to_string())?;
     match target {
         "alpine" => {
             run_capture("apk", &["upgrade", "--available", package], transport)?;
@@ -426,19 +424,30 @@ fn native_kernel_update(
         transport,
     )?;
     let after = fs::read_to_string(config_path()).map_err(|e| e.to_string())?;
-    let previous =
-        fs::read_to_string(format!("{}.previous", config_path())).map_err(|e| e.to_string())?;
-    if after == before {
-        return Err("native initramfs regeneration did not publish a new boot generation".into());
-    }
-    if !after.contains("rustaller_vm=preserved")
-        || !after.contains("# acceptance")
-        || !after.contains("[entries.previous]")
-    {
-        return Err("kernel update lost user settings or recovery entry".into());
+    if !after.contains("rustaller_vm=preserved") || !after.contains("# acceptance") {
+        return Err("kernel update lost user settings".into());
     }
     verify_boot(&after, "")?;
-    verify_boot(&previous, "")?;
+    if after == edited {
+        // A reproducible generator can produce the identical bytes. An
+        // explicit refresh must also be a no-op, or a native hook was missed.
+        run_capture(
+            "/usr/local/libexec/rustaller-boot-update",
+            &["refresh"],
+            transport,
+        )?;
+        if fs::read_to_string(config_path()).map_err(|e| e.to_string())? != after {
+            return Err("native transaction missed a changed kernel or initrd".into());
+        }
+        println!("RUSTALLER_VM_IDENTICAL_GENERATION rebuilt payloads match current");
+    } else {
+        let previous =
+            fs::read_to_string(format!("{}.previous", config_path())).map_err(|e| e.to_string())?;
+        if !after.contains("[entries.previous]") {
+            return Err("native update lost recovery entry".into());
+        }
+        verify_boot(&previous, "")?;
+    }
     println!(
         "RUSTALLER_VM_KERNEL_UPDATE transaction/rebuild completed; version change depends on repository candidates"
     );
