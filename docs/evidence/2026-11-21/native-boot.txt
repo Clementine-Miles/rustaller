@@ -1,0 +1,29 @@
+QEMU TCG, x86-64. Each disk and firmware-variable file was disposable.
+Standalone firmware boots used a Debian 6.12.107 cloud bzImage, an uncompressed early cpio archive and a generation-specific initramfs containing a Rust PID 1.
+The guest printed the kernel release, early archive marker and kernel command line before powering off.
+
+final-uefi-current
+GUEST_PID1 firmware=efi generation=current kernel=6.12.107+deb13-cloud-amd64 early=first cpio member cmdline=root=UUID=abcd-1234 rootfstype=btrfs rootflags=subvol=@ rw console=ttyS0,115200n8 console=tty0 rustaller_proof=uefi
+
+final-uefi-recovery
+/rustaller/boot.toml: INVALID_PARAMETER. Opening recovery configuration.
+GUEST_PID1 firmware=efi generation=previous kernel=6.12.107+deb13-cloud-amd64 early=first cpio member cmdline=root=UUID=abcd-1234 rootfstype=btrfs rootflags=subvol=@ rw console=ttyS0,115200n8 console=tty0 rustaller_proof=uefi
+
+final-bios-mbr
+GUEST_PID1 firmware=bios generation=current kernel=6.12.107+deb13-cloud-amd64 early=first cpio member cmdline=root=UUID=abcd-1234 rootfstype=btrfs rootflags=subvol=@ rw console=ttyS0,115200n8 console=tty0 bios-proof=1
+
+final-bios-gpt
+GUEST_PID1 firmware=bios generation=previous kernel=6.12.107+deb13-cloud-amd64 early=first cpio member cmdline=root=UUID=abcd-1234 rootfstype=btrfs rootflags=subvol=@ rw console=ttyS0,115200n8 console=tty0 bios-proof=1
+
+alpine-bios-ext4-virt-native
+target=alpine
+kernel_choice=virt
+init=native
+kernel_update_requested=true
+firmware=bios
+raw_qmp_resets_after_dispatch=2
+os_requested_final_reboots=1
+SSH public-key authentication, native package update, kernel, hostname, ext4/UUID fstab, rustaller-boot boot artifacts, DNS lookup, IPv4 route, filesystem-specific swap policy: PASS
+IPv6 Internet connectivity: NOT TESTED
+RUSTALLER_VM_TARGET_BOOT target=alpine firmware=bios kernel=6.18.64-0-virt
+RUSTALLER_VM_ACCEPTANCE_PASS target=alpine firmware=bios

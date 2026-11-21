@@ -15,12 +15,11 @@ src/
 ├── command.rs, fsutil.rs typed native commands and safe per-file replacement
 ├── host/                preflight, sources, disk/network discovery and kexec
 ├── worker/              Alpine Live execution, temporary networking and first boot
-├── targets/             Alpine/Debian/Arch/Gentoo packages, kernels and Limine
+├── targets/             Alpine/Debian/Arch/Gentoo packages, kernels and boot generation maintenance
 ├── shared/              target storage, configuration, networking and swapfile
 └── tui/                 installation drafts, editing and review
 xtask/src/               checks, bundle, preview release, source audit and VM harness
 tests/                   isolated Rust integration tests and fixtures
-upstream/install.sh      passive reference; never executed or shipped
 ```
 
 ## Lifecycle
@@ -34,7 +33,7 @@ flowchart TD
     E --> F[Alpine Live: modules, temporary network and rescue SSH]
     F --> G[Revalidate disk identity, RAM, sectors, mounts and swap]
     G --> H[Prepare filesystems and install selected distribution]
-    H --> I[Configure accounts, kernel, Limine, network and optional swap]
+    H --> I[Configure accounts, kernel, firmware boot and network and optional swap]
     I --> J[Verify target, unmount, sync and one final reboot]
 ```
 
@@ -50,10 +49,10 @@ disk to its stable recorded identity before destructive actions. The target is
 mounted separately, normally at `/os`.
 
 `targets` owns native distribution bootstrap, package trust, accounts, kernel
-payloads, initramfs and Limine. Debian uses debootstrap minbase and systemd;
+payloads, initramfs and boot configuration. Debian uses debootstrap minbase and systemd;
 Alpine uses OpenRC; Arch uses systemd. Gentoo uses a selected OpenRC (new-plan
 default) or systemd amd64 no-multilib stage3 and a matching Portage profile.
-Limine 9.6.5 is the only installed target bootloader. FAT32 is mounted at `/boot`;
+The release builds rustaller-boot for UEFI and BIOS. FAT32 is mounted at `/boot`;
 native kernel/initramfs files and immutable Rustaller generations share that
 filesystem. BIOS normally uses MBR with
 FAT32 + root; UEFI uses GPT with ESP + root. BIOS disks at least 2 TiB use GPT
@@ -61,17 +60,17 @@ with a dedicated stage2 partition followed by FAT32 + root. Root can be XFS,
 ext4 or Btrfs (`@`, optional zstd).
 
 `shared/storage.rs` owns explicit numbered partition roles and pure layout/fstab
-rendering. `targets/limine.rs` authenticates a pinned native utility and boot
-payloads before disk erasure, installs BIOS stage2 or UEFI fallback, and publishes
-kernel/initramfs generations on FAT32. Native package hooks invoke the same Rust
-worker to refresh boot artifacts. No additional executable crate or bootloader
-selection layer exists.
+rendering. `boot/core` owns the bounded TOML schema and Linux command line.
+`boot/uefi` and `boot/bios` provide the firmware entry points. Linux-side
+`targets/bios.rs` verifies raw embedding extents. `targets/boot.rs` installs
+release-built artifacts and maintains generations through the static
+`rustaller-boot-update` helper. [Boot configuration and recovery](BOOT.md)
 
 Refresh scans only flat native `/boot` files, matches each kernel with its
 distribution-specific initramfs name, and stages complete ordinary-file copies
 in a unique generation directory. It checks the recorded FAT UUID, holds a
 Linux-root advisory lock, checks capacity, syncs all payloads, validates every
-configuration reference, and then publishes `limine.conf`. A self-contained
+configuration reference, and then publishes `rustaller/boot.toml`. A self-contained
 previous configuration and its generation remain available, including previous
 entries in the active menu. FAT rename/sync cannot promise journaled-filesystem
 power-loss atomicity; recovery can restore the validated previous configuration.
@@ -112,8 +111,8 @@ missing procfs fields or unavailable affinity/OS-state checks never raise it.
 `InstallPlan` holds credentials and typed `SystemConfig`/`PostInstallConfig`.
 `DeploymentManifest` separately records disk identity and validated source
 network facts. Handoff encoding is bounded and rejects incompatible versions.
-Plan schema 9 and its matching worker marker encode Gentoo init selection;
-schema 8 is rejected instead of treating its old systemd selection as OpenRC.
+Plan schema 10 removes the Live HTTP logging port. Its matching worker rejects
+older plan bodies before decoding any fields.
 
 - `host/network.rs`: observe source addresses, applied policy and supported routing;
   `host/handoff.rs` retains authenticated installation preparation and kexec.
@@ -134,7 +133,7 @@ Alpine's generated ifupdown configuration uses interface names, so a one-shot
 Rust worker repairs them from captured MAC addresses before networking starts.
 Systemd target files match MAC addresses directly and need no filename repair.
 Opt-in Arch CachyOS has a separate native first-boot full upgrade and
-initramfs/Limine refresh; failure retains its pending marker for retry.
+initramfs/boot refresh; failure retains its pending marker for retry.
 
 Reset infrastructure is retained; its unconnected execution remains unavailable
 and hidden in the TUI. TUI routes are typed, with separate plan,

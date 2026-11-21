@@ -7,7 +7,7 @@ holds kernel, hostname and timezone choices. Credentials and SSH settings belong
 to `InstallPlan`; `DeploymentManifest` carries source disk/network facts. These
 settings configure the new target, not the running source or Live network.
 
-Plan schema 9 serializes the Gentoo init choice explicitly and requires the
+Plan schema 10 serializes the Gentoo init choice explicitly and requires the
 matching embedded worker runtime. Older schemas, including schema 8's fixed
 systemd stage3, are rejected before body decoding. Recreate old plans explicitly;
 they are never silently assigned the new OpenRC default.
@@ -130,7 +130,7 @@ command is invoked. No requested timezone means no timezone overwrite.
 
 [Installation](INSTALLATION.md) lists kernel choices. Arch CachyOS is opt-in,
 requires its authenticated official repositories and performs a native first-boot
-full upgrade/initramfs/Limine refresh. Other kernels do not enable those repositories.
+full upgrade, initramfs rebuild and boot refresh. Other kernels do not enable those repositories.
 Native package/service policy preserves SSH, DNS, CA roots, modules, boot files,
 licenses and package databases. Minimal profile trims documentation/cache unless
 explicitly retained; it is not a measured final size guarantee.
@@ -141,7 +141,7 @@ matching stable no-multilib profile is preserved when possible; any replacement
 must contain the exact no-multilib profile segment and match the selected init.
 The final selected profile and `ABI_X86="64"` are checked. OpenRC enables native
 udev, hostname, hwclock, modules, sysctl, local and SSH services; systemd enables
-its existing native units. Kernel configuration, dracut and Limine remain shared.
+its existing native units. Kernel configuration, dracut and rustaller-boot remain shared.
 
 ## Optional swap
 
@@ -152,7 +152,7 @@ Existing files/swap are not adopted, resized or activated in source/Live. Target
 boot activates the file. Swap size is not reserved RAM and does not change RAM
 preflight floors. Runtime activation still requires [acceptance](TESTING.md).
 
-## Storage, Limine and kernel updates
+## Storage and kernel updates
 
 `--filesystem xfs|ext4|btrfs` selects the root filesystem. `--boot-size-mib`
 sets FAT32 size (512–4096 MiB, default 512) at `/boot`. Explicit partition roles
@@ -162,7 +162,7 @@ is 1; XFS/Btrfs use 0; FAT uses 2. BIOS/UEFI layouts are described in
 
 Btrfs creates and mounts `@` and writes `subvol=@,compress=zstd:3` in fstab.
 `--btrfs-compression 0` disables compression; 1–15 selects zstd. Compression
-options require Btrfs. Limine passes `rootflags=subvol=@`. Each distribution
+options require Btrfs. rustaller-boot passes `rootflags=subvol=@`. Each distribution
 installs its filesystem tools and includes Btrfs support through mkinitfs,
 initramfs-tools, mkinitcpio or dracut. Swapfiles on Btrfs fail plan validation;
 there is no snapshot or Btrfs swap management.
@@ -170,13 +170,11 @@ FAT32 `/boot` is outside root-subvolume snapshots. Restoring a Btrfs root snapsh
 does not restore its matching kernel/modules/initramfs; restore and verify matching
 boot artifacts separately before rebooting.
 
-Limine 9.6.5 loads Linux kernel/initramfs from FAT, independent of root
-filesystem bootloader support. Native distribution artifacts and isolated Rustaller
-generations share FAT32 `/boot`. The Rust
-refresh worker accepts 1–8 complete `vmlinuz-*` pairs with matching
-`initrd.img-*`, `initramfs-*.img` or `initramfs-*`. Standalone Intel/AMD
-microcode images, when present, precede initramfs. Numeric versions sort newest
-first; Gentoo same-version `.old` backups are skipped.
+Rustaller boots Linux from the FAT volume on BIOS and UEFI. The versioned
+TOML, timeout, serial settings, kernel arguments and recovery procedure are
+described in [BOOT.md](BOOT.md). Set `--root-size-mib` to leave free space
+after root. Its default fills the remaining disk. The TUI can copy sizes from
+a directly mounted root and FAT boot partition on the selected disk.
 
 | Target | Native update integration |
 | --- | --- |
@@ -184,7 +182,7 @@ first; Gentoo same-version `.old` backups are skipped.
 | Debian | kernel postinst/postrm and initramfs post-update hooks |
 | Arch | ALPM post-transaction hook on kernel pkgbase/initcpio paths, after mkinitcpio |
 | Gentoo | traditional installkernel postinst, dracut; alternate boot-generator USE flags disabled |
-| Opt-in CachyOS | native full upgrade, initramfs rebuild, Rust Limine refresh |
+| Opt-in CachyOS | native full upgrade, initramfs rebuild, Rust boot refresh |
 
 Hook entry points link to the installed matching static Rust worker. Generated
 minimal generator guards and a dracut PATH wrapper call that worker; no separate
@@ -199,31 +197,8 @@ symlinks, hard links or per-file Unix permission changes.
 Before writing a new generation, free space must hold all new payloads plus a
 1 MiB reserve while preserving native files and currently referenced generations.
 Consider 1024–2048 MiB for multiple kernels or large initramfs; 512 MiB can fail
-this check. The worker syncs payloads before replacing `/boot/limine.conf`. That
-configuration includes current and `Previous-*` entries; `/boot/limine.conf.previous`
-and each retained generation's own `limine.conf` provide independent fallback
-configuration. Two referenced generations survive successful publication, and
-only unreferenced managed generations are pruned. Boot state from the
-old `/efi` layout is rejected, requiring explicit migration/reinstallation.
-
-This is not an atomic multi-file transaction or automatic boot rollback. FAT
-rename/sync has weaker power-loss guarantees than Linux journaled filesystems;
-independent previous files cannot protect against corruption of the FAT itself.
-If updates fail, inspect the package-manager error and
-use console/rescue before rebooting. After fixing the cause, run
-`/usr/local/libexec/rustaller-limine-worker limine-refresh`.
-
-The pinned BIOS utility is installed at `/usr/local/libexec/limine` for explicit
-bootloader maintenance; kernel hooks do not rewrite MBR or NVRAM. Upgrading
-Limine itself requires a reviewed version/hash change and boot acceptance.
-APK post-commit errors are reported but cannot roll back an already committed
-package transaction; check its output before rebooting. Native update-hook and
-reboot behavior remain unverified in VMs.
-
-For Gentoo, ordinary PATH calls such as `dracut --force --regenerate-all` refresh
-Limine after success. Explicit/custom output paths defer publication so
-installkernel can finish staging and invoke its postinst hook. If invoking
-`/usr/bin/dracut` directly or generating custom files manually, finish with
-`/usr/local/libexec/rustaller-limine-worker limine-refresh`. Native dracut config
-still verifies the FAT mount before writes. Diagnostic flags preserve native
-status and do not trigger publication.
+this check. The helper syncs all payloads before replacing
+`/boot/rustaller/boot.toml`. Updates and recovery use ordinary FAT files.
+Keep the matched helper on existing installations. Direct Gentoo invocations
+of `/usr/bin/dracut` that bypass the PATH wrapper require an explicit
+`/usr/local/libexec/rustaller-boot-update refresh` after output is complete.

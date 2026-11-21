@@ -30,7 +30,7 @@ binary do not establish that a VPS can reinstall successfully.
 | Gentoo rolling | amd64-nomultilib stage3, OpenRC or systemd, Portage, dracut | auto/standard (`sys-kernel/gentoo-kernel-bin`) |
 
 No distribution version argument is accepted. All targets install from Alpine
-Live with Limine 9.6.5. XFS is default; ext4 and Btrfs are selectable.
+Live with rustaller-boot. XFS is default; ext4 and Btrfs are selectable.
 `--kernel` accepts the package spellings shown above as target-specific aliases;
 the older standard/generic/cloud/lts/virt/cachyos choices remain available where
 valid. Alpine's `cloud` alias selects `linux-virt`. The Alpine Live handoff kernel
@@ -58,10 +58,10 @@ profile and `ABI_X86=64` are validated. CPU ISA detection does not change the
 generic amd64 optimization baseline or the no-multilib ABI policy.
 OpenRC uses Gentoo netifrc, dhcpcd/openresolv, native OpenRC runlevels and SSH;
 systemd retains networkd/resolved and native units. Both share the binary
-distribution kernel, dracut, Limine and supported root filesystems. No source
+distribution kernel, dracut, rustaller-boot and supported root filesystems. No source
 kernel compilation or v3-specific optimization is selected automatically.
 
-The new plan schema is 9 and uses a matching worker runtime. Older plans are
+The new plan schema is 10 and uses a matching worker runtime. Older plans are
 rejected instead of reinterpreting their former systemd default as OpenRC.
 
 ## Disk layout and boot
@@ -84,10 +84,13 @@ space before erasure. The 512 MiB root formatting floor is not a distribution
 size recommendation; leave ample disk space for packages and updates.
 
 UEFI installs `/boot/EFI/BOOT/BOOTX64.EFI` without NVRAM entries. BIOS runs the
-pinned native Limine installer against the identity-bound whole disk, with the
-explicit GPT stage2 partition when needed. `/boot/limine.conf` is authoritative;
-serial Linux console remains `ttyS0,115200n8`. Firmware honoring the fallback
-path and serial behavior require real boot testing.
+release-built secondary loader on the validated whole disk. It uses the reserved
+MBR gap or the dedicated GPT BIOS Boot partition. Both firmware paths use
+`/boot/rustaller/boot.toml`. Kernel updates preserve the previous generation.
+The TUI boot page offers detected partition sizes where both current mount
+sources resolve to partitions on the selected disk. Reuse copies their sizes
+in whole MiB into the new plan. Manual FAT32 and root sizes are also available.
+[Boot configuration and recovery](BOOT.md)
 
 Btrfs uses an `@` root subvolume and zstd:3 by default. Select compression 0–15
 with `--btrfs-compression` (0 disables it). Btrfs swapfiles are explicitly
@@ -155,7 +158,7 @@ enters the plan. Back up the private key to the client before erasing its disk.
   continues. Noninteractive hold leaves the source running.
 - `--hold 2` retains Live after target installation; the user reboots manually.
 - `--force-boot-mode bios|efi` asserts the detected mode; a mismatch is rejected.
-- `--ssh-port`, `--web-port` and `--frpc-config` configure installation access/logs.
+- `--ssh-port` and `--frpc-config` configure installation access. In Alpine Live, read `/var/log/rustaller.log` locally or over the recovery SSH connection.
 - `--minimal`, `--with-tools`, `--keep-docs` and `--keep-package-cache` control
   package policy; `--swapfile-mib` and `--swappiness` are opt-in target settings.
 

@@ -8,7 +8,7 @@ Arch 或 Gentoo，并配置新系统。
 **当前为具有真实清盘能力的开发预览，四发行版 BIOS/UEFI 完整验收尚未完成。
 请备份数据并保留独立控制台/VNC，不要用于唯一生产机。**
 
-已通过五组真实 KVM/QEMU 安装验收：Alpine BIOS/ext4、BIOS/XFS，
+旧版 Limine 引导后端已通过五组真实 KVM/QEMU 安装验收：Alpine BIOS/ext4、BIOS/XFS，
 Debian UEFI/ext4、UEFI/Btrfs，以及 Arch UEFI/ext4；均验证了目标 SSH、网络、
 DNS，以及原生内核事务、initramfs/Limine 重建后的重启。Alpine/Debian 还验证了上一代恢复启动。
 [验收报告与证据](docs/VERIFICATION-FOLLOWUP-2026-11-19.md)列出了精确提交、失败重现和覆盖限制。
@@ -22,7 +22,7 @@ cargo xtask bundle
 在交互终端无参数运行时打开英文 TUI。实际安装需要 root、通过预检并输入完整磁盘
 身份确认令牌；`--inspect` 只读。支持 XFS/ext4/Btrfs、发行版内核、SSH/账户、DNS/网络策略
 及可选目标 swapfile。自动流程要求 kexec，最后仅重启一次；失败保留 Live 救援。
-新系统统一使用 Limine 9.6.5，默认 FAT32（`/boot`）加根分区；BIOS 大盘使用带专用
+新系统统一使用 [rustaller-boot](docs/BOOT.md)，默认 FAT32（`/boot`）加根分区；BIOS 大盘使用带专用
 引导分区的 GPT。Btrfs 使用 `@` 和可选 zstd，暂不支持 Btrfs swapfile。
 TUI 对照展示检测到的当前系统与安装计划；保留 reset 基础设施，但执行仍不可用。
 

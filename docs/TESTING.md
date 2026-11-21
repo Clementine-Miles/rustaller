@@ -15,7 +15,7 @@ git diff --check
 `xtask check` runs Rust formatting, Clippy, workspace tests and diff hygiene.
 The bundle verifies static x86_64 musl ELF, the matching runtime marker and exact
 worker embedding; the worker has no TUI dependencies. Both bundled `--help`
-commands are safe smoke checks. The upstream reference is never executed.
+commands are safe smoke checks.
 
 Tests use `MockRunner`, isolated temporary files and controlled subprocesses.
 They cover plan/CLI validation and bounded serialization, private credentials,
@@ -60,7 +60,7 @@ fixture exercises real command I/O without a second installer.
 | `host.rs`, `sources.rs` | Inspection, disk confirmation, authenticated handoff and source metadata |
 | `network_config.rs`, `live_network.rs` | Complete target output and temporary Live connectivity |
 | `storage.rs`, `installation.rs`, `targets.rs` | Storage guards, lifecycle and distribution requirements |
-| `boot.rs`, `initrd.rs`, `firstboot.rs` | Limine, private worker handoff and Alpine MAC repair |
+| `boot.rs`, `initrd.rs`, `firstboot.rs` | Target boot, private worker handoff and Alpine MAC repair |
 | `runtime.rs`, `terminal.rs` | Commands, worker compatibility, CLI/TUI terminals and credential privacy |
 
 Host module unit tests cover applied DHCPv6/RA policy separately from address
@@ -124,7 +124,7 @@ proxy relay preserves the configured proxy and public CA; it does not bypass TLS
 
 A full pass requires authenticated source SSH, Live/install-complete markers,
 exactly one OS-requested final firmware reboot, installed-disk boot, target SSH, correct kernel,
-filesystem/UUID fstab, FAT32 `/boot` UUID against fstab/boot state, Limine configuration/payloads, default
+filesystem/UUID fstab, FAT32 `/boot` UUID against fstab/boot state, boot configuration/payloads, default
 route/DNS/package refresh and filesystem-specific swap policy. The probe validates
 XFS/ext4 swap activation; Btrfs must use `@`, zstd and no swapfile.
 
@@ -146,7 +146,7 @@ Use `--keep-disks yes` to retain successful disposable overlays for subsequent
 recovery testing (the default still removes successful overlays).
 
 `--kernel-update yes` runs a native selected-package update, initramfs rebuild,
-Limine refresh, another reboot and target SSH/network probe. Logs preserve the
+boot refresh, another reboot and target SSH/network probe. Logs preserve the
 before/after kernel release: a repository with no newer candidate establishes
 rebuild/reboot evidence only. Neither upgrade-hook correctness nor a new kernel
 version is inferred from a mock command succeeding. The standalone probe also
@@ -154,9 +154,9 @@ verifies the selected kernel package/family and Gentoo init/profile/64-bit ABI.
 
 The `smoke --iso` input is the official Alpine Live test image, not an installer
 feature. Its stock boot files and source-image bootloader remain harness inputs;
-new target installations use Limine exclusively.
+new target installations use rustaller-boot.
 
-## Limine/filesystem acceptance matrix
+## Historical Limine/filesystem acceptance matrix
 
 Fresh KVM acceptance and reviewed evidence are recorded in
 [VERIFICATION-FOLLOWUP-2026-11-19.md](VERIFICATION-FOLLOWUP-2026-11-19.md).

@@ -15,7 +15,7 @@ in [testing](TESTING.md), not inferred from compilation or generated files.
 | Arch | Trusted archlinux-keyring, required package signatures; database signatures remain optional |
 | Opt-in CachyOS | Pinned official archive SHA-256 and full release-key fingerprint; native package signatures remain required |
 | Gentoo | Trusted release primary/subkey binding, signed DIGESTS, archive signature and SHA-512; exact amd64-nomultilib init/timestamp/size identity |
-| Limine 9.6.5 | Fixed official commit and independent hard-coded SHA-256 values for utility source/header, BIOS payload, x86_64 EFI payload and license; checked before erasure |
+| rustaller-boot | Firmware artifacts built from the release source, checked for the expected format and schema, hashed and embedded in the worker |
 | Rustaller release | Matching static host/worker, SHA-256 checksums, source/build metadata and license |
 
 Official source addresses/parsers are centralized in `host::sources`. Downloads
@@ -73,10 +73,10 @@ Kernel capability checks concern the installed target kernel; offline configurat
 does not prove active settings, DNS reachability or external SSH access.
 
 Kexec requires source kernel support, available tools and an admissible lockdown/
-firmware state. EFI requires 64-bit firmware and disabled Secure Boot. Limine uses
+firmware state. EFI requires 64-bit firmware and disabled Secure Boot. rustaller-boot uses
 the UEFI fallback path without NVRAM changes; firmware honoring it still needs
 testing. BIOS embedding uses the reserved MBR gap or explicit GPT stage2 partition.
-Package/initramfs/Limine/SSH verification failures stop finalization. The final
+Package/initramfs/boot/SSH verification failures stop finalization. The final
 reboot is requested only after successful verification, unmount and sync; failed
 installation retains Alpine Live rescue. There is no automatic restoration of
 an already-erased disk.
@@ -84,30 +84,14 @@ an already-erased disk.
 
 ## Boot artifact publication
 
-The pinned Limine C utility is compiled in the private Live work area before
-partitioning; it is a native bootloader utility, not application-level Shell
-logic. Download, hash or compiler failures leave disk preparation unstarted.
-FAT boot files, boot state and native update hooks use existing target-path
-checks. FAT mounts use file mask 0177 and directory mask 0077 so generated
-0600 files/0700 directories agree with filesystem permission emulation; `quiet`
-explicitly tolerates native chmod/chown requests that FAT cannot store; boot
-executables are read by firmware, not Linux execution permissions. Refresh rejects unsafe links/hardlinks, malformed paths, missing pairs,
-unmounted or wrong-UUID `/boot`, insufficient space and malformed EFI images. Native
-update guards verify the mount before boot-file writes. Debian versionless kernel
-links are disabled; Gentoo uses the legacy regular-file installkernel backend.
-Complete new payloads are written and synced before the configuration rename.
-Previous generation payloads and `limine.conf.previous` are retained. Capacity
-failure preserves the published boot configuration; it requires freeing space
-or increasing the partition rather than deleting the only recovery generation.
-A power loss,
-filesystem failure or concurrent privileged writer still requires recovery;
-this is not a signed or transactional boot chain.
-
-Actual firmware mode is read from the running kernel's EFI environment.
-Firmware bitness and Secure Boot are checked independently of CPU architecture.
-DMI/vendor/hypervisor information is supplementary. A forced mode cannot bypass
-these checks. The same disk geometry and firmware assumptions are rechecked in
-Live before destructive operations.
+Release tooling builds the PE32+ EFI application and the BIOS bootstrap and
+secondary loader. Alpine Live checks for matching embedded artifacts before
+partitioning. BIOS embedding validates partition geometry, syncs the secondary
+loader and reads it back before publishing the MBR code. EFI uses the standard
+firmware image loader. Both paths read a bounded TOML policy on their boot volume.
+The helper checks the exact FAT mount and filesystem UUID, serializes updates,
+syncs and verifies staged payloads, and retains previous-generation files.
+[Publication and recovery](BOOT.md)
 
 ## Diagnostic collection
 
