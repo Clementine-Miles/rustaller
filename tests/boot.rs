@@ -5,6 +5,14 @@ use rustaller::{
     config::RootFilesystem,
     model::{BootMode, InstallPlan, Target},
 };
+fn entry() -> rustaller_boot_core::Entry {
+    rustaller_boot_core::Entry {
+        name: "current".into(),
+        version: None,
+        kernel: "/rustaller-1-1/kernel-0".into(),
+        initrds: vec!["/rustaller-1-1/initrd-0".into()],
+    }
+}
 #[test]
 fn alpine_live_cmdline_keeps_strict_url_and_path_validation() {
     use rustaller::host::boot::build_nextos_cmdline;
@@ -25,7 +33,7 @@ fn alpine_live_cmdline_keeps_strict_url_and_path_validation() {
     }
 }
 #[test]
-fn all_24_target_firmware_filesystem_plans_have_bootable_limine_paths() {
+fn all_24_target_firmware_filesystem_plans_have_bootable_loader_paths() {
     for target in [Target::Alpine, Target::Debian, Target::Arch, Target::Gentoo] {
         for boot in [BootMode::Bios, BootMode::Efi] {
             for filesystem in RootFilesystem::ALL {
@@ -43,20 +51,14 @@ fn all_24_target_firmware_filesystem_plans_have_bootable_limine_paths() {
                 assert_eq!(layout.partitions().len(), 2);
                 assert_eq!(layout.root_partition(), "/dev/nvme0n1p2");
                 assert_eq!(layout.boot_partition(), "/dev/nvme0n1p1");
-                let config = rustaller::targets::limine::render(
-                    "1234-abcd",
-                    filesystem.as_str(),
-                    &[(
-                        "Linux".into(),
-                        "generation/kernel".into(),
-                        "generation/initrd".into(),
-                    )],
-                )
-                .unwrap();
-                assert!(config.contains("protocol: linux"));
-                assert!(config.contains("console=ttyS0"));
+                let config =
+                    rustaller_boot_core::create("UUID=1234-abcd", filesystem.as_str(), &[entry()])
+                        .unwrap();
+                let cfg = rustaller_boot_core::Config::parse(&config).unwrap();
+                let cmd = cfg.cmdline().unwrap();
+                assert!(cmd.contains("console=ttyS0"));
                 assert_eq!(
-                    config.contains("rootflags=subvol=@"),
+                    cmd.contains("rootflags=subvol=@"),
                     *filesystem == RootFilesystem::Btrfs
                 );
                 assert_eq!(
@@ -89,20 +91,15 @@ fn large_bios_disks_reserve_a_dedicated_gpt_stage2_partition_and_reject_firmware
     assert!(DiskLayout::new(&plan, "vda", BootMode::Bios, 8 * 1024_u64.pow(3)).is_err());
 }
 #[test]
-fn btrfs_swap_and_unsafe_limine_configurations_fail_before_mutation() {
+fn btrfs_swap_and_unsafe_configurations_fail_before_mutation() {
     let mut plan = InstallPlan::new(Target::Arch);
     plan.system.root_filesystem = RootFilesystem::Btrfs;
     plan.system.swap.size_mib = Some(1024);
     assert!(plan.validate().is_err());
-    assert!(rustaller::targets::limine::render("x;bad", "ext4", &[]).is_err());
-    assert!(
-        rustaller::targets::limine::render(
-            "1234-abcd",
-            "xfs",
-            &[("bad\nentry".into(), "k".into(), "i".into())]
-        )
-        .is_err()
-    );
+    assert!(rustaller_boot_core::create("UUID=x;bad", "ext4", &[entry()]).is_err());
+    let mut e = entry();
+    e.kernel = "/../vmlinuz".into();
+    assert!(rustaller_boot_core::create("UUID=1234-abcd", "xfs", &[e]).is_err());
 }
 
 #[test]
@@ -134,67 +131,117 @@ fn target_fstab_centralizes_uuid_paths_and_fsck_policy() {
         assert!(render_fstab(&layout, "bad/uuid", "abcd").is_err());
     }
 }
-mod limine {
+mod generations {
     use super::*;
     use rustaller::{
         command::{CommandOutput, MockRunner},
-        targets::limine::*,
+        targets::boot::*,
     };
     use std::{fs, os::unix::fs::symlink};
     use support::Scratch;
 
+    const CONFIG: &str = "boot/rustaller/boot.toml";
+    fn write_kernel(d: &Scratch, path: &str, label: &str) {
+        let mut bytes = vec![0u8; 4096];
+        bytes[0..2].copy_from_slice(b"MZ");
+        bytes[60..64].copy_from_slice(&64u32.to_le_bytes());
+        bytes[64..70].copy_from_slice(b"PE\0\0\x64\x86");
+        bytes[84..86].copy_from_slice(&240u16.to_le_bytes());
+        bytes[88..90].copy_from_slice(&0x20bu16.to_le_bytes());
+        bytes[132] = 1;
+        bytes[156] = 10;
+        bytes[0x1fe..0x200].copy_from_slice(&[0x55, 0xaa]);
+        bytes[0x202..0x206].copy_from_slice(b"HdrS");
+        bytes[0x206..0x208].copy_from_slice(&0x20cu16.to_le_bytes());
+        bytes[0x211] = 1;
+        bytes[0x234] = 1;
+        bytes[0x236] = 1;
+        bytes.extend_from_slice(label.as_bytes());
+        let path = d.0.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, bytes).unwrap();
+    }
     fn fixture() -> Scratch {
-        let d = Scratch::new("limine");
-        d.write("boot/vmlinuz-linux", "kernel");
+        let d = Scratch::new("boot-generation");
+        write_kernel(&d, "boot/vmlinuz-linux", "kernel");
         d.write("boot/initramfs-linux.img", "initramfs");
+        write_kernel(&d, "boot/rustaller-1-1/kernel-0", "original");
+        d.write("boot/rustaller-1-1/initrd-0", "original-initrd");
+        d.write(
+            CONFIG,
+            &rustaller_boot_core::create("UUID=1234-abcd", "btrfs", &[entry()]).unwrap(),
+        );
         d.write(
             "etc/rustaller/boot-state",
-            &format!("RUSTALLER-LIMINE-{VERSION}-BOOT-1\n1234-abcd\nbtrfs\nabcd-5678\n"),
+            "RUSTALLER-BOOT-1-EFI\n1234-abcd\nbtrfs\nabcd-5678\n",
         );
-        d.write("boot/limine-bios.sys", "BIOS payload");
-        let mut pe = vec![0; 512];
-        pe[..2].copy_from_slice(b"MZ");
-        pe[60..64].copy_from_slice(&64u32.to_le_bytes());
-        pe[64..70].copy_from_slice(b"PE\0\0\x64\x86");
-        pe[84..86].copy_from_slice(&240u16.to_le_bytes());
-        pe[88..90].copy_from_slice(b"\x0b\x02");
-        pe[156..158].copy_from_slice(&10u16.to_le_bytes());
-        let path = d.0.join("boot/EFI/BOOT/BOOTX64.EFI");
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, pe).unwrap();
+        write_kernel(&d, "boot/EFI/BOOT/BOOTX64.EFI", "loader");
         d
     }
     fn runner(root: &Scratch, free: u64) -> MockRunner {
+        let mut sector = vec![0u8; 512];
+        sector[510..].copy_from_slice(&[0x55, 0xaa]);
+        sector[36] = 8;
+        sector[44] = 2;
+        sector[67..71].copy_from_slice(&0xabcd5678u32.to_le_bytes());
         MockRunner::new([
-            CommandOutput::new(Some(0),format!("vfat {} abcd-5678\n",root.0.join("boot").display()).into_bytes(),vec![]),
+            CommandOutput::new(Some(0),format!("vfat {} abcd-5678 / /dev/vda1\n",root.0.join("boot").display()).into_bytes(),vec![]),
+            CommandOutput::new(Some(0),sector,vec![]),
             CommandOutput::new(Some(0),format!("Filesystem 1024-blocks Used Available Capacity Mounted\n/dev/vda1 524288 100 {free} 1% /boot\n").into_bytes(),vec![]),
         ])
+    }
+    #[test]
+    fn refuses_a_bind_subdirectory_and_nonfat32_boot_record() {
+        let d = fixture();
+        for (fsroot, sector) in [("/subdir", vec![]), ("/", vec![0; 512])] {
+            let mount = format!(
+                "vfat {} abcd-5678 {fsroot} /dev/vda1\n",
+                d.0.join("boot").display()
+            );
+            let mut runner = MockRunner::new([
+                CommandOutput::new(Some(0), mount.into_bytes(), vec![]),
+                CommandOutput::new(Some(0), sector, vec![]),
+            ]);
+            assert!(verify_mount(&mut runner, &d.0, "abcd-5678").is_err());
+        }
     }
     #[test]
     fn refresh_keeps_previous_generation_until_complete_publication_and_supports_updates() {
         let d = fixture();
         refresh(&mut runner(&d, 500000), &d.0).unwrap();
-        let first = d.read("boot/limine.conf");
+        let first = rustaller_boot_core::Config::parse(&d.read(CONFIG)).unwrap();
         d.write("boot/rustaller---/kernel-0", "unmanaged file");
-        assert!(first.contains("rootflags=subvol=@"));
-        verify(&d.0).unwrap();
+        d.write(
+            CONFIG,
+            &d.read(CONFIG).replace(
+                "extra_cmdline = \"\"",
+                "extra_cmdline = \"panic=3\" # retain me",
+            ),
+        );
         d.write("boot/intel-ucode.img", "early microcode");
-        d.write("boot/vmlinuz-lts", "new-kernel");
+        write_kernel(&d, "boot/vmlinuz-lts", "new-kernel");
         d.write("boot/initramfs-lts.img", "new-initramfs");
         refresh(&mut runner(&d, 500000), &d.0).unwrap();
-        let next = d.read("boot/limine.conf");
-        assert!(next.contains("/linux\n") && next.contains("/lts\n"));
-        // Previous complete payload is retained through the configuration switch.
-        for line in first
-            .lines()
-            .filter_map(|v| v.trim().strip_prefix("path: boot():/"))
-        {
-            assert!(d.0.join("boot").join(line).is_file());
-        }
-        assert!(next.find("microcode-0").unwrap() < next.find("/initrd-0").unwrap());
-        assert!(!next.contains("grub"));
+        let text = d.read(CONFIG);
+        let next = rustaller_boot_core::Config::parse(&text).unwrap();
+        assert!(text.contains("# retain me"));
+        assert!(next.cmdline().unwrap().ends_with("panic=3"));
+        assert!(next.cmdline().unwrap().contains("rootflags=subvol=@"));
+        assert_eq!(
+            next.entry("previous").unwrap().kernel,
+            first.default_entry().kernel
+        );
+        assert_eq!(next.entries.len(), 3);
+        assert!(next.default_entry().initrds[0].contains("microcode-0"));
+        assert!(next.default_entry().initrds[1].contains("initrd-0"));
+        assert!(
+            d.0.join("boot")
+                .join(&first.default_entry().kernel[1..])
+                .is_file()
+        );
         verify(&d.0).unwrap();
         refresh(&mut runner(&d, 500000), &d.0).unwrap();
+        assert_eq!(d.read(CONFIG), text);
         let count = fs::read_dir(d.0.join("boot"))
             .unwrap()
             .filter(|v| {
@@ -227,45 +274,38 @@ mod limine {
             let d = fixture();
             fs::remove_file(d.0.join("boot/vmlinuz-linux")).unwrap();
             fs::remove_file(d.0.join("boot/initramfs-linux.img")).unwrap();
-            d.write(&format!("boot/vmlinuz-{kernel}"), "kernel-family");
+            write_kernel(&d, &format!("boot/vmlinuz-{kernel}"), kernel);
             d.write(&format!("boot/{initramfs}"), "family-initramfs");
             refresh(&mut runner(&d, 500000), &d.0).unwrap();
-            assert!(d.read("boot/limine.conf").contains(&format!("/{kernel}\n")));
-            d.write("boot/vmlinuz-additional", "second kernel");
+            let cfg = rustaller_boot_core::Config::parse(&d.read(CONFIG)).unwrap();
+            assert_eq!(cfg.default_entry().version.as_deref(), Some(kernel));
+            write_kernel(&d, "boot/vmlinuz-additional", "second");
             d.write("boot/initramfs-additional.img", "second initramfs");
             refresh(&mut runner(&d, 500000), &d.0).unwrap();
             fs::remove_file(d.0.join(format!("boot/vmlinuz-{kernel}"))).unwrap();
             fs::remove_file(d.0.join(format!("boot/{initramfs}"))).unwrap();
             refresh(&mut runner(&d, 500000), &d.0).unwrap();
-            let configuration = d.read("boot/limine.conf");
-            assert!(!configuration.contains(&format!("/{kernel}\n")));
-            assert!(configuration.contains(&format!("/Previous-{kernel}\n")));
-            verify(&d.0).unwrap();
+            let cfg = rustaller_boot_core::Config::parse(&d.read(CONFIG)).unwrap();
+            assert_eq!(cfg.default_entry().version.as_deref(), Some("additional"));
+            assert!(cfg.entries.iter().any(|e|e.name.starts_with("previous")&& e.version.as_deref()==Some(kernel)));
         }
     }
     #[test]
-    fn interrupted_generation_and_corrupt_active_config_recover_from_complete_previous_generation()
-    {
+    fn interrupted_publication_recovers_a_missing_active_file_and_preserves_user_edits() {
         let d = fixture();
-        d.write("boot/rustaller-1-1/kernel-0", "partial orphan");
-        d.write(
-            "boot/rustaller-1-1/.rustaller-1-0.tmp",
-            "interrupted metadata",
-        );
-        d.write("boot/.rustaller-1-1.tmp", "interrupted config");
         refresh(&mut runner(&d, 500000), &d.0).unwrap();
-        assert!(!d.0.join("boot/rustaller-1-1").exists());
-        assert!(!d.0.join("boot/.rustaller-1-1.tmp").exists());
-        let first = d.read("boot/limine.conf");
+        d.write("boot/rustaller-333-444/kernel-0", "incomplete copy");
+        fs::remove_file(d.0.join(CONFIG)).unwrap();
         refresh(&mut runner(&d, 500000), &d.0).unwrap();
-        assert_eq!(d.read("boot/limine.conf.previous"), first);
-        d.write("boot/limine.conf", "interrupted config sector");
-        // Even if the native transaction is incomplete, repair to the previous
-        // independently complete config before refusing the attempted update.
-        fs::remove_file(d.0.join("boot/initramfs-linux.img")).unwrap();
-        assert!(refresh(&mut runner(&d, 500000), &d.0).is_err());
-        assert_eq!(d.read("boot/limine.conf"), first);
         verify(&d.0).unwrap();
+        assert!(!d.0.join("boot/rustaller-333-444").exists());
+        d.write(CONFIG, "unsupported user edit");
+        assert!(refresh(&mut runner(&d, 500000), &d.0).is_err());
+        assert_eq!(d.read(CONFIG), "unsupported user edit");
+        assert!(
+            rustaller_boot_core::Config::parse(&d.read("boot/rustaller/boot.toml.previous"))
+                .is_ok()
+        );
     }
     #[test]
     fn legacy_efi_state_is_never_reinterpreted_as_a_boot_mount() {
@@ -277,22 +317,25 @@ mod limine {
         let mut r = MockRunner::empty();
         assert!(refresh(&mut r, &d.0).is_err());
         assert!(r.calls().is_empty());
-        assert!(!d.0.join("boot/limine.conf").exists());
+        assert!(d.0.join(CONFIG).is_file());
     }
     #[test]
     fn newest_numeric_kernel_is_default_and_gentoo_backup_files_are_ignored() {
         let d = fixture();
         fs::remove_file(d.0.join("boot/vmlinuz-linux")).unwrap();
         for version in ["6.9+dist", "6.10+dist"] {
-            d.write(&format!("boot/vmlinuz-{version}"), "kernel");
+            write_kernel(&d, &format!("boot/vmlinuz-{version}"), version);
             d.write(&format!("boot/initramfs-{version}.img"), "initramfs");
         }
         d.write("boot/vmlinuz-6.10+dist.old", "backup kernel");
         d.write("boot/initramfs-6.10+dist.img.old", "backup initramfs");
         refresh(&mut runner(&d, 500000), &d.0).unwrap();
-        let c = d.read("boot/limine.conf");
-        assert!(c.find("/6.10+dist\n").unwrap() < c.find("/6.9+dist\n").unwrap());
-        assert!(!c.contains(".old"));
+        let cfg = rustaller_boot_core::Config::parse(&d.read(CONFIG)).unwrap();
+        assert_eq!(cfg.default_entry().version.as_deref(), Some("6.10+dist"));
+        assert_eq!(
+            cfg.entry("current-2").unwrap().version.as_deref(),
+            Some("6.9+dist")
+        );
     }
     #[test]
     fn failed_refresh_preserves_published_configuration_and_rejects_unsafe_inputs() {
@@ -309,9 +352,9 @@ mod limine {
         ] {
             let d = fixture();
             refresh(&mut runner(&d, 500000), &d.0).unwrap();
-            let before = d.read("boot/limine.conf");
+            let before = d.read(CONFIG);
             match failure {
-                "capacity" => {}
+                "capacity" => d.write("boot/initramfs-linux.img", "changed"),
                 "missing-initrd" => {
                     fs::remove_file(d.0.join("boot/initramfs-linux.img")).unwrap();
                 }
@@ -323,8 +366,8 @@ mod limine {
                     fs::hard_link(d.0.join("boot/vmlinuz-linux"), d.0.join("kernel-copy")).unwrap();
                 }
                 "config-link" => {
-                    fs::rename(d.0.join("boot/limine.conf"), d.0.join("original")).unwrap();
-                    symlink(d.0.join("original"), d.0.join("boot/limine.conf")).unwrap();
+                    fs::rename(d.0.join(CONFIG), d.0.join("original")).unwrap();
+                    symlink(d.0.join("original"), d.0.join(CONFIG)).unwrap();
                 }
                 "invalid-state" => {
                     d.write("etc/rustaller/boot-state", "bad\n");
@@ -346,63 +389,52 @@ mod limine {
                 runner(&d, if failure == "capacity" { 0 } else { 500000 })
             };
             assert!(refresh(&mut r, &d.0).is_err(), "{failure}");
-            assert_eq!(d.read("boot/limine.conf"), before, "{failure}");
+            assert_eq!(d.read(CONFIG), before, "{failure}");
         }
     }
     #[test]
-    fn refresh_refuses_partial_copy_and_limine_paths_cannot_traverse() {
+    fn refresh_refuses_partial_copy_and_loader_paths_cannot_traverse() {
         let d = fixture();
         refresh(&mut runner(&d, 500000), &d.0).unwrap();
-        let before = d.read("boot/limine.conf");
+        let before = d.read(CONFIG);
         // A native filesystem write failure, independent of mocked commands.
         fs::remove_file(d.0.join("boot/initramfs-linux.img")).unwrap();
         fs::create_dir(d.0.join("boot/initramfs-linux.img")).unwrap();
         assert!(refresh(&mut runner(&d, 500000), &d.0).is_err());
-        assert_eq!(d.read("boot/limine.conf"), before);
+        assert_eq!(d.read(CONFIG), before);
         for path in [
-            "../kernel",
-            "/kernel",
-            "a/../kernel",
-            "a//kernel",
-            "a/./kernel",
-            "bad\nentry",
+            "relative",
+            "/a/../b",
+            "/a//b",
+            "/a/./b",
+            "/bad\nentry",
+            "/a\\b",
         ] {
-            assert!(
-                render(
-                    "1234-abcd",
-                    "ext4",
-                    &[("Linux".into(), path.into(), "initrd".into())]
-                )
-                .is_err(),
-                "{path}"
-            );
+            assert!(!rustaller_boot_core::valid_boot_path(path), "{path}");
         }
     }
     #[test]
     fn authenticated_resources_and_hooks_fail_closed() {
-        let d = Scratch::new("limine-download");
-        let mut r = MockRunner::new([
-            CommandOutput::new(Some(0), b"untrusted".to_vec(), vec![]),
-            CommandOutput::new(Some(0), b"wronghash  -\n".to_vec(), vec![]),
-        ]);
-        assert!(prepare(&mut r, &d.0).is_err());
-        assert!(!d.0.join("LICENSE").exists());
-        assert!(!r.calls().iter().any(|c| c.program == "cc"));
+        let d = Scratch::new("unbundled-firmware");
+        if rustaller::boot_artifacts::UPDATE.is_empty() {
+            assert!(prepare(BootMode::Efi, &d.0).is_err());
+            assert!(!d.0.join("BOOTX64.EFI").exists());
+        }
         for target in [Target::Alpine, Target::Debian, Target::Arch, Target::Gentoo] {
-            let d = Scratch::new("limine-hooks");
+            let d = Scratch::new("boot-hooks");
             assert!(install_hooks(&d.0, target, b"wrong worker").is_err());
             if target == Target::Debian {
                 d.write("etc/initramfs-tools/initramfs.conf", "MODULES=most\n");
             }
             install_hooks(&d.0, target, rustaller::RUNTIME_VERSION.as_bytes()).unwrap();
             assert!(
-                d.0.join("usr/local/libexec/rustaller-limine-worker")
+                d.0.join("usr/local/libexec/rustaller-boot-update")
                     .is_file()
             );
             let path = match target {
-                Target::Alpine => "etc/apk/commit_hooks.d/zz-rustaller-limine",
-                Target::Debian | Target::Gentoo => "etc/kernel/postinst.d/zz-rustaller-limine",
-                Target::Arch => "etc/pacman.d/hooks/zz-rustaller-limine.hook",
+                Target::Alpine => "etc/apk/commit_hooks.d/zz-rustaller-boot",
+                Target::Debian | Target::Gentoo => "etc/kernel/postinst.d/zz-rustaller-boot",
+                Target::Arch => "etc/pacman.d/hooks/zz-rustaller-boot.hook",
                 _ => unreachable!(),
             };
             assert!(fs::symlink_metadata(d.0.join(path)).is_ok());
@@ -412,7 +444,7 @@ mod limine {
                     "MODULES=most\n"
                 );
                 let hook =
-                    d.0.join("etc/initramfs-tools/hooks/zz-rustaller-limine-check");
+                    d.0.join("etc/initramfs-tools/hooks/zz-rustaller-boot-check");
                 assert!(!fs::symlink_metadata(&hook).unwrap().is_symlink());
                 assert!(
                     std::process::Command::new("sh")
@@ -432,25 +464,20 @@ mod limine {
                 assert!(
                     fs::read_to_string(hook)
                         .unwrap()
-                        .contains("exec /usr/local/libexec/rustaller-limine-worker limine-check")
+                        .contains("exec /usr/local/libexec/rustaller-boot-update check")
                 );
             }
             if target == Target::Gentoo {
                 assert!(
-                    fs::symlink_metadata(
-                        d.0.join("etc/kernel/preinst.d/zz-rustaller-limine-check")
-                    )
-                    .is_ok()
+                    fs::symlink_metadata(d.0.join("etc/kernel/preinst.d/zz-rustaller-boot-check"))
+                        .is_ok()
                 );
                 let wrapper = d.read("usr/local/sbin/dracut");
                 assert!(wrapper.contains("/usr/bin/dracut \"$@\""));
-                assert!(
-                    wrapper.find("limine-check").unwrap()
-                        < wrapper.find("/usr/bin/dracut").unwrap()
-                );
+                assert!(wrapper.find("check").unwrap() < wrapper.find("/usr/bin/dracut").unwrap());
                 assert!(
                     wrapper.find("/usr/bin/dracut").unwrap()
-                        < wrapper.find("limine-refresh").unwrap()
+                        < wrapper.find("rustaller-boot-update refresh").unwrap()
                 );
             }
             let generator_config = match target {
@@ -461,7 +488,7 @@ mod limine {
                 _ => None,
             };
             if let Some(config) = generator_config {
-                assert!(d.read(config).contains("limine-check || exit 1"));
+                assert!(d.read(config).contains("check || exit 1"));
                 assert!(
                     std::process::Command::new("sh")
                         .args(["-n"])
@@ -477,7 +504,7 @@ mod limine {
                         .contains("AbortOnFail")
                 );
                 assert!(
-                    fs::symlink_metadata(d.0.join("etc/initcpio/post/zz-rustaller-limine")).is_ok()
+                    fs::symlink_metadata(d.0.join("etc/initcpio/post/zz-rustaller-boot")).is_ok()
                 );
                 let hook = d.read(path);
                 assert!(hook.contains("Target=usr/lib/modules/*/pkgbase"));
@@ -505,7 +532,7 @@ mod limine {
         let wrapper = d
             .read("usr/local/sbin/dracut")
             .replace(
-                "/usr/local/libexec/rustaller-limine-worker",
+                "/usr/local/libexec/rustaller-boot-update",
                 worker.to_str().unwrap(),
             )
             .replace("/usr/bin/dracut", dracut.to_str().unwrap());
@@ -533,31 +560,8 @@ mod limine {
                 .unwrap();
             assert_eq!(outcome.code(), Some(status));
             let calls = d.read("log");
-            assert!(calls.starts_with("worker limine-check\n"));
-            assert_eq!(calls.contains("worker limine-refresh\n"), refreshes);
-        }
-    }
-    #[test]
-    fn bios_command_binds_whole_disk_and_explicit_gpt_stage2_partition() {
-        for (bytes, expected) in [
-            (8 * 1024_u64.pow(3), vec!["bios-install", "/dev/vda"]),
-            (3 * 1024_u64.pow(4), vec!["bios-install", "/dev/vda", "1"]),
-        ] {
-            let p = validate_live_plan_with_uid(
-                InstallPlan::new(Target::Debian),
-                "x86_64",
-                4096,
-                rustaller::RUNTIME_VERSION,
-                0,
-            )
-            .unwrap();
-            let l = DiskLayout::new(&p, "vda", BootMode::Bios, bytes).unwrap();
-            assert_eq!(
-                bios_command(&l, std::path::Path::new("/work/limine"))
-                    .unwrap()
-                    .args,
-                expected
-            );
+            assert!(calls.starts_with("worker check\n"));
+            assert_eq!(calls.contains("worker refresh\n"), refreshes);
         }
     }
 }
@@ -597,18 +601,6 @@ fn btrfs_options_roundtrip_and_invalid_boot_geometry_fail_closed() {
     assert!(
         rustaller::shared::storage::planned_partitions(BootMode::Bios, 1024 * 1024 * 1024, 512)
             .is_err()
-    );
-    assert!(
-        rustaller::targets::limine::render(
-            "1234-abcd",
-            "ext4",
-            &[(
-                "6.12.73+deb13-amd64".into(),
-                "g/kernel".into(),
-                "g/initrd".into()
-            )]
-        )
-        .is_ok()
     );
 }
 #[test]

@@ -713,7 +713,7 @@ mod cachyos {
                 [
                     "cachyos-firstboot-full-upgrade",
                     "cachyos-firstboot-initramfs",
-                    "cachyos-firstboot-limine"
+                    "cachyos-firstboot-boot-refresh"
                 ]
             );
             assert!(

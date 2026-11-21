@@ -1,4 +1,4 @@
-//! Alpine Live kernel command line; target boot configuration belongs to Limine.
+//! Alpine Live kernel command line; target boot configuration belongs to rustaller-boot.
 use crate::targets::install::TTY_COMMAND_LINE;
 use std::fmt;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

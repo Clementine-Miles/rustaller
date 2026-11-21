@@ -14,7 +14,7 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const HELP: &str = "Usage: cargo xtask vm-acceptance ACTION [OPTIONS]\n\nActions:\n  smoke           BIOS/UEFI Alpine Live boot smoke, not an installation test\n  prepare-source  Provision a disposable Debian Cloud source for kexec tests\n  install         Reinstall disposable source overlays and verify target boots\n\nCommon options:\n  --tools PATH       Extracted Debian QEMU/OVMF/xorriso root\n  --accel MODE       tcg|kvm (default tcg; no automatic fallback)\n  --memory-mib N     Guest RAM in MiB (512-65536; default 3072)\n  --output PATH      New private result directory (must not exist)\n  --firmware MODE    bios|efi|both (default both)\n  --timeout SECONDS  Per-case deadline (default 1800)\n\nSmoke: --iso FILE --sha256 HEX\nSource/install: --base FILE --sha512 HEX --key FILE --public-key FILE\n  --disk-bus BUS     virtio-blk|virtio-scsi|sata|nvme|pvscsi (default virtio-blk)\nInstall: --installer STATIC_ELF --target alpine|debian|arch|gentoo|all\n  --filesystem FS   xfs|ext4|btrfs|all (default xfs)\n  --kernel CHOICE    Target kernel choice or all official families\n  --gentoo-init INIT openrc|systemd|both (default openrc; Gentoo only)\n  --kernel-update B  yes|no (default no); upgrade, regenerate, reboot, verify\n  --boot-size-mib N  FAT32 capacity (512-4096); consider 1024 for upgrades\n  --keep-disks B     yes|no (default no); retain successful guest overlays\n  --disk-size-gib N  Optional sparse overlay expansion (3072 tests BIOS/GPT)\n\nAll disk files and EFI variables are fresh disposable copies. No host devices,\nnetwork-policy changes, host reboot, or privileged mounts are used.\n";
+const HELP: &str = "Usage: cargo xtask vm-acceptance ACTION [OPTIONS]\n\nActions:\n  smoke           BIOS/UEFI Alpine Live boot smoke, not an installation test\n  prepare-source  Provision a disposable Debian Cloud source for kexec tests\n  install         Reinstall disposable source overlays and verify target boots\n\nCommon options:\n  --tools PATH       Extracted Debian QEMU/OVMF/xorriso root\n  --accel MODE       tcg|kvm (default tcg; no automatic fallback)\n  --memory-mib N     Guest RAM in MiB (512-65536; default 3072)\n  --output PATH      New private result directory (must not exist)\n  --firmware MODE    bios|efi|both (default both)\n  --timeout SECONDS  Per-case deadline (default 1800)\n\nSmoke: --iso FILE --sha256 HEX\nSource/install: --base FILE --sha512 HEX --key FILE --public-key FILE\n  --disk-bus BUS     virtio-blk|virtio-scsi|sata|nvme|pvscsi (default virtio-blk)\nInstall: --installer STATIC_ELF --target alpine|debian|arch|gentoo|all\n  --filesystem FS   xfs|ext4|btrfs|all (default xfs)\n  --kernel CHOICE    Target kernel choice or all official families\n  --gentoo-init INIT openrc|systemd|both (default openrc; Gentoo only)\n  --kernel-update B  yes|no (default no); upgrade, regenerate, reboot, verify\n  --boot-size-mib N  FAT32 capacity (512-4096); consider 1024 for upgrades\n  --root-size-mib N  Optional bounded root partition for large sparse disks\n  --keep-disks B     yes|no (default no); retain successful guest overlays\n  --disk-size-gib N  Optional sparse overlay expansion (3072 tests BIOS/GPT)\n\nAll disk files and EFI variables are fresh disposable copies. No host devices,\nnetwork-policy changes, host reboot, or privileged mounts are used.\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Firmware {
@@ -101,6 +101,7 @@ impl Options {
                     | "--gentoo-init"
                     | "--kernel-update"
                     | "--boot-size-mib"
+                    | "--root-size-mib"
                     | "--keep-disks"
             ) {
                 return Err(format!("unknown acceptance option: {flag}"));
@@ -580,6 +581,16 @@ fn install_matrix(
     };
     let kernel_update = options.kernel_update()?;
     let boot_size_mib = options.boot_size_mib()?;
+    let root_size_mib = options
+        .values
+        .get("--root-size-mib")
+        .map(|v| {
+            v.parse::<u32>()
+                .ok()
+                .filter(|n| *n >= 512)
+                .ok_or("invalid root-size-mib")
+        })
+        .transpose()?;
     // Resolve the full choice matrix before creating any guest overlays.
     for target in &targets {
         options.kernels(target)?;
@@ -615,6 +626,7 @@ fn install_matrix(
                             init,
                             kernel_update,
                             boot_size_mib,
+                            root_size_mib,
                             filesystem,
                             options.values.get("--disk-size-gib").map(String::as_str),
                             mode,
@@ -672,6 +684,7 @@ fn install_case(
     init: &str,
     kernel_update: bool,
     boot_size_mib: Option<u32>,
+    root_size_mib: Option<u32>,
     filesystem: &str,
     disk_size_gib: Option<&str>,
     mode: Firmware,
@@ -681,21 +694,14 @@ fn install_case(
 ) -> Result<(), String> {
     let seed = create_seed(tools, case, public, transport, relay)?;
     let disk = create_overlay(tools, base, case)?;
-    if let Some(size) = disk_size_gib {
-        let size = size
-            .parse::<u64>()
-            .ok()
-            .filter(|v| (64..=4096).contains(v))
-            .ok_or("disk-size-gib must be 64-4096")?;
-        checked(
-            tools
-                .program("qemu-img")
-                .arg("resize")
-                .arg(&disk)
-                .arg(format!("{size}G")),
-            &case.join("resize.log"),
-        )?;
-    }
+    let large_disk = disk_size_gib
+        .map(|v| {
+            v.parse::<u64>()
+                .ok()
+                .filter(|n| (64..=4096).contains(n))
+                .ok_or("disk-size-gib must be 64-4096")
+        })
+        .transpose()?;
     let port = free_port()?;
     write_private(
         &case.join("hardware.txt"),
@@ -720,6 +726,27 @@ fn install_case(
         &case.join("cloud-init.log"),
         remaining(deadline)?,
     )?;
+    if let Some(gib) = large_disk {
+        // Resize only after cloud-init finishes on the disposable source disk.
+        // Otherwise it can try to grow the old root filesystem to several TiB.
+        let bytes = gib << 30;
+        writeln!(guest.monitor,"{{\"execute\":\"block_resize\",\"arguments\":{{\"device\":\"system\",\"size\":{bytes}}}}}").map_err(|e|e.to_string())?;
+        let mut observed = false;
+        for _ in 0..10 {
+            let value = source.capture(
+                &["blockdev", "--getsize64", bus.device()],
+                Duration::from_secs(5),
+            )?;
+            if value.success && String::from_utf8_lossy(&value.stdout).trim() == bytes.to_string() {
+                observed = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(500));
+        }
+        if !observed {
+            return Err("guest did not report requested disk capacity after QMP resize".into());
+        }
+    }
     source.checked(
         &["mkdir", "-m", "700", "-p", "/run/rustaller-vm"],
         &case.join("source-mkdir.log"),
@@ -765,6 +792,9 @@ fn install_case(
         "--dns=10.0.2.3".into(),
         format!("--filesystem={filesystem}"),
     ];
+    if let Some(size) = root_size_mib {
+        arguments.push(format!("--root-size-mib={size}"));
+    }
     if let Some(size) = boot_size_mib {
         arguments.push(format!("--boot-size-mib={size}"));
     }
@@ -1056,7 +1086,7 @@ fn install_case(
     if let Some(error) = reset_failure {
         return Err(error);
     }
-    write_private(&case.join("accepted.txt"),format!("target={target}\nkernel_choice={kernel}\ninit={init}\nkernel_update_requested={kernel_update}\nfirmware={}\nraw_qmp_resets_after_dispatch={resets}\nos_requested_final_reboots=1\nSSH public-key authentication, native package update, kernel, hostname, {filesystem}/UUID fstab, Limine boot artifacts, DNS lookup, IPv4 route, filesystem-specific swap policy: PASS\nIPv6 Internet connectivity: NOT TESTED\n",mode.label()).as_bytes())?;
+    write_private(&case.join("accepted.txt"),format!("target={target}\nkernel_choice={kernel}\ninit={init}\nkernel_update_requested={kernel_update}\nfirmware={}\nraw_qmp_resets_after_dispatch={resets}\nos_requested_final_reboots=1\nSSH public-key authentication, native package update, kernel, hostname, {filesystem}/UUID fstab, rustaller-boot boot artifacts, DNS lookup, IPv4 route, filesystem-specific swap policy: PASS\nIPv6 Internet connectivity: NOT TESTED\n",mode.label()).as_bytes())?;
     guest.stop();
     Ok(())
 }
@@ -1193,7 +1223,7 @@ fn create_seed(
     let seed = case.join("seed");
     private_directory(&seed)?;
     let mut cloud = format!(
-        "#cloud-config\nhostname: rustaller-source\nmanage_etc_hosts: true\ndisable_root: false\nssh_pwauth: false\nusers:\n  - name: root\n    lock_passwd: true\n    ssh_authorized_keys:\n      - {}\nwrite_files:\n  - path: /etc/rustaller-session-ca.pem\n    permissions: '0644'\n    content: |\n",
+        "#cloud-config\ngrowpart:\n  mode: 'off'\nresize_rootfs: false\nhostname: rustaller-source\nmanage_etc_hosts: true\ndisable_root: false\nssh_pwauth: false\nusers:\n  - name: root\n    lock_passwd: true\n    ssh_authorized_keys:\n      - {}\nwrite_files:\n  - path: /etc/rustaller-session-ca.pem\n    permissions: '0644'\n    content: |\n",
         yaml(public)
     );
     for line in transport.ca.lines() {
@@ -1335,6 +1365,7 @@ fn create_overlay(tools: &Tools, base: &Path, case: &Path) -> Result<PathBuf, St
 }
 
 struct Guest {
+    monitor: UnixStream,
     child: Child,
     resets: Arc<AtomicU64>,
 }
@@ -1386,8 +1417,13 @@ impl Guest {
         };
         let counter = Arc::clone(&resets);
         let log = private_file(&case.join("qmp.log"))?;
+        let monitor = stream.try_clone().map_err(|e| e.to_string())?;
         thread::spawn(move || record_qmp(stream, counter, log));
-        Ok(Self { child, resets })
+        Ok(Self {
+            child,
+            resets,
+            monitor,
+        })
     }
     fn stop(&mut self) {
         let _ = self.child.kill();

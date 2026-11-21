@@ -16,7 +16,6 @@ mod args {
             "secret",
             "--ssh-port",
             "2222",
-            "--http-port=8080",
             "--no-cloud-kernel",
             "--sleep",
             "2",
@@ -34,7 +33,6 @@ mod args {
             Some("secret")
         );
         assert_eq!(plan.ssh_port, Some(2222));
-        assert_eq!(plan.web_port, Some(8080));
         assert!(plan.no_cloud_kernel);
         assert_eq!(plan.hold, Some(2));
         assert_eq!(plan.force_boot_mode, Some(BootMode::Efi));
@@ -377,7 +375,6 @@ mod plan_codec {
         plan.root_password = Some(SecretString::new("root-only-secret"));
         plan.system.root_filesystem = rustaller::config::RootFilesystem::Ext4;
         plan.ssh_port = Some(2200);
-        plan.web_port = Some(8080);
         plan.frpc_config = Some("/root/private/frpc.toml".into());
         plan.target_disk = Some("/dev/vda".into());
         plan.no_cloud_kernel = true;
@@ -406,7 +403,6 @@ mod plan_codec {
             rustaller::config::RootFilesystem::Ext4
         );
         assert!(!format!("{decoded:?}").contains("root-only-secret"));
-        assert_eq!(decoded.web_port, plan.web_port);
         assert_eq!(decoded.frpc_config, plan.frpc_config);
         assert_eq!(decoded.target_disk, plan.target_disk);
         assert_eq!(decoded.no_cloud_kernel, plan.no_cloud_kernel);

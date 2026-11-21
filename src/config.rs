@@ -207,6 +207,7 @@ impl FromStr for RootFilesystem {
 pub struct SystemConfig {
     pub gentoo_init: Option<GentooInit>,
     pub boot_size_mib: Option<u32>,
+    pub root_size_mib: Option<u32>,
     pub btrfs_compression: Option<u8>,
     pub root_filesystem: RootFilesystem,
     pub profile: InstallProfile,
@@ -241,6 +242,9 @@ impl SystemConfig {
             .is_some_and(|n| !(512..=4096).contains(&n))
         {
             return Err(SystemConfigError::InvalidBootSize);
+        }
+        if self.root_size_mib.is_some_and(|size| size < 512) {
+            return Err(SystemConfigError::InvalidRootSize);
         }
         if self.btrfs_compression.is_some_and(|n| n > 15)
             || (self.btrfs_compression.is_some() && self.root_filesystem != RootFilesystem::Btrfs)
@@ -301,6 +305,7 @@ pub enum SystemConfigError {
     MissingGentooInit,
     InvalidFilesystem,
     InvalidBootSize,
+    InvalidRootSize,
     InvalidCompression,
     BtrfsSwapUnsupported,
     InvalidProfile,
@@ -329,6 +334,7 @@ impl fmt::Display for SystemConfigError {
                 "Gentoo installation requires an explicit typed init selection"
             }
             Self::InvalidFilesystem => "Root filesystem must be xfs, ext4 or btrfs",
+            Self::InvalidRootSize => "Root partition requires at least 512 MiB",
             Self::InvalidBootSize => "FAT32 boot partition must be 512-4096 MiB",
             Self::InvalidCompression => {
                 "Btrfs compression requires Btrfs and a zstd level 0-15 (0=off)"

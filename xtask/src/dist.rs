@@ -83,12 +83,18 @@ pub fn package(
     if host.len() <= worker.len() || !contains_bytes(&host, &worker) {
         return Err("release host does not embed the exact matching worker".into());
     }
+    let boot_digests = artifacts
+        .boot_digests
+        .iter()
+        .map(|(name, sum)| format!("    \"{name}\": \"{sum}\""))
+        .collect::<Vec<_>>()
+        .join(",\n");
     let license = fs::read(root.join("LICENSE")).map_err(|e| e.to_string())?;
     if license.is_empty() {
         return Err("release LICENSE is empty".into());
     }
     let info = format!(
-        "{{\n  \"schema_version\": 1,\n  \"tag\": \"{tag}\",\n  \"package_version\": \"{}\",\n  \"runtime_version\": \"{}\",\n  \"plan_schema_version\": {},\n  \"target\": \"{}\",\n  \"installer_complete\": false,\n  \"tui\": {},\n  \"source_commit\": \"{}\",\n  \"source_dirty\": {},\n  \"host_bytes\": {},\n  \"worker_bytes\": {},\n  \"worker_sha256\": \"{}\"\n}}\n",
+        "{{\n  \"schema_version\": 1,\n  \"tag\": \"{tag}\",\n  \"package_version\": \"{}\",\n  \"runtime_version\": \"{}\",\n  \"plan_schema_version\": {},\n  \"target\": \"{}\",\n  \"installer_complete\": false,\n  \"tui\": {},\n  \"source_commit\": \"{}\",\n  \"source_dirty\": {},\n  \"host_bytes\": {},\n  \"worker_bytes\": {},\n  \"worker_sha256\": \"{}\",\n  \"boot_schema_version\": 1,\n  \"boot_artifact_sha256\": {{\n{boot_digests}\n  }}\n}}\n",
         rustaller::PACKAGE_VERSION,
         rustaller::RUNTIME_VERSION,
         rustaller::model::CURRENT_SCHEMA_VERSION,
@@ -101,7 +107,7 @@ pub fn package(
         sha256(&worker),
     );
     let notes = format!(
-        "# {tag} — development preview\n\nThis build contains real kexec handoff and disk-erasing installation actions. Full four-target BIOS/UEFI acceptance is pending; installer_complete remains false. Use disposable test machines with console access.\n\n- Linux x86_64 static musl entry binary; matching worker embedded.\n- TUI: {}.\n- Automatic targets: Alpine, Debian, Arch and Gentoo through Alpine Live. Source PID 1 must be systemd or openrc-init; automatic network capture currently requires an applied explicit flat systemd-networkd profile.\n- --inspect is read-only; an installation requires the complete identity-bound confirmation token.\n- The native ssh-keygen TUI tool writes local key files; back up the private key before erasing its disk.\n- Limine 9.6.5 target bootloader; FAT32 /boot plus XFS, ext4 or Btrfs root. BIOS/UEFI boot acceptance remains pending. Reset execution is unavailable.\n- Source commit: `{}`; uncommitted changes: {}.\n- Runtime compatibility: `{}`.\n- Keep this release as a draft/prerelease until acceptance is complete.\n\nDownload `{ENTRY_NAME}` and verify it against `SHA256SUMS`. Source and the GPL-3.0 license are provided by this repository.\n",
+        "# {tag} — development preview\n\nThis build contains real kexec handoff and disk-erasing installation actions. Full four-target BIOS/UEFI acceptance is pending; installer_complete remains false. Use disposable test machines with console access.\n\n- Linux x86_64 static musl entry binary; matching worker embedded.\n- TUI: {}.\n- Automatic targets: Alpine, Debian, Arch and Gentoo through Alpine Live. Source PID 1 must be systemd or openrc-init; automatic network capture currently requires an applied explicit flat systemd-networkd profile.\n- --inspect is read-only; an installation requires the complete identity-bound confirmation token.\n- The native ssh-keygen TUI tool writes local key files; back up the private key before erasing its disk.\n- rustaller-boot schema 1 target bootloader; FAT32 /boot plus XFS, ext4 or Btrfs root. BIOS/UEFI boot acceptance remains pending. Reset execution is unavailable.\n- Source commit: `{}`; uncommitted changes: {}.\n- Runtime compatibility: `{}`.\n- Keep this release as a draft/prerelease until acceptance is complete.\n\nDownload `{ENTRY_NAME}` and verify it against `SHA256SUMS`. Source and the GPL-3.0 license are provided by this repository.\n",
         artifacts.tui,
         source.commit,
         source.dirty,
@@ -207,6 +213,7 @@ mod tests {
         fs::write(scratch.0.join("worker"), worker).unwrap();
         fs::write(scratch.0.join("host"), host).unwrap();
         BundleArtifacts {
+            boot_digests: vec![],
             host: scratch.0.join("host"),
             worker: scratch.0.join("worker"),
             tui: true,

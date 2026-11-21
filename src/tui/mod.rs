@@ -16,8 +16,7 @@ mod render;
 mod state;
 use state::{Progress, Wizard};
 
-const PREVIEW: &str =
-    "Linux VPS reinstallation · Limine target bootloader · Installation erases the selected disk.";
+const PREVIEW: &str = "Linux VPS reinstallation · rustaller-boot target bootloader · Installation erases the selected disk.";
 
 struct TerminalMode;
 impl Drop for TerminalMode {
@@ -44,6 +43,10 @@ pub fn run(
         Terminal::new(CrosstermBackend::new(io::stdout())).map_err(|error| error.to_string())?;
     terminal.clear().map_err(|error| error.to_string())?;
     let mut wizard = Wizard::new();
+    wizard.storage = rustaller::host::inspect::storage(
+        &mut rustaller::command::SystemRunner,
+        std::path::Path::new("/"),
+    );
     wizard.prefill_hostnames(std::path::Path::new("/"));
     loop {
         terminal

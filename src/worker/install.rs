@@ -135,7 +135,7 @@ pub fn run_from_files<R: CommandRunner>(
     DirBuilder::new().mode(0o700).create(work)?;
     let _lock = InstallLock::create(work)?;
     let assets = install::prepare(runner, &plan, &manifest, work)?;
-    install::start_live_services(runner, &plan, work)?;
+    install::start_live_services(runner, &plan)?;
     if plan.plan().hold == Some(1) {
         announce("Alpine Live rescue is ready. No disk changes were made.");
         return Ok(InstallOutcome::Rescue);
@@ -308,7 +308,7 @@ fn install_mounted<R: CommandRunner>(
 ) -> Result<(), LiveInstallError> {
     let root_uuid = filesystem_uuid(runner, &layout.root_partition())?;
     let efi_uuid = filesystem_uuid(runner, &layout.boot_partition())?;
-    crate::targets::limine::verify_mount(runner, root, &efi_uuid)
+    crate::targets::boot::verify_mount(runner, root, &efi_uuid)
         .map_err(|_| LiveInstallError::Invalid("target FAT32 /boot mount identity changed"))?;
     install::bootstrap(runner, root, plan, manifest, assets, layout)?;
     mount_pseudo(runner, root)?;

@@ -70,7 +70,6 @@ pub fn encode_plan(plan: &InstallPlan) -> Result<Vec<u8>, PlanCodecError> {
     }
 
     put_optional_u16(&mut output, plan.ssh_port);
-    put_optional_u16(&mut output, plan.web_port);
     put_optional_string(&mut output, plan.frpc_config.as_deref())?;
     put_optional_string(&mut output, plan.target_disk.as_deref())?;
     output.push(u8::from(plan.no_cloud_kernel));
@@ -87,6 +86,7 @@ pub fn encode_plan(plan: &InstallPlan) -> Result<Vec<u8>, PlanCodecError> {
         Some(GentooInit::Systemd) => 2,
     });
     put_u32(&mut output, plan.system.boot_size_mib.unwrap_or(0));
+    put_u32(&mut output, plan.system.root_size_mib.unwrap_or(0));
     put_optional_u8(&mut output, plan.system.btrfs_compression);
     output.push(match plan.system.root_filesystem {
         RootFilesystem::Xfs => 0,
@@ -205,7 +205,6 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
     }
 
     let ssh_port = reader.read_optional_u16()?;
-    let web_port = reader.read_optional_u16()?;
     let frpc_config = reader.read_optional_string()?;
     let target_disk = reader.read_optional_string()?;
     let no_cloud_kernel = reader.read_bool()?;
@@ -226,6 +225,10 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
     let boot_size_mib = match reader.read_u32()? {
         0 => None,
         n => Some(n),
+    };
+    let root_size_mib = match reader.read_u32()? {
+        0 => None,
+        size => Some(size),
     };
     let btrfs_compression = reader.read_optional_u8()?;
     let root_filesystem = match reader.read_u8()? {
@@ -306,6 +309,7 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
     let system = SystemConfig {
         gentoo_init,
         boot_size_mib,
+        root_size_mib,
         btrfs_compression,
         root_filesystem,
         profile,
@@ -348,7 +352,6 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
         root_password,
         ssh_keys,
         ssh_port,
-        web_port,
         frpc_config,
         target_disk,
         no_cloud_kernel,

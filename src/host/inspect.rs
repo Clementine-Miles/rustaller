@@ -180,6 +180,41 @@ pub struct StorageFacts {
     pub utilization: String,
     pub raid: String,
 }
+impl StorageFacts {
+    pub fn mounted_partition(&self, path: &str) -> Option<&DiskFacts> {
+        let src = self
+            .mounts
+            .iter()
+            .find(|m| m.path == path)?
+            .source
+            .strip_prefix("/dev/")?;
+        self.devices
+            .iter()
+            .find(|d| d.kind == "part" && d.name == src)
+    }
+
+    /// Return only directly mounted partitions on the same whole disk. Device
+    /// mapper, RAID and ambiguous bind mounts cannot provide reusable geometry.
+    pub fn partition_sizes(&self, selected: &str) -> Option<(&str, u64, u64)> {
+        let part = |path: &str| {
+            let mount = self.mounts.iter().find(|m| m.path == path)?;
+            if path != "/" && !matches!(mount.filesystem.as_str(), "vfat" | "fat" | "fat32") {
+                return None;
+            }
+            self.mounted_partition(path)
+        };
+        let root = part("/")?;
+        let boot = ["/boot", "/boot/efi", "/efi"].into_iter().find_map(part)?;
+        if root.name == boot.name
+            || root.parent.is_empty()
+            || root.parent != boot.parent
+            || (!selected.is_empty() && selected.trim_start_matches("/dev/") != root.parent)
+        {
+            return None;
+        }
+        Some((&root.parent, boot.bytes?, root.bytes?))
+    }
+}
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct InterfaceFacts {
     pub name: String,
@@ -385,7 +420,7 @@ fn pairs(text: &str) -> Option<BTreeMap<String, String>> {
     }
     Some(result)
 }
-fn storage(runner: &mut impl CommandRunner, root: &Path) -> StorageFacts {
+pub fn storage(runner: &mut impl CommandRunner, root: &Path) -> StorageFacts {
     let listing = fact(
         runner,
         "lsblk",
@@ -925,7 +960,7 @@ pub fn report(
         target: planned_target(plan, Some(manifest)),
         blocked: false,
         warning: format!(
-            "ERASE ALL PARTITIONS ON {} ({} bytes). Exact disk-identity confirmation required. Limine method: {}.",
+            "ERASE ALL PARTITIONS ON {} ({} bytes). Exact disk-identity confirmation required. Boot method: {}.",
             manifest.disk.device,
             manifest.disk.size_bytes,
             if manifest.boot_mode == BootMode::Efi {
@@ -940,10 +975,11 @@ pub fn report(
 }
 
 fn planned_count(plan: &InstallPlan, manifest: &DeploymentManifest) -> Option<usize> {
-    crate::shared::storage::planned_partitions(
+    crate::shared::storage::planned_partition_sizes(
         manifest.boot_mode,
         manifest.disk.size_bytes,
         plan.system.boot_size_mib.unwrap_or(512),
+        plan.system.root_size_mib,
     )
     .ok()
     .map(|p| p.len())
@@ -999,10 +1035,31 @@ pub fn planned_target(plan: &InstallPlan, manifest: Option<&DeploymentManifest>)
             }
         )
     };
+    let root_size = match plan.system.root_size_mib {
+        Some(mib) => format!("{mib} MiB"),
+        None => manifest
+            .and_then(|m| {
+                crate::shared::storage::planned_partitions(
+                    m.boot_mode,
+                    m.disk.size_bytes,
+                    plan.system.boot_size_mib.unwrap_or(512),
+                )
+                .ok()
+                .and_then(|parts| {
+                    parts
+                        .last()
+                        .map(|root| m.disk.size_bytes / 1_048_576 - root.start_mib)
+                })
+            })
+            .map_or_else(
+                || "remaining disk".into(),
+                |mib| format!("remaining disk (about {mib} MiB)"),
+            ),
+    };
     let target = format!(
-        "Distribution: {}\n{gentoo}Kernel package/family: {kernel} (version determined after installation)\nBootloader: Limine {}\nFirmware: {}\nPartition table: {table}; count: {}\nFAT32: {} MiB at /boot\nRoot: {} at /\nBtrfs: {}\nSwapfile: {}; swappiness {}\nHostname: {}\nTimezone: {}\nNetwork: {network}; MTU {}\nIPv6: {}; address preference: {}\nTCP congestion / queue: {} / {}\nDNS: {} {:?}; search {:?}\nSSH port: {}; account: {}\nPublic keys: {} sources; credentials hidden\nProfile: {}; tools={}; retain docs={}; cache={}\n",
+        "Distribution: {}\n{gentoo}Kernel package/family: {kernel} (version determined after installation)\nBootloader: rustaller-boot schema {}\nFirmware: {}\nPartition table: {table}; count: {}\nFAT32: {} MiB at /boot\nRoot: {} at / ({root_size})\nBtrfs: {}\nSwapfile: {}; swappiness {}\nHostname: {}\nTimezone: {}\nNetwork: {network}; MTU {}\nIPv6: {}; address preference: {}\nTCP congestion / queue: {} / {}\nDNS: {} {:?}; search {:?}\nSSH port: {}; account: {}\nPublic keys: {} sources; credentials hidden\nProfile: {}; tools={}; retain docs={}; cache={}\n",
         plan.target,
-        crate::targets::limine::VERSION,
+        crate::targets::boot::VERSION,
         firmware,
         count
             .map(|n| n.to_string())

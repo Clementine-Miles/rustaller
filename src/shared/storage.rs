@@ -170,6 +170,15 @@ pub fn planned_partitions(
     bytes: u64,
     boot_size_mib: u32,
 ) -> Result<Vec<Partition>, StorageError> {
+    planned_partition_sizes(boot_mode, bytes, boot_size_mib, None)
+}
+
+pub fn planned_partition_sizes(
+    boot_mode: BootMode,
+    bytes: u64,
+    boot_size_mib: u32,
+    root_size_mib: Option<u32>,
+) -> Result<Vec<Partition>, StorageError> {
     if !(512..=4096).contains(&boot_size_mib) {
         return Err(StorageError::UnsupportedGeometry);
     }
@@ -196,10 +205,21 @@ pub fn planned_partitions(
         number: boot_number + 1,
         role: PartitionRole::Root,
         start_mib: root_start_mib,
-        end_mib: None,
+        end_mib: root_size_mib.map(|size| root_start_mib + u64::from(size)),
     });
     // Fail before wipefs, including space reserved for ESP/alignment.
-    if bytes / (1024 * 1024) < root_start_mib + 512 {
+    // A fixed MiB endpoint on GPT must also leave room for the backup table
+    // (128 entries + header, up to 20 KiB on the supported 4Kn geometry).
+    let reserve_bytes = if (boot_mode == BootMode::Efi || bios_gpt) && root_size_mib.is_some() {
+        20 * 1024
+    } else {
+        0
+    };
+    let root_mib = root_size_mib.unwrap_or(512);
+    if root_mib < 512
+        || bytes.saturating_sub(reserve_bytes) / (1024 * 1024)
+            < root_start_mib + u64::from(root_mib)
+    {
         return Err(StorageError::InsufficientRootSpace);
     }
 
@@ -243,10 +263,11 @@ impl DiskLayout {
         {
             return Err(StorageError::UnsupportedGeometry);
         }
-        let partitions = planned_partitions(
+        let partitions = planned_partition_sizes(
             boot_mode,
             bytes,
             plan.plan().system.boot_size_mib.unwrap_or(512),
+            plan.plan().system.root_size_mib,
         )?;
         Ok(Self {
             disk: disk.to_owned(),

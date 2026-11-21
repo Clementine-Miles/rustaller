@@ -882,7 +882,7 @@ mod inspection_preview {
         assert!(report.current.contains("Current bootloader: Unknown"));
         assert!(
             report.target.contains("count: 3")
-                && report.target.contains("Limine")
+                && report.target.contains("rustaller-boot")
                 && report.target.contains("@; zstd level 3")
         );
         assert!(report.warning.contains("ERASE ALL PARTITIONS ON /dev/vda"));

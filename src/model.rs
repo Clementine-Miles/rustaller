@@ -2,9 +2,9 @@ use crate::config::{GentooInit, SystemConfig, SystemConfigError};
 use crate::postinstall::{PostInstallConfig, PostInstallError};
 use std::fmt;
 
-// Schema 9 binds Gentoo's init variant explicitly. Schema 8 used a systemd
-// stage3 and must never acquire the new OpenRC default while decoding.
-pub const CURRENT_SCHEMA_VERSION: u16 = 9;
+// Schema 10 removes the Live web port. Reject older bodies before decoding
+// positional fields (including the Gentoo init selection introduced in v9).
+pub const CURRENT_SCHEMA_VERSION: u16 = 10;
 
 pub fn valid_account_name(value: &str) -> bool {
     !value.is_empty()
@@ -161,7 +161,6 @@ pub struct InstallPlan {
     pub root_password: Option<SecretString>,
     pub ssh_keys: Vec<String>,
     pub ssh_port: Option<u16>,
-    pub web_port: Option<u16>,
     pub frpc_config: Option<String>,
     pub target_disk: Option<String>,
     pub no_cloud_kernel: bool,
@@ -185,7 +184,6 @@ impl fmt::Debug for InstallPlan {
             )
             .field("ssh_keys", &self.ssh_keys)
             .field("ssh_port", &self.ssh_port)
-            .field("web_port", &self.web_port)
             .field(
                 "frpc_config",
                 &self.frpc_config.as_ref().map(|_| "[REDACTED]"),
@@ -212,11 +210,6 @@ impl InstallPlan {
             ssh_keys: Vec::new(),
             ssh_port: if target.is_automatic() {
                 Some(22)
-            } else {
-                None
-            },
-            web_port: if target.is_automatic() {
-                Some(80)
             } else {
                 None
             },
@@ -253,10 +246,8 @@ impl InstallPlan {
             .validate(self.target, self.hold)
             .map_err(PlanError::SystemConfig)?;
 
-        for (name, port) in [("SSH", self.ssh_port), ("web", self.web_port)] {
-            if port.is_some_and(|value| value == 0) {
-                return Err(PlanError::InvalidPort(name));
-            }
+        if self.ssh_port == Some(0) {
+            return Err(PlanError::InvalidPort("SSH"));
         }
 
         if self.hold.is_some_and(|value| value > 2) {

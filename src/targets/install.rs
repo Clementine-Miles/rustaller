@@ -39,7 +39,7 @@ pub enum InstallError {
 impl std::fmt::Display for InstallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Boot(error) => write!(f, "Limine boot setup failed: {error}"),
+            Self::Boot(error) => write!(f, "Target boot setup failed: {error}"),
             Self::Invalid(reason) => write!(f, "Target installation cannot continue: {reason}"),
             Self::Filesystem(e) => write!(f, "Target installation filesystem error: {e}"),
             Self::Command(e) => e.fmt(f),
@@ -188,7 +188,7 @@ pub fn prepare<R: CommandRunner>(
         super::cachyos::prepare_assets(runner, work)?;
     }
     if plan.plan().hold != Some(1) {
-        super::limine::prepare(runner, work).map_err(InstallError::Boot)?;
+        super::boot::prepare(manifest.boot_mode, work).map_err(InstallError::Boot)?;
     }
     let stage3 = match &manifest.gentoo_stage3 {
         Some(stage) if plan.plan().target == Target::Gentoo => {
@@ -249,16 +249,10 @@ fn live_packages(plan: &crate::model::InstallPlan) -> Result<Vec<&'static str>, 
     ];
     match plan.target {
         Target::Alpine => packages.extend(["apk-tools", "alpine-base"]),
-        Target::Debian => packages.extend(["debootstrap", "debian-archive-keyring"]),
+        Target::Debian => packages.extend(["debootstrap", "debian-archive-keyring", "wget"]),
         Target::Arch => packages.extend(["arch-install-scripts", "archlinux-keyring"]),
         Target::Gentoo => {}
         _ => return Err(InstallError::Invalid("automatic target required")),
-    }
-    if plan.hold != Some(1) {
-        packages.extend(["gcc", "musl-dev"]);
-    }
-    if plan.web_port.is_some() {
-        packages.push("websocketd");
     }
     if plan.frpc_config.is_some() {
         packages.push("frp");
@@ -388,7 +382,19 @@ pub fn bootstrap<R: CommandRunner>(
                 root.as_os_str().to_owned(),
                 sources::DEBIAN_ARCHIVE.into(),
             ];
-            checked(runner, "debootstrap", args, "debian-verified-minbase")?;
+            // GNU wget handles HTTPS CONNECT proxies used by debootstrap. Its
+            // CA setting is independent of curl's and affects only Alpine Live.
+            let mut bootstrap = command("debootstrap", args, "debian-verified-minbase");
+            if Path::new("/configs/transport-ca.pem").is_file() {
+                let wgetrc = Path::new("/run/rustaller-debootstrap-wgetrc");
+                atomic_replace(
+                    wgetrc,
+                    b"ca_certificate = /configs/transport-ca.pem\n",
+                    0o600,
+                )?;
+                bootstrap = bootstrap.env("WGETRC", wgetrc);
+            }
+            run_checked(runner, &bootstrap)?;
         }
         Target::Arch => rolling::bootstrap_arch_rootfs(
             runner,
@@ -433,7 +439,7 @@ pub fn configure<R: CommandRunner>(
     let runner = &mut transport;
     // Native kernel/initramfs hooks must see the target root and ESP UUIDs,
     // not infer the installed root from the Alpine Live environment.
-    super::limine::verify_mount(runner, root, efi_uuid).map_err(InstallError::Boot)?;
+    super::boot::verify_mount(runner, root, efi_uuid).map_err(InstallError::Boot)?;
     write_fstab(root, layout, root_uuid, efi_uuid)?;
     crate::targets::packages::apply_package_policy(root, plan)?;
     prevent_package_service_start(root, plan.plan().target)?;
@@ -554,7 +560,7 @@ pub fn configure<R: CommandRunner>(
         if let Some(frp) = &assets.frp {
             install_frpc(root, plan.plan(), frp)?;
         }
-        super::limine::install(runner, root, layout, &assets.work, root_uuid, efi_uuid)
+        super::boot::install(runner, root, layout, &assets.work, root_uuid, efi_uuid)
             .map_err(InstallError::Boot)?;
         if plan.plan().target == Target::Alpine {
             let worker = fs::read("/rustaller-worker")?;
@@ -1165,12 +1171,10 @@ fn verify_installed_target<R: CommandRunner>(
     runner: &mut R,
     root: &Path,
 ) -> Result<(), InstallError> {
-    for path in ["etc/os-release", "etc/fstab", "boot/limine.conf"] {
+    for path in ["etc/os-release", "etc/fstab"] {
         let path = root.join(path);
         if !path.is_file() || fs::metadata(path)?.len() == 0 {
-            return Err(InstallError::Invalid(
-                "installed OS, fstab or Limine configuration is missing",
-            ));
+            return Err(InstallError::Invalid("installed OS or fstab is missing"));
         }
     }
     let mut kernel = false;
@@ -1190,7 +1194,7 @@ fn verify_installed_target<R: CommandRunner>(
             "installed kernel or initramfs is missing",
         ));
     }
-    super::limine::verify(root).map_err(InstallError::Boot)?;
+    super::boot::verify(root).map_err(InstallError::Boot)?;
 
     chroot_checked(
         runner,
@@ -1416,45 +1420,7 @@ fn probe_frpc_portability<R: CommandRunner>(
 pub fn start_live_services<R: CommandRunner>(
     runner: &mut R,
     plan: &ValidatedLivePlan,
-    work: &Path,
 ) -> Result<(), InstallError> {
-    if let Some(port) = plan.plan().web_port {
-        let mut random = [0_u8; 8];
-        File::open("/dev/urandom")?.read_exact(&mut random)?;
-        let alphabet = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        let token = random
-            .into_iter()
-            .map(|b| alphabet[usize::from(b) % alphabet.len()] as char)
-            .collect::<String>();
-        let web_path = format!("/{token}");
-        let web = work.join("web");
-        fs::create_dir(&web)?;
-        atomic_replace(
-            &web.join(&token),
-            include_bytes!("../worker/log.html"),
-            0o644,
-        )?;
-        let log = Path::new("/rustaller.log");
-        if !log.exists() {
-            symlink("/var/log/rustaller.log", log)?;
-        }
-        let service = format!(
-            "#!/sbin/openrc-run\nname=rustaller-web\ncommand=/usr/bin/websocketd\ncommand_args=\"--port={port} --staticdir={} /rustaller-worker log-stream {web_path}\"\ncommand_background=yes\npidfile=/run/rustaller-web.pid\n",
-            web.display()
-        );
-        atomic_replace(
-            Path::new("/etc/init.d/rustaller-web"),
-            service.as_bytes(),
-            0o755,
-        )?;
-        checked(
-            runner,
-            "rc-service",
-            ["rustaller-web", "start"],
-            "live-start-websocketd",
-        )?;
-        println!("Installation log URL path: {web_path} (HTTP port {port})");
-    }
     if plan.plan().frpc_config.is_some() {
         atomic_replace(Path::new("/etc/init.d/rustaller-frpc"),b"#!/sbin/openrc-run\nname=rustaller-frpc\ncommand=/usr/bin/frpc\ncommand_args=\"-c /configs/frpc.toml\"\ncommand_background=yes\npidfile=/run/rustaller-frpc.pid\n",0o755)?;
         checked(
@@ -2118,7 +2084,7 @@ mod runtime_tests {
         assert!(!packages.contains(&"gcc") && !packages.contains(&"musl-dev"));
         plan.hold = None;
         let packages = live_packages(&plan).unwrap();
-        assert!(packages.contains(&"gcc") && packages.contains(&"musl-dev"));
+        assert!(!packages.contains(&"gcc") && !packages.contains(&"musl-dev"));
     }
 
     use crate::command::{CommandOutput, MockRunner};

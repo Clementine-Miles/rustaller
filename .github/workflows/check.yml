@@ -24,7 +24,7 @@ jobs:
           persist-credentials: false
           ref: ${{ inputs.release_tag || github.ref }}
       - name: Install Rust toolchain
-        run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy --target x86_64-unknown-linux-musl
+        run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy --target x86_64-unknown-linux-musl --target x86_64-unknown-uefi --target i686-unknown-linux-gnu
       - name: Install test utilities
         run: sudo apt-get update && sudo apt-get install --yes openssh-client
       - name: Static checks and isolated tests

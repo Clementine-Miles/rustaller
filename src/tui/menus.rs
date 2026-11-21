@@ -323,6 +323,54 @@ impl Wizard {
             }
             Page::Boot => {
                 if self.is_automatic() {
+                    if let Some((disk, boot, root)) =
+                        self.storage.partition_sizes(draft.get(Field::Disk))
+                    {
+                        let detected = format!(
+                            "Detected on {disk}: boot {} MiB, root {} MiB",
+                            boot / 1_048_576,
+                            root / 1_048_576
+                        );
+                        if self.reusable_sizes().is_some() {
+                            add(format!("{detected} · reuse sizes"), Action::ReuseSizes);
+                        } else {
+                            add(
+                                format!("{detected} · edit planned sizes"),
+                                Action::Edit(EditSlot::Field(Field::BootSize)),
+                            );
+                        }
+                    } else {
+                        for (path, field) in [
+                            ("/", Field::RootSize),
+                            ("/boot", Field::BootSize),
+                            ("/boot/efi", Field::BootSize),
+                            ("/efi", Field::BootSize),
+                        ] {
+                            if let Some(part) = self.storage.mounted_partition(path)
+                                && let Some(bytes) = part.bytes
+                            {
+                                add(
+                                    format!(
+                                        "Current {path} on {}: {} MiB · edit planned size",
+                                        part.name,
+                                        bytes / 1_048_576
+                                    ),
+                                    Action::Edit(EditSlot::Field(field)),
+                                );
+                            }
+                        }
+                    }
+                    add(
+                        format!(
+                            "Root size (MiB): {}",
+                            if draft.get(Field::RootSize).is_empty() {
+                                "remaining disk"
+                            } else {
+                                draft.get(Field::RootSize)
+                            }
+                        ),
+                        Action::Edit(EditSlot::Field(Field::RootSize)),
+                    );
                     add(
                         format!("FAT boot size: {}", draft.display(Field::BootSize)),
                         Action::Edit(EditSlot::Field(Field::BootSize)),
@@ -356,12 +404,11 @@ impl Wizard {
                 }
             }
             Page::Resources => {
-                for field in [Field::WebPort, Field::Frpc] {
-                    add(
-                        format!("{}: {}", field.label(), draft.display(field)),
-                        Action::Edit(EditSlot::Field(field)),
-                    );
-                }
+                let field = Field::Frpc;
+                add(
+                    format!("{}: {}", field.label(), draft.display(field)),
+                    Action::Edit(EditSlot::Field(field)),
+                );
                 add(
                     format!("Debug output: {}", yes_no(draft.debug)),
                     Action::ToggleDebug,

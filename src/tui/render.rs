@@ -270,7 +270,7 @@ impl Wizard {
             centered_title,
         );
         frame.render_widget(
-            Paragraph::new("RUSTALLER | Linux VPS reinstallation | Limine")
+            Paragraph::new("RUSTALLER | Linux VPS reinstallation | rustaller-boot")
                 .alignment(Alignment::Center)
                 .wrap(Wrap { trim: false }),
             subtitle,

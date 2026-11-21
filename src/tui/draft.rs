@@ -89,7 +89,6 @@ impl Draft {
         for (field, value) in [
             (Field::Username, "root"),
             (Field::SshPort, "22"),
-            (Field::WebPort, "80"),
             (Field::SwapSize, "2048"),
             (Field::KeyPath, key_path),
             (Field::KeyRounds, "512"),

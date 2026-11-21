@@ -16,10 +16,10 @@ Options:
   --root-password PASSWORD      Separate root password for a non-root account
   --ssh-key KEY                 SSH public key (repeatable)
   --ssh-port PORT               SSH port
-  --web-port PORT               Web log viewer port
   --frpc-config PATH            frpc configuration
   --target-disk /dev/DISK       Target disk for automatic installation
   --filesystem xfs|ext4|btrfs   Target root filesystem (default: xfs)
+  --root-size-mib MIB          Root partition size (minimum 512 MiB; default: fill disk)
   --boot-size-mib MIB          FAT32 /boot size, 512-4096 MiB (default: 512)
   --btrfs-compression LEVEL    Btrfs zstd 1-15, 0=off (default: 3)
   --no-cloud-kernel             Select the non-cloud kernel
@@ -63,7 +63,7 @@ Options:
 
 Linux x86_64 hosts only. Automatic installation erases the selected disk.
 Rust embeds its matching worker and verifies official installation sources.
-New target systems use Limine 9.6.5; Btrfs swapfiles are unsupported.
+New target systems use rustaller-boot schema 1; Btrfs swapfiles are unsupported.
 Development installer: BIOS/UEFI acceptance is required before production use.
 "#;
 
@@ -238,6 +238,7 @@ where
             "--profile"
             | "--gentoo-init"
             | "--filesystem"
+            | "--root-size-mib"
             | "--boot-size-mib"
             | "--btrfs-compression"
             | "--dns-mode"
@@ -250,6 +251,9 @@ where
                         options.system.gentoo_init = Some(value.parse().map_err(|_| invalid())?)
                     }
                     "--profile" => options.system.profile = value.parse().map_err(|_| invalid())?,
+                    "--root-size-mib" => {
+                        options.system.root_size_mib = Some(value.parse().map_err(|_| invalid())?)
+                    }
                     "--boot-size-mib" => {
                         options.system.boot_size_mib = Some(value.parse().map_err(|_| invalid())?)
                     }
@@ -341,11 +345,6 @@ where
                 options.ssh_port = Some(parse_port(&value, &name)?);
                 index += consumed;
             }
-            "--web-port" | "--http-port" => {
-                let (value, consumed) = take_value(&args, index, &name, inline_value)?;
-                options.web_port = Some(parse_port(&value, &name)?);
-                index += consumed;
-            }
             "--frpc-conf" | "--frpc-config" => {
                 let (value, consumed) = take_value(&args, index, &name, inline_value)?;
                 options.frpc_config = Some(value);
@@ -382,7 +381,6 @@ where
     plan.root_password = options.root_password;
     plan.ssh_keys = options.ssh_keys;
     plan.ssh_port = options.ssh_port.or(plan.ssh_port);
-    plan.web_port = options.web_port.or(plan.web_port);
     plan.frpc_config = options.frpc_config;
     plan.target_disk = options.target_disk;
     plan.no_cloud_kernel = options.no_cloud_kernel;

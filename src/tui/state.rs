@@ -183,6 +183,7 @@ pub(super) enum Action {
     Back,
     Edit(EditSlot),
     Select(Setting),
+    ReuseSizes,
     ToggleDebug,
     ToggleGeneric,
     ToggleTools,
@@ -201,6 +202,7 @@ pub(super) struct Entry {
     pub action: Action,
 }
 pub(super) struct Wizard {
+    pub storage: rustaller::host::inspect::StorageFacts,
     pub report: Option<rustaller::host::inspect::PreflightReport>,
     pub choice: usize,
     pub drafts: Vec<Rc<Draft>>,
@@ -211,6 +213,17 @@ pub(super) struct Wizard {
 }
 
 impl Wizard {
+    pub fn reusable_sizes(&self) -> Option<(&str, u32, u32)> {
+        let (disk, boot, root) = self
+            .storage
+            .partition_sizes(self.draft().get(Field::Disk))?;
+        let boot = u32::try_from(boot / 1_048_576).ok()?;
+        let root = u32::try_from(root / 1_048_576).ok()?;
+        if !(512..=4096).contains(&boot) || root < 512 {
+            return None;
+        }
+        Some((disk, boot, root))
+    }
     pub fn prefill_hostnames(&mut self, root: &std::path::Path) {
         for (index, target) in [Target::Alpine, Target::Debian, Target::Arch, Target::Gentoo]
             .into_iter()
@@ -237,6 +250,7 @@ impl Wizard {
             .map(|_| Rc::new(Draft::new(&comment, &key_path)))
             .collect();
         Self {
+            storage: Default::default(),
             report: None,
             choice: 0,
             drafts,
@@ -379,6 +393,15 @@ impl Wizard {
                 self.frames.last_mut().expect("swap menu").selected =
                     usize::from(self.draft().swap_enabled);
             }
+            Action::ReuseSizes => {
+                if let Some((disk, boot, root)) = self.reusable_sizes() {
+                    let disk = disk.to_owned();
+                    let draft = self.draft_mut();
+                    draft.set(Field::Disk, disk);
+                    draft.set(Field::BootSize, boot.to_string());
+                    draft.set(Field::RootSize, root.to_string());
+                }
+            }
             Action::ResetTcp => {
                 let draft = self.draft_mut();
                 draft.congestion = CongestionControl::Default;
@@ -421,7 +444,7 @@ impl Wizard {
                     "Username: 1-32 ASCII letters, digits, _ or -; begin with a letter or _".into(),
                 );
             }
-            EditSlot::Field(Field::SshPort | Field::WebPort)
+            EditSlot::Field(Field::SshPort)
                 if value.parse::<u16>().ok().is_none_or(|port| port == 0) =>
             {
                 return Err("Port must be an integer from 1 to 65535".into());
@@ -472,7 +495,7 @@ impl Wizard {
                         Field::Hostname | Field::Timezone => Page::Host,
                         Field::Mtu => Page::Mtu,
                         Field::SwapSize | Field::Swappiness => Page::Swap,
-                        Field::Disk | Field::BootSize => Page::Boot,
+                        Field::Disk | Field::BootSize | Field::RootSize => Page::Boot,
                         Field::Compression => Page::Installation,
                         Field::SshPort | Field::Username => Page::Account,
                         _ => Page::Tcp,

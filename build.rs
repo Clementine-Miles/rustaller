@@ -9,6 +9,7 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(has_embedded_worker)");
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
+    embed_boot_artifacts(&out_dir);
     let profile = env::var("PROFILE").unwrap_or_default();
     let bundle_requested = env::var("REINSTALL_XTASK_BUNDLE").as_deref() == Ok("1");
     let worker = match env::var_os("REINSTALL_WORKER_ELF") {
@@ -74,4 +75,30 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
         && haystack
             .windows(needle.len())
             .any(|window| window == needle)
+}
+
+/// The release job builds firmware and the maintenance helper first. Only the
+/// installer worker gets their bytes. Host builds and the helper itself never
+/// embed a copy of themselves or silently acquire firmware from the network.
+fn embed_boot_artifacts(out: &std::path::Path) {
+    println!("cargo:rerun-if-env-changed=RUSTALLER_BOOT_ARTIFACT_DIR");
+    let dir = env::var_os("RUSTALLER_BOOT_ARTIFACT_DIR").map(PathBuf::from);
+    let mut source = String::new();
+    for (symbol, name) in [
+        ("UEFI", "BOOTX64.EFI"),
+        ("UPDATE", "rustaller-boot-update"),
+        ("BIOS_MBR", "bios-mbr.bin"),
+        ("BIOS_STAGE", "bios-stage2.bin"),
+    ] {
+        if let Some(dir) = &dir {
+            let path = dir.join(name);
+            println!("cargo:rerun-if-changed={}", path.display());
+            source.push_str(&format!(
+                "pub static {symbol}: &[u8] = include_bytes!({path:?});\n"
+            ));
+        } else {
+            source.push_str(&format!("pub static {symbol}: &[u8] = &[];\n"));
+        }
+    }
+    fs::write(out.join("boot_artifacts.rs"), source).expect("write boot artifact declarations");
 }

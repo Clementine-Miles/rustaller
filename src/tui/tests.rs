@@ -388,7 +388,6 @@ fn tcp_and_swap_submenus_reuse_cli_validation_and_inactive_swap_values_are_ignor
                 "--username=root",
                 "--password=test-password",
                 "--ssh-port=22",
-                "--web-port=80",
                 "--tcp-congestion=bbr",
                 "--qdisc=fq",
                 "--tcp-buffer-mib=64",
@@ -615,7 +614,6 @@ fn all_automatic_targets_match_cli_plan_encoding_including_multiple_keys_and_hos
         set(&mut wizard, Field::Timezone, "Etc/UTC");
         set(&mut wizard, Field::Disk, "/dev/vda");
         set(&mut wizard, Field::SshPort, "2200");
-        set(&mut wizard, Field::WebPort, "8080");
         set(&mut wizard, Field::Frpc, "/root/frpc.toml");
         wizard.draft_mut().kernel = kernel.parse().unwrap();
         wizard.draft_mut().boot = Some(BootMode::Efi);
@@ -636,8 +634,6 @@ fn all_automatic_targets_match_cli_plan_encoding_including_multiple_keys_and_hos
                 "test-root-password",
                 "--ssh-port",
                 "2200",
-                "--web-port",
-                "8080",
                 "--target-disk",
                 "/dev/vda",
                 "--frpc-config",
@@ -676,8 +672,6 @@ fn rescue_and_manual_targets_match_cli_and_hide_installation_categories() {
             "root",
             "--ssh-port",
             "22",
-            "--web-port",
-            "80",
             "--password",
             "test-password",
             "--hold",
@@ -747,7 +741,6 @@ fn validation_failures_and_all_sensitive_views_hide_raw_values() {
     let summary = wizard.summary().join("\n");
     assert!(summary.contains("Kernel"));
     assert!(summary.contains("Boot mode"));
-    assert!(summary.contains("Web log port"));
     assert!(!summary.contains("UNIQUE-"));
 }
 
@@ -905,8 +898,6 @@ fn minimal_and_dns_submenus_match_cli_for_all_four_targets() {
                 "test-password",
                 "--ssh-port",
                 "22",
-                "--web-port",
-                "80",
                 "--minimal",
                 "--with-tools",
                 "--keep-docs",
@@ -1364,7 +1355,7 @@ fn current_and_target_panels_are_responsive_private_and_render_without_probing()
     wizard.preflight_complete(Ok(PreflightReport{
         blocked:false,
         current:"OS: Debian (simulated)\nCPU: virtual CPU\nFirmware: bios\nDisk: /dev/vda\nUnknown: unknown\nSECRET test-password".into(),
-        target:"Distribution: Debian\nBootloader: Limine 9.6.5\nRoot: btrfs @\nFAT32: 512 MiB at /boot".into(),
+        target:"Distribution: Debian\nBootloader: rustaller-boot schema 1\nRoot: btrfs @\nFAT32: 512 MiB at /boot".into(),
         warning:"ERASE ALL PARTITIONS ON /dev/vda".into(),
     }));
     for (width, height) in [(120, 40), (60, 40), (48, 25)] {
@@ -1372,7 +1363,7 @@ fn current_and_target_panels_are_responsive_private_and_render_without_probing()
         assert!(!text.contains("test-password"));
         assert!(text.contains("CURRENT SYSTEM") && text.contains("TARGET SYSTEM"));
         assert!(text.contains("/dev/vda"));
-        assert!(text.contains("Limine"));
+        assert!(text.contains("rustaller-boot"));
         let lines: Vec<_> = text.lines().collect();
         let current = lines
             .iter()
@@ -1498,4 +1489,34 @@ fn blocked_diagnostic_report_keeps_panels_and_cannot_dispatch_installation() {
         wizard.view,
         View::Preflight { success: false, .. }
     ));
+}
+
+#[test]
+fn reuse_sizes_uses_only_directly_mounted_partitions_on_the_selected_disk() {
+    use rustaller::host::inspect::{DiskFacts, MountFacts};
+    let mut wizard = Wizard::new();
+    for (name, bytes, mount, fs) in [
+        ("vda1", 1024_u64 << 20, "/boot", "vfat"),
+        ("vda2", (3000_u64 << 20) + 511, "/", "ext4"),
+    ] {
+        wizard.storage.devices.push(DiskFacts {
+            name: name.into(),
+            kind: "part".into(),
+            parent: "vda".into(),
+            bytes: Some(bytes),
+            ..Default::default()
+        });
+        wizard.storage.mounts.push(MountFacts {
+            path: mount.into(),
+            source: format!("/dev/{name}"),
+            filesystem: fs.into(),
+            options: "rw".into(),
+        });
+    }
+    assert_eq!(wizard.reusable_sizes(), Some(("vda", 1024, 3000)));
+    wizard.draft_mut().set(Field::Disk, "vdb".into());
+    assert!(wizard.reusable_sizes().is_none());
+    wizard.draft_mut().set(Field::Disk, "vda".into());
+    wizard.storage.mounts[0].filesystem = "ext4".into();
+    assert!(wizard.reusable_sizes().is_none());
 }

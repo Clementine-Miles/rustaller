@@ -10,14 +10,13 @@ use rustaller::model::{InstallPlan, SecretString};
 
 impl Wizard {
     pub fn validate_input(&self, field: Field, value: &str) -> Result<(), String> {
-        if value.trim().is_empty()
-            && !matches!(field, Field::Username | Field::SshPort | Field::WebPort)
-        {
+        if value.trim().is_empty() && !matches!(field, Field::Username | Field::SshPort) {
             return Ok(());
         }
         if matches!(
             field,
             Field::BootSize
+                | Field::RootSize
                 | Field::Compression
                 | Field::Hostname
                 | Field::Timezone
@@ -34,7 +33,6 @@ impl Wizard {
                 | Field::Swappiness
                 | Field::Username
                 | Field::SshPort
-                | Field::WebPort
         ) {
             let mut args = vec![
                 CHOICES[self.choice].1.to_owned(),
@@ -53,7 +51,7 @@ impl Wizard {
     pub fn invalid_field(&self) -> Option<Field> {
         let mut fields = Vec::new();
         if self.has_account() {
-            fields.extend([Field::Username, Field::SshPort, Field::WebPort]);
+            fields.extend([Field::Username, Field::SshPort]);
         }
         if self.is_automatic() {
             fields.extend([
@@ -61,6 +59,7 @@ impl Wizard {
                 Field::Timezone,
                 Field::Disk,
                 Field::BootSize,
+                Field::RootSize,
                 Field::Mtu,
             ]);
             if self.draft().root_filesystem == rustaller::config::RootFilesystem::Btrfs {
@@ -93,7 +92,7 @@ impl Wizard {
             if !valid_username(draft.get(Field::Username).trim()) {
                 return Err("Set a valid username".into());
             }
-            for field in [Field::Username, Field::SshPort, Field::WebPort, Field::Frpc] {
+            for field in [Field::Username, Field::SshPort, Field::Frpc] {
                 add(field);
             }
         }
@@ -106,6 +105,7 @@ impl Wizard {
             }
             add(Field::Mtu);
             add(Field::BootSize);
+            add(Field::RootSize);
             if draft.root_filesystem.as_str() == "btrfs" {
                 add(Field::Compression);
             }
@@ -289,7 +289,8 @@ impl Wizard {
                 ),
                 format!("DNS policy: {}", draft.dns_mode.as_str()),
                 format!("Root filesystem: {}", draft.root_filesystem.as_str()),
-                format!("Target bootloader: Limine {}; FAT32 at /boot",rustaller::targets::limine::VERSION),
+                format!("Target bootloader: rustaller-boot {}; FAT32 at /boot",rustaller::targets::boot::VERSION),
+                format!("Root partition size: {}", if draft.get(Field::RootSize).is_empty() {"fill remaining disk".into()} else {format!("{} MiB",draft.get(Field::RootSize))}),
                 format!("Boot partition: {} MiB", optional_label(draft.get(Field::BootSize), "512")),
                 format!("Btrfs: {}", if draft.root_filesystem == rustaller::config::RootFilesystem::Btrfs { format!("@ root; zstd level {} (0=off)", optional_label(draft.get(Field::Compression), "3")) } else { "not selected".into() }),
                 format!(
@@ -391,7 +392,6 @@ impl Wizard {
         if self.has_account() {
             lines.extend([
                 "IP addressing/routes: inherit existing network configuration".into(),
-                format!("Web log port: {}", draft.display(Field::WebPort)),
                 format!("frpc: {}", draft.display(Field::Frpc)),
             ]);
         }

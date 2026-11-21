@@ -1,3 +1,6 @@
+pub mod boot_artifacts {
+    include!(concat!(env!("OUT_DIR"), "/boot_artifacts.rs"));
+}
 pub mod codec;
 pub mod command;
 pub mod config;
@@ -27,15 +30,16 @@ pub mod shared {
     pub mod swapfile;
 }
 pub mod targets {
+    mod bios;
+    pub mod boot;
     pub mod cachyos;
     pub mod debian;
     pub mod install;
-    pub mod limine;
     pub mod packages;
     pub mod rolling;
 }
 
-pub const RUNTIME_VERSION: &str = "RUSTALLER-CONFIG-20261115-09";
+pub const RUNTIME_VERSION: &str = "RUSTALLER-CONFIG-20261121-10";
 pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub mod worker {
     pub mod args;
@@ -43,7 +47,6 @@ pub mod worker {
     pub mod initrd_network;
     pub mod install;
     pub mod live;
-    pub mod log_stream;
 }
 
 include!(concat!(env!("OUT_DIR"), "/embedded_worker.rs"));

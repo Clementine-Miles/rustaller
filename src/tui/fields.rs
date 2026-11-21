@@ -7,11 +7,11 @@ pub(super) enum Field {
     RootConfirm,
     SshPort,
     BootSize,
+    RootSize,
     Compression,
     Hostname,
     Timezone,
     Disk,
-    WebPort,
     Frpc,
     DnsServers,
     DnsSearch,
@@ -39,12 +39,12 @@ impl Field {
             Self::RootPassword => "Root account password",
             Self::RootConfirm => "Confirm root password",
             Self::SshPort => "SSH port",
+            Self::RootSize => "Root size (MiB)",
             Self::BootSize => "FAT32 boot size (MiB)",
             Self::Compression => "Btrfs zstd level (0 disables)",
             Self::Hostname => "Hostname",
             Self::Timezone => "Timezone",
             Self::Disk => "Target disk",
-            Self::WebPort => "Web log port",
             Self::Frpc => "frpc configuration file / URL",
             Self::DnsServers => "DNS servers (comma-separated)",
             Self::DnsSearch => "DNS search domains (comma-separated)",
@@ -78,12 +78,12 @@ impl Field {
             Self::RootPassword => "--root-password",
             Self::RootConfirm => "",
             Self::SshPort => "--ssh-port",
+            Self::RootSize => "--root-size-mib",
             Self::BootSize => "--boot-size-mib",
             Self::Compression => "--btrfs-compression",
             Self::Hostname => "--hostname",
             Self::Timezone => "--timezone",
             Self::Disk => "--target-disk",
-            Self::WebPort => "--web-port",
             Self::Frpc => "--frpc-config",
             Self::DnsServers => "--dns",
             Self::DnsSearch => "--dns-search",
@@ -107,7 +107,9 @@ impl Field {
                 "Hidden input. Leading/trailing spaces are preserved; both passwords must match."
             }
             Self::SshPort => "Use a port from 1 to 65535. SSH default: 22.",
-            Self::WebPort => "Use a port from 1 to 65535. Web-log default: 80.",
+            Self::RootSize => {
+                "Blank fills the remaining disk. Enter at least 512 MiB to leave unused space after root."
+            }
             Self::BootSize => {
                 "512-4096 MiB; blank uses 512. FAT32 mounted at /boot; generations must fit."
             }

@@ -139,10 +139,11 @@ pub fn inspect_inventory<R: CommandRunner>(
     if plan.hold != Some(1) {
         crate::shared::storage::validate_disk_geometry(runner, &manifest.disk.device, boot_mode)
             .map_err(|_| HandoffError::Invalid("unsupported disk geometry"))?;
-        crate::shared::storage::planned_partitions(
+        crate::shared::storage::planned_partition_sizes(
             boot_mode,
             manifest.disk.size_bytes,
             plan.system.boot_size_mib.unwrap_or(512),
+            plan.system.root_size_mib,
         )
         .map_err(|_| HandoffError::Invalid("disk too small for planned partitions"))?;
         crate::shared::network::validate_inventory_network_policy(plan, &manifest).map_err(
@@ -222,10 +223,11 @@ pub fn discover<R: CommandRunner>(
         )
     })?;
     if plan.hold != Some(1) {
-        crate::shared::storage::planned_partitions(
+        crate::shared::storage::planned_partition_sizes(
             boot_mode,
             identity.size_bytes,
             plan.system.boot_size_mib.unwrap_or(512),
+            plan.system.root_size_mib,
         )
         .map_err(|_| {
             HandoffError::Invalid("disk is too small for the planned FAT32 and root partitions")

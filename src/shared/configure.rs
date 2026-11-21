@@ -79,7 +79,7 @@ impl From<io::Error> for ConfigurationError {
 }
 
 /// Apply hostname and timezone data without running any host or target command.
-/// Kernel installation and Limine generation remain the target adapter's job.
+/// Kernel installation and rustaller-boot generation remain the target adapter's job.
 pub fn apply_basic_configuration(
     root: &Path,
     plan: &ValidatedLivePlan,

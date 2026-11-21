@@ -1,97 +1,57 @@
-//! Limine 9.6.5: authenticated native installer, FAT boot artifacts and Rust refresh hooks.
-use crate::command::{CommandInput, CommandRunner, CommandSpec, capture_checked, run_checked};
+//! Installation and maintenance of native Linux boot generations on UUID-bound FAT32.
+//! Both firmware paths consume the same versioned TOML and verified artifacts.
+use crate::command::{CommandInput, CommandRunner, CommandSpec, capture_checked};
 use crate::model::{BootMode, Target};
 use crate::shared::configure::{validate_planned_file, validate_root, write_config};
-use crate::shared::storage::{DiskLayout, PartitionRole};
+use crate::shared::storage::DiskLayout;
 use std::{
     fs,
     os::unix::fs::symlink,
     path::{Path, PathBuf},
 };
-type Result<T> = std::result::Result<T, String>;
-pub const VERSION: &str = "9.6.5";
-const COMMIT: &str = "81a11885edab8e59fdad2617b4ef6f35abe44e44";
-const FILES: &[(&str, &str)] = &[
-    (
-        "LICENSE",
-        "45a0d60afc1cdef1d531d788cd53680261cff75fc14e7d96f44dba68a2f56b8d",
-    ),
-    (
-        "limine.c",
-        "668eef8ff649d8d61978930b5dce5bf6bf4092dae8ca1a85d710fccf31d3b503",
-    ),
-    (
-        "limine-bios-hdd.h",
-        "7d983c34e595642fa3d0b2bf3c4c75cf5685bacc07cf6e91c9894e444d66b38e",
-    ),
-    (
-        "limine-bios.sys",
-        "8385e03cc2d14348a17667cf0bd97b6e8ca0a6dec991808b599feb67600491a4",
-    ),
-    (
-        "BOOTX64.EFI",
-        "bb2f1c0b3bfad90823d8d9b883a026fa685506d9c797b743ce55c162f78efd68",
-    ),
-];
-const WORKER: &str = "usr/local/libexec/rustaller-limine-worker";
+pub(super) type Result<T> = std::result::Result<T, String>;
+pub const VERSION: &str = "1";
+const BIOS_STATE: &str = "RUSTALLER-BOOT-1-BIOS";
+const NATIVE_EFI_STATE: &str = "RUSTALLER-BOOT-1-EFI";
+const BACKUP_CONFIG: &str = "rustaller/boot.toml.previous";
+const NATIVE_CONFIG: &str = "rustaller/boot.toml";
+const WORKER: &str = "usr/local/libexec/rustaller-boot-update";
 fn cmd(program: &str, args: impl IntoIterator<Item = impl AsRef<std::ffi::OsStr>>) -> CommandSpec {
     CommandSpec::new(program, args)
-        .phase("limine")
+        .phase("target-boot")
         .stdin(CommandInput::Null)
 }
-pub fn prepare(runner: &mut impl CommandRunner, work: &Path) -> Result<()> {
+/// Stage only artifacts embedded and checked by the release build. The Live
+/// system never needs a C toolchain or a network fetch to install a loader.
+pub fn prepare(mode: BootMode, work: &Path) -> Result<()> {
+    use crate::boot_artifacts as assets;
     validate_root(work).map_err(|e| e.to_string())?;
-    for (name, digest) in FILES {
-        let url =
-            format!("https://raw.githubusercontent.com/limine-bootloader/limine/{COMMIT}/{name}");
-        let bytes = capture_checked(
-            runner,
-            &cmd(
-                "curl",
-                [
-                    "--disable",
-                    "-fsSL",
-                    "--proto",
-                    "=https",
-                    "--proto-redir",
-                    "=https",
-                    "--max-time",
-                    "120",
-                    "--max-filesize",
-                    "4194304",
-                    &url,
-                ],
-            ),
-        )
-        .map_err(|e| e.to_string())?;
-        if bytes.is_empty() || bytes.len() > 4 * 1024 * 1024 {
-            return Err("invalid Limine resource size".into());
-        }
-        let hash = capture_checked(
-            runner,
-            &cmd("sha256sum", [] as [&str; 0]).stdin(CommandInput::Bytes(bytes.clone())),
-        )
-        .map_err(|e| e.to_string())?;
-        if String::from_utf8_lossy(&hash).split_whitespace().next() != Some(digest) {
-            return Err(format!("Limine digest mismatch: {name}"));
-        }
-        write_config::<crate::shared::configure::ConfigurationError>(
-            &work.join(name),
-            &bytes,
-            0o600,
-        )
-        .map_err(|e| e.to_string())?;
+    if !assets::UPDATE.starts_with(b"\x7fELF")
+        || !assets::UPDATE
+            .windows(crate::RUNTIME_VERSION.len())
+            .any(|v| v == crate::RUNTIME_VERSION.as_bytes())
+    {
+        return Err("matching release boot-update helper missing".into());
     }
-    run_checked(
-        runner,
-        &cmd(
-            "cc",
-            ["-static", "-O2", "-std=c99", "limine.c", "-o", "limine"],
-        )
-        .cwd(work),
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
+    match mode {
+        BootMode::Efi => {
+            let path = work.join("BOOTX64.EFI");
+            stage(&path, assets::UEFI, 0o600)?;
+            super::install::verify_efi_loader(&path).map_err(|e| e.to_string())
+        }
+        BootMode::Bios => {
+            super::bios::validate_stages(assets::BIOS_MBR, assets::BIOS_STAGE)?;
+            stage(&work.join("bios-mbr.bin"), assets::BIOS_MBR, 0o600)?;
+            stage(&work.join("bios-stage2.bin"), assets::BIOS_STAGE, 0o600)
+        }
+    }
+}
+fn stage(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
+    if bytes.is_empty() {
+        return Err("release boot artifact missing".into());
+    }
+    write_config::<crate::shared::configure::ConfigurationError>(path, bytes, mode)
+        .map_err(|e| e.to_string())
 }
 pub fn install(
     runner: &mut impl CommandRunner,
@@ -106,30 +66,21 @@ pub fn install(
         return Err("invalid root UUID".into());
     }
     verify_mount(runner, root, boot_uuid)?;
-    for (source, destination, mode) in [
-        ("limine-bios.sys", "boot/limine-bios.sys", 0o600),
-        ("BOOTX64.EFI", "boot/EFI/BOOT/BOOTX64.EFI", 0o600),
-        ("limine", "usr/local/libexec/limine", 0o755),
-        ("LICENSE", "usr/share/licenses/limine/LICENSE", 0o644),
-    ] {
-        let bytes = fs::read(work.join(source)).map_err(|e| e.to_string())?;
-        if destination.starts_with("boot/") {
-            fat_replace(&root.join(destination), &bytes)?;
-        } else {
-            write_config::<crate::shared::configure::ConfigurationError>(
-                &root.join(destination),
-                &bytes,
-                mode,
-            )
-            .map_err(|e| e.to_string())?;
+    let state_version = match layout.boot_mode() {
+        BootMode::Efi => {
+            fat_replace(
+                &root.join("boot/EFI/BOOT/BOOTX64.EFI"),
+                &fs::read(work.join("BOOTX64.EFI")).map_err(|e| e.to_string())?,
+            )?;
+            NATIVE_EFI_STATE
         }
-    }
-    if layout.boot_mode() == BootMode::Bios {
-        run_checked(runner, &bios_command(layout, &work.join("limine"))?)
-            .map_err(|e| e.to_string())?;
-    }
+        BootMode::Bios => {
+            super::bios::install(layout, work)?;
+            BIOS_STATE
+        }
+    };
     let state = format!(
-        "RUSTALLER-LIMINE-{VERSION}-BOOT-1\n{uuid}\n{}\n{boot_uuid}\n",
+        "{state_version}\n{uuid}\n{}\n{boot_uuid}\n",
         layout.root_filesystem().as_str()
     );
     write_config::<crate::shared::configure::ConfigurationError>(
@@ -138,21 +89,8 @@ pub fn install(
         0o600,
     )
     .map_err(|e| e.to_string())?;
-    let worker = fs::read("/rustaller-worker").map_err(|e| e.to_string())?;
-    install_hooks(root, layout.target(), &worker)?;
-    refresh(runner, root)
-}
-pub fn bios_command(layout: &DiskLayout, executable: &Path) -> Result<CommandSpec> {
-    if layout.boot_mode() != BootMode::Bios {
-        return Err("BIOS installer requires BIOS firmware".into());
-    }
-    let mut args = vec!["bios-install".to_owned(), layout.device()];
-    if let Some(number) = layout.role_number(PartitionRole::BiosBoot) {
-        args.push(number.to_string());
-    }
-    Ok(CommandSpec::new(executable, args)
-        .phase("limine-bios-install")
-        .stdin(CommandInput::Null))
+    install_hooks(root, layout.target(), crate::boot_artifacts::UPDATE)?;
+    refresh_inner(runner, root, true)
 }
 pub fn install_hooks(root: &Path, target: Target, worker: &[u8]) -> Result<()> {
     validate_root(root).map_err(|e| e.to_string())?;
@@ -164,19 +102,19 @@ pub fn install_hooks(root: &Path, target: Target, worker: &[u8]) -> Result<()> {
     }
     let links: &[&str] = match target {
         Target::Debian => &[
-            "etc/kernel/preinst.d/zz-rustaller-limine-check",
-            "etc/kernel/prerm.d/zz-rustaller-limine-check",
-            "etc/initramfs-tools/hooks/zz-rustaller-limine-check",
-            "etc/kernel/postinst.d/zz-rustaller-limine",
-            "etc/kernel/postrm.d/zz-rustaller-limine",
-            "etc/initramfs/post-update.d/zz-rustaller-limine",
+            "etc/kernel/preinst.d/zz-rustaller-boot-check",
+            "etc/kernel/prerm.d/zz-rustaller-boot-check",
+            "etc/initramfs-tools/hooks/zz-rustaller-boot-check",
+            "etc/kernel/postinst.d/zz-rustaller-boot",
+            "etc/kernel/postrm.d/zz-rustaller-boot",
+            "etc/initramfs/post-update.d/zz-rustaller-boot",
         ],
-        Target::Alpine => &["etc/apk/commit_hooks.d/zz-rustaller-limine"],
+        Target::Alpine => &["etc/apk/commit_hooks.d/zz-rustaller-boot"],
         Target::Gentoo => &[
-            "etc/kernel/preinst.d/zz-rustaller-limine-check",
-            "etc/kernel/postinst.d/zz-rustaller-limine",
+            "etc/kernel/preinst.d/zz-rustaller-boot-check",
+            "etc/kernel/postinst.d/zz-rustaller-boot",
         ],
-        Target::Arch => &["etc/initcpio/post/zz-rustaller-limine"],
+        Target::Arch => &["etc/initcpio/post/zz-rustaller-boot"],
         Target::Reset => return Err("installation target required".into()),
     };
     write_config::<crate::shared::configure::ConfigurationError>(&root.join(WORKER), worker, 0o755)
@@ -185,12 +123,12 @@ pub fn install_hooks(root: &Path, target: Target, worker: &[u8]) -> Result<()> {
         let path = root.join(name);
         validate_planned_file(&path).map_err(|e| e.to_string())?;
         crate::shared::configure::ensure_parent(&path).map_err(|e| e.to_string())?;
-        if *name == "etc/initramfs-tools/hooks/zz-rustaller-limine-check" {
+        if *name == "etc/initramfs-tools/hooks/zz-rustaller-boot-check" {
             // initramfs-tools runs `sh -n` before accepting hooks. An ELF
             // symlink is rejected as shell syntax and silently skipped.
             write_config::<crate::shared::configure::ConfigurationError>(
                 &path,
-                b"#!/bin/sh\ncase \"${1:-}\" in prereqs) exit 0 ;; esac\nexec /usr/local/libexec/rustaller-limine-worker limine-check\n",
+                b"#!/bin/sh\ncase \"${1:-}\" in prereqs) exit 0 ;; esac\nexec /usr/local/libexec/rustaller-boot-update check\n",
                 0o755,
             ).map_err(|e| e.to_string())?;
         } else {
@@ -199,15 +137,15 @@ pub fn install_hooks(root: &Path, target: Target, worker: &[u8]) -> Result<()> {
     }
     install_generator_guards(root, target)?;
     if target == Target::Arch {
-        write_config::<crate::shared::configure::ConfigurationError>(&root.join("etc/pacman.d/hooks/00-rustaller-boot-mount.hook"), b"[Trigger]\nOperation=Install\nOperation=Upgrade\nOperation=Remove\nType=Path\nTarget=boot/*\nTarget=usr/lib/modules/*\n[Action]\nDescription=Verify Rustaller FAT32 boot mount\nWhen=PreTransaction\nExec=/usr/local/libexec/rustaller-limine-worker limine-check\nAbortOnFail\n", 0o644).map_err(|e|e.to_string())?;
-        write_config::<crate::shared::configure::ConfigurationError>(&root.join("etc/pacman.d/hooks/zz-rustaller-limine.hook"),b"[Trigger]\nOperation=Install\nOperation=Upgrade\nOperation=Remove\nType=Path\nTarget=boot/*\nTarget=usr/lib/modules/*/pkgbase\nTarget=usr/lib/initcpio/*\n[Action]\nDescription=Refresh Limine Linux boot artifacts\nWhen=PostTransaction\nExec=/usr/local/libexec/rustaller-limine-worker limine-refresh\n",0o644).map_err(|e|e.to_string())?;
+        write_config::<crate::shared::configure::ConfigurationError>(&root.join("etc/pacman.d/hooks/00-rustaller-boot-mount.hook"), b"[Trigger]\nOperation=Install\nOperation=Upgrade\nOperation=Remove\nType=Path\nTarget=boot/*\nTarget=usr/lib/modules/*\n[Action]\nDescription=Verify Rustaller FAT32 boot mount\nWhen=PreTransaction\nExec=/usr/local/libexec/rustaller-boot-update check\nAbortOnFail\n", 0o644).map_err(|e|e.to_string())?;
+        write_config::<crate::shared::configure::ConfigurationError>(&root.join("etc/pacman.d/hooks/zz-rustaller-boot.hook"),b"[Trigger]\nOperation=Install\nOperation=Upgrade\nOperation=Remove\nType=Path\nTarget=boot/*\nTarget=usr/lib/modules/*/pkgbase\nTarget=usr/lib/initcpio/*\n[Action]\nDescription=Refresh Linux boot generations\nWhen=PostTransaction\nExec=/usr/local/libexec/rustaller-boot-update refresh\n",0o644).map_err(|e|e.to_string())?;
     }
     Ok(())
 }
 /// Native generators source these configuration files before touching output.
 /// Keep the distribution configuration and add only a bounded managed block.
 fn install_generator_guards(root: &Path, target: Target) -> Result<()> {
-    const CHECK: &str = "/usr/local/libexec/rustaller-limine-worker limine-check || exit 1\n";
+    const CHECK: &str = "/usr/local/libexec/rustaller-boot-update check || exit 1\n";
     let (relative, mut guard) = match target {
         Target::Arch => ("etc/mkinitcpio.conf", CHECK.to_owned()),
         // Build-only package configuration is sourced before output is touched.
@@ -224,7 +162,7 @@ fn install_generator_guards(root: &Path, target: Target) -> Result<()> {
         Target::Alpine => (
             "etc/mkinitfs/mkinitfs.conf",
             format!(
-                "{CHECK}if [ -z \"${{list_features:-}}${{list_sources:-}}${{DEBUG_KMOD:-}}\" ]; then\n trap 'rustaller_status=$?; if [ \"$rustaller_status\" -eq 0 ]; then /usr/local/libexec/rustaller-limine-worker limine-refresh || exit 1; fi; exit \"$rustaller_status\"' EXIT\nfi\n"
+                "{CHECK}if [ -z \"${{list_features:-}}${{list_sources:-}}${{DEBUG_KMOD:-}}\" ]; then\n trap 'rustaller_status=$?; if [ \"$rustaller_status\" -eq 0 ]; then /usr/local/libexec/rustaller-boot-update refresh || exit 1; fi; exit \"$rustaller_status\"' EXIT\nfi\n"
             ),
         ),
         _ => return Ok(()),
@@ -261,7 +199,7 @@ fn install_generator_guards(root: &Path, target: Target) -> Result<()> {
         write_config::<crate::shared::configure::ConfigurationError>(
             &root.join("usr/local/sbin/dracut"),
             br#"#!/bin/sh
-/usr/local/libexec/rustaller-limine-worker limine-check || exit 1
+/usr/local/libexec/rustaller-boot-update check || exit 1
 rustaller_refresh=yes
 for rustaller_arg in "$@"; do
  case "$rustaller_arg" in
@@ -273,7 +211,7 @@ done
 rustaller_status=$?
 [ "$rustaller_status" -eq 0 ] || exit "$rustaller_status"
 if [ "$rustaller_refresh" = yes ]; then
- exec /usr/local/libexec/rustaller-limine-worker limine-refresh
+ exec /usr/local/libexec/rustaller-boot-update refresh
 fi
 exit 0
 "#,
@@ -289,49 +227,10 @@ pub fn hook_action(args: &[String]) -> bool {
 fn regular(root: &Path, path: &Path) -> Result<Vec<u8>> {
     let (resolved, size) = checked_source(root, path)?;
     if size > 4 * 1024 * 1024 {
-        return Err("oversized Limine metadata or firmware payload".into());
+        return Err("oversized boot metadata".into());
     }
     fs::read(resolved).map_err(|e| e.to_string())
 }
-pub fn render(uuid: &str, fs: &str, entries: &[(String, String, String)]) -> Result<String> {
-    render_with_microcode(uuid, fs, entries, &[])
-}
-fn render_with_microcode(
-    uuid: &str,
-    fs: &str,
-    entries: &[(String, String, String)],
-    microcode: &[String],
-) -> Result<String> {
-    if !crate::shared::storage::valid_uuid(uuid)
-        || !matches!(fs, "xfs" | "ext4" | "btrfs")
-        || entries.is_empty()
-    {
-        return Err("invalid Limine boot plan".into());
-    }
-    let flags = if fs == "btrfs" {
-        " rootflags=subvol=@"
-    } else {
-        ""
-    };
-    let mut text = "timeout: 3\nserial: yes\nserial_baudrate: 115200\n".to_owned();
-    for (name, kernel, initrd) in entries {
-        if name.contains('/') || [name, kernel, initrd].iter().any(|s| !safe_boot_path(s)) {
-            return Err("unsafe Limine entry path".into());
-        }
-        text.push_str(&format!(
-            "/{name}\n protocol: linux\n path: boot():/{kernel}\n"
-        ));
-        for module in microcode {
-            if !safe_boot_path(module) {
-                return Err("unsafe microcode path".into());
-            }
-            text.push_str(&format!(" module_path: boot():/{module}\n"));
-        }
-        text.push_str(&format!(" module_path: boot():/{initrd}\n cmdline: root=UUID={uuid} rootfstype={fs}{flags} rw {}\n",super::install::TTY_COMMAND_LINE));
-    }
-    Ok(text)
-}
-/// Numeric runs avoid booting 6.9 ahead of an installed 6.10 after an update.
 fn kernel_order(a: &str, b: &str) -> std::cmp::Ordering {
     let (mut a, mut b) = (a.as_bytes(), b.as_bytes());
     while !a.is_empty() && !b.is_empty() {
@@ -379,14 +278,14 @@ pub fn verify_mount(runner: &mut impl CommandRunner, root: &Path, boot_uuid: &st
         return Err("invalid FAT UUID".into());
     }
     let boot = root.join("boot");
-    validate_planned_file(&boot.join("limine.conf")).map_err(|e| e.to_string())?;
+    validate_planned_file(&boot.join(".rustaller-mount-check")).map_err(|e| e.to_string())?;
     let mount = capture_checked(
         runner,
         &cmd(
             "findmnt",
             [
                 "-nro",
-                "FSTYPE,TARGET,UUID",
+                "FSTYPE,TARGET,UUID,FSROOT,SOURCE",
                 "--mountpoint",
                 boot.to_str().ok_or("invalid boot root")?,
             ],
@@ -400,51 +299,100 @@ pub fn verify_mount(runner: &mut impl CommandRunner, root: &Path, boot_uuid: &st
         || !words
             .next()
             .is_some_and(|v| v.eq_ignore_ascii_case(boot_uuid))
-        || words.next().is_some()
+        || words.next() != Some("/")
     {
         return Err("FAT32 /boot must be mounted with its recorded UUID before boot writes".into());
+    }
+    let source = words.next().ok_or("missing FAT device")?;
+    if words.next().is_some()
+        || !source.strip_prefix("/dev/").is_some_and(|n| {
+            !n.is_empty()
+                && n.bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+        })
+    {
+        return Err("invalid FAT partition source".into());
+    }
+    // Linux exposes FAT12/16/32 under the same vfat mount type. Read the
+    // partition boot sector without opening it for writes or following a label.
+    let sector = capture_checked(
+        runner,
+        &cmd(
+            "dd",
+            [format!("if={source}"), "bs=512".into(), "count=1".into()],
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+    if sector.len() != 512
+        || sector[510..] != [0x55, 0xaa]
+        || sector[17..19] != [0, 0]
+        || sector[22..24] != [0, 0]
+        || sector[36..40] == [0; 4]
+        || u32::from_le_bytes(sector[44..48].try_into().unwrap()) < 2
+    {
+        return Err("mounted /boot partition has no FAT32 boot record".into());
+    }
+    let serial = u32::from_le_bytes(sector[67..71].try_into().unwrap());
+    if !format!("{:04X}-{:04X}", serial >> 16, serial & 0xffff).eq_ignore_ascii_case(boot_uuid) {
+        return Err("FAT32 boot record does not match recorded UUID".into());
     }
     Ok(())
 }
 
-/// Package pre-transaction and initramfs hooks use the same recorded identity.
-pub fn check(runner: &mut impl CommandRunner, root: &Path) -> Result<()> {
-    let state = regular(root, &root.join("etc/rustaller/boot-state"))?;
-    let text = std::str::from_utf8(&state).map_err(|_| "invalid boot state")?;
+struct BootState {
+    firmware: BootMode,
+    uuid: String,
+    filesystem: String,
+    boot_uuid: String,
+}
+
+fn read_state(root: &Path) -> Result<BootState> {
+    let bytes = regular(root, &root.join("etc/rustaller/boot-state"))?;
+    let text = std::str::from_utf8(&bytes).map_err(|_| "invalid boot state")?;
     let lines: Vec<_> = text.lines().collect();
     if lines.len() != 4
-        || lines[0] != format!("RUSTALLER-LIMINE-{VERSION}-BOOT-1")
         || !crate::shared::storage::valid_uuid(lines[1])
         || !matches!(lines[2], "xfs" | "ext4" | "btrfs")
+        || !crate::shared::storage::valid_uuid(lines[3])
     {
-        return Err("unsupported boot state (requires FAT32 /boot schema)".into());
-    }
-    verify_mount(runner, root, lines[3])
-}
-pub fn refresh(runner: &mut impl CommandRunner, root: &Path) -> Result<()> {
-    let state = regular(root, &root.join("etc/rustaller/boot-state"))?;
-    let text = std::str::from_utf8(&state).map_err(|_| "invalid boot state")?;
-    let mut lines = text.lines();
-    if lines.next() != Some(&format!("RUSTALLER-LIMINE-{VERSION}-BOOT-1")) {
-        return Err("unsupported boot state (requires FAT32 /boot schema)".into());
-    }
-    let uuid = lines.next().ok_or("missing root UUID")?;
-    let filesystem = lines.next().ok_or("missing root filesystem")?;
-    let boot_uuid = lines
-        .next()
-        .filter(|v| crate::shared::storage::valid_uuid(v))
-        .ok_or("missing or invalid FAT UUID")?;
-    if lines.next().is_some() {
         return Err("invalid boot state".into());
     }
-    verify_mount(runner, root, boot_uuid)?;
-    verify_loaders(root)?;
-    // flock is held on the Linux root, never on FAT (which lacks Unix locks).
+    let firmware = match lines[0] {
+        NATIVE_EFI_STATE => BootMode::Efi,
+        BIOS_STATE => BootMode::Bios,
+        _ => {
+            return Err(
+                "unsupported boot state; existing installations require their matching helper"
+                    .into(),
+            );
+        }
+    };
+    Ok(BootState {
+        firmware,
+        uuid: lines[1].into(),
+        filesystem: lines[2].into(),
+        boot_uuid: lines[3].into(),
+    })
+}
+
+/// Package pre-transaction and initramfs hooks use the same recorded identity.
+pub fn check(runner: &mut impl CommandRunner, root: &Path) -> Result<()> {
+    verify_mount(runner, root, &read_state(root)?.boot_uuid)
+}
+pub fn refresh(runner: &mut impl CommandRunner, root: &Path) -> Result<()> {
+    refresh_inner(runner, root, false)
+}
+fn refresh_inner(runner: &mut impl CommandRunner, root: &Path, installing: bool) -> Result<()> {
+    let state = read_state(root)?;
+    verify_mount(runner, root, &state.boot_uuid)?;
+    verify_loaders(root, state.firmware)?;
     let _lock = refresh_lock(root)?;
     let boot = root.join("boot");
-    recover_configuration(&boot)?;
+    let active_toml = native_active(&boot, installing, state.firmware)?;
     cleanup_temporaries(&boot)?;
-    let previous = primary_configuration(&boot)?;
+    if boot.join("rustaller").is_dir() {
+        cleanup_temporaries(&boot.join("rustaller"))?;
+    }
     let mut kernels: Vec<_> = fs::read_dir(&boot)
         .map_err(|e| e.to_string())?
         .collect::<std::io::Result<Vec<_>>>()
@@ -487,20 +435,12 @@ pub fn refresh(runner: &mut impl CommandRunner, root: &Path) -> Result<()> {
     if pairs.is_empty() || pairs.len() > 8 {
         return Err("require 1-8 complete kernel/initramfs pairs".into());
     }
-    render(
-        uuid,
-        filesystem,
-        &pairs
-            .iter()
-            .map(|(n, _, _)| {
-                (
-                    n.clone(),
-                    "generation/kernel".into(),
-                    "generation/initrd".into(),
-                )
-            })
-            .collect::<Vec<_>>(),
-    )?;
+    for (name, kernel, _) in &pairs {
+        if !safe_boot_path(name) || name.contains('/') {
+            return Err("unsafe kernel release name".into());
+        }
+        verify_kernel(&kernel.0, state.firmware)?;
+    }
     let mut microcode = Vec::new();
     for name in ["intel-ucode.img", "amd-ucode.img"] {
         let path = boot.join(name);
@@ -514,7 +454,13 @@ pub fn refresh(runner: &mut impl CommandRunner, root: &Path) -> Result<()> {
     // directories, even though both sources and destinations now live on FAT.
     let needed = pairs.iter().map(|(_, k, i)| k.1 + i.1).sum::<u64>()
         + microcode.iter().map(|(_, n)| n).sum::<u64>();
-    prune_old_generations(root)?;
+    prune_old_generations(root, state.firmware)?;
+    if boot.join(NATIVE_CONFIG).is_file()
+        && let Some(active) = &active_toml
+        && unchanged(&boot, active, &pairs, &microcode)?
+    {
+        return Ok(());
+    }
     let capacity = capture_checked(runner, &cmd("df", ["-Pk", boot.to_str().unwrap()]))
         .map_err(|e| e.to_string())?;
     let available = String::from_utf8_lossy(&capacity)
@@ -551,118 +497,198 @@ pub fn refresh(runner: &mut impl CommandRunner, root: &Path) -> Result<()> {
         copy_generation(&initrd.0, &boot.join(&init), initrd.1)?;
         entries.push((version, k, init));
     }
-    let current = render_with_microcode(uuid, filesystem, &entries, &modules)?;
-    // Self-contained generation metadata permits recovery without guessing
-    // which stale native file belongs to which installed kernel.
-    fat_replace(
-        &boot.join(&generation).join("limine.conf"),
-        current.as_bytes(),
-    )?;
-    let mut combined = current;
-    if let Some(previous) = previous {
-        validate_configuration(&boot, &previous)?;
-        fat_replace(&boot.join("limine.conf.previous"), previous.as_bytes())?;
-        for line in previous.lines() {
-            if let Some(name) = line.strip_prefix('/') {
-                combined.push_str(&format!("/Previous-{name}\n"));
-            } else if line.starts_with(' ') {
-                combined.push_str(line);
-                combined.push('\n');
-            }
-        }
-    }
-    validate_configuration(&boot, &combined)?;
-    // FAT rename/fsync has weaker power-loss guarantees than journaled Linux
-    // filesystems. Keep the independent previous config and payloads on disk.
-    fat_replace(&boot.join("limine.conf"), combined.as_bytes())?;
+    publish_toml(&boot, &state, active_toml.as_deref(), &entries, &modules)?;
     verify(root)?;
-    prune_old_generations(root)
+    prune_old_generations(root, state.firmware)
 }
 
 pub fn verify(root: &Path) -> Result<()> {
-    let config = regular(root, &root.join("boot/limine.conf"))?;
-    validate_configuration(
-        &root.join("boot"),
-        std::str::from_utf8(&config).map_err(|_| "invalid Limine configuration")?,
-    )?;
-    verify_loaders(root)
+    let state = read_state(root)?;
+    let boot = root.join("boot");
+    let text = config_text(&boot, NATIVE_CONFIG)?.ok_or("active boot.toml missing")?;
+    validate_toml(&boot, &text, state.firmware)?;
+    verify_loaders(root, state.firmware)
 }
-fn validate_configuration(boot: &Path, text: &str) -> Result<()> {
-    if !text.starts_with("timeout: 3\nserial: yes\n") || !text.contains("protocol: linux") {
-        return Err("invalid Limine configuration".into());
+fn config_text(boot: &Path, name: &str) -> Result<Option<String>> {
+    let path = boot.join(name);
+    validate_planned_file(&path).map_err(|e| e.to_string())?;
+    match fs::metadata(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.to_string()),
+        Ok(m) if m.len() <= rustaller_boot_core::MAX_CONFIG_BYTES as u64 => {
+            fs::read_to_string(path)
+                .map(Some)
+                .map_err(|e| e.to_string())
+        }
+        Ok(_) => Err("boot configuration exceeds 32 KiB".into()),
     }
-    let mut kernels = 0usize;
-    let mut initrds = 0usize;
-    for line in text.lines() {
-        if let Some(path) = line
-            .trim()
-            .strip_prefix("path: boot():/")
-            .or_else(|| line.trim().strip_prefix("module_path: boot():/"))
+}
+
+fn validate_toml(boot: &Path, text: &str, mode: BootMode) -> Result<rustaller_boot_core::Config> {
+    let cfg = rustaller_boot_core::Config::parse(text).map_err(|e| e.to_string())?;
+    for entry in &cfg.entries {
+        for path in std::iter::once(&entry.kernel).chain(&entry.initrds) {
+            checked_source(boot, &boot.join(&path[1..]))?;
+        }
+        verify_kernel(&boot.join(&entry.kernel[1..]), mode)?;
+    }
+    Ok(cfg)
+}
+
+fn native_active(boot: &Path, installing: bool, mode: BootMode) -> Result<Option<String>> {
+    if let Some(active) = config_text(boot, NATIVE_CONFIG)? {
+        validate_toml(boot, &active, mode)?;
+        return Ok(Some(active));
+    }
+    if let Some(previous) = config_text(boot, BACKUP_CONFIG)? {
+        validate_toml(boot, &previous, mode)?;
+        return Ok(Some(previous));
+    }
+    if installing {
+        return Ok(None);
+    }
+    Err("boot.toml and its recovery copy are missing".into())
+}
+
+type Source = (PathBuf, u64);
+type KernelPair = (String, Source, Source);
+
+fn equal_source(source: &Source, saved: &Path) -> Result<bool> {
+    use std::io::Read;
+    let mut a = fs::File::open(&source.0).map_err(|e| e.to_string())?;
+    let mut b = fs::File::open(saved).map_err(|e| e.to_string())?;
+    if b.metadata().map_err(|e| e.to_string())?.len() != source.1 {
+        return Ok(false);
+    }
+    let mut x = [0u8; 65536];
+    let mut y = [0u8; 65536];
+    loop {
+        let n = a.read(&mut x).map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Ok(b.read(&mut y[..1]).map_err(|e| e.to_string())? == 0);
+        }
+        b.read_exact(&mut y[..n]).map_err(|e| e.to_string())?;
+        if x[..n] != y[..n] {
+            return Ok(false);
+        }
+    }
+}
+fn entry_name(index: usize) -> String {
+    if index == 0 {
+        "current".into()
+    } else {
+        format!("current-{}", index + 1)
+    }
+}
+fn unchanged(boot: &Path, text: &str, pairs: &[KernelPair], microcode: &[Source]) -> Result<bool> {
+    let cfg = rustaller_boot_core::Config::parse(text).map_err(|e| e.to_string())?;
+    if pairs.len()
+        != cfg
+            .entries
+            .iter()
+            .filter(|e| e.name.starts_with("current"))
+            .count()
+    {
+        return Ok(false);
+    }
+    for (i, (version, kernel, initrd)) in pairs.iter().enumerate() {
+        let Some(entry) = cfg.entry(&entry_name(i)) else {
+            return Ok(false);
+        };
+        if entry.version.as_deref() != Some(version)
+            || entry.initrds.len() != microcode.len() + 1
+            || !equal_source(kernel, &boot.join(&entry.kernel[1..]))?
         {
-            if !safe_boot_path(path) {
-                return Err("unsafe published boot path".into());
-            }
-            checked_source(boot, &boot.join(path))?;
-            if line.trim().starts_with("path:") {
-                kernels += 1;
-            }
-            if path
-                .rsplit('/')
-                .next()
-                .is_some_and(|v| v.starts_with("initrd-"))
-            {
-                initrds += 1;
+            return Ok(false);
+        }
+        for (src, path) in microcode
+            .iter()
+            .chain(std::iter::once(initrd))
+            .zip(&entry.initrds)
+        {
+            if !equal_source(src, &boot.join(&path[1..]))? {
+                return Ok(false);
             }
         }
     }
-    if kernels == 0 || kernels != initrds {
-        return Err("incomplete published kernel/initramfs pairs".into());
-    }
-    Ok(())
+    Ok(true)
 }
-fn primary_configuration(boot: &Path) -> Result<Option<String>> {
-    let path = boot.join("limine.conf");
-    let text = match fs::read_to_string(&path) {
-        Ok(v) => v,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(e.to_string()),
+
+fn publish_toml(
+    boot: &Path,
+    state: &BootState,
+    active: Option<&str>,
+    pairs: &[(String, String, String)],
+    modules: &[String],
+) -> Result<()> {
+    use rustaller_boot_core::{Entry, create, replace_entries};
+    let mut entries: Vec<_> = pairs
+        .iter()
+        .enumerate()
+        .map(|(i, (version, k, rd))| Entry {
+            name: entry_name(i),
+            version: Some(version.clone()),
+            kernel: format!("/{k}"),
+            initrds: modules
+                .iter()
+                .chain(std::iter::once(rd))
+                .map(|p| format!("/{p}"))
+                .collect(),
+        })
+        .collect();
+    let text = if let Some(old) = active {
+        let cfg = validate_toml(boot, old, state.firmware)?;
+        let current: Vec<_> = cfg
+            .entries
+            .into_iter()
+            .filter(|e| e.name.starts_with("current"))
+            .collect();
+        let previous: Vec<_> = current
+            .iter()
+            .cloned()
+            .map(|mut e| {
+                e.name = e.name.replacen("current", "previous", 1);
+                e
+            })
+            .collect();
+        entries.extend(previous.iter().cloned());
+        let text = replace_entries(old, &entries).map_err(|e| e.to_string())?;
+        validate_toml(boot, &text, state.firmware)?;
+        // Both names in this recovery document refer to the same intact older
+        // generation. This also preserves a user's explicit default="previous".
+        let recovery: Vec<_> = current.into_iter().chain(previous).collect();
+        let backup = replace_entries(old, &recovery).map_err(|e| e.to_string())?;
+        fat_replace(&boot.join(BACKUP_CONFIG), backup.as_bytes())?;
+        text
+    } else {
+        create(&format!("UUID={}", state.uuid), &state.filesystem, &entries)
+            .map_err(|e| e.to_string())?
     };
-    validate_configuration(boot, &text)?;
-    let generation = text
-        .lines()
-        .find_map(|l| l.trim().strip_prefix("path: boot():/"))
-        .and_then(|p| p.split('/').next())
-        .ok_or("missing generation")?;
-    if !managed_generation(generation) {
-        return Err("unmanaged boot configuration".into());
-    }
-    let bytes = regular(boot, &boot.join(generation).join("limine.conf"))?;
-    let previous = String::from_utf8(bytes).map_err(|_| "invalid generation metadata")?;
-    validate_configuration(boot, &previous)?;
-    Ok(Some(previous))
+    validate_toml(boot, &text, state.firmware)?;
+    sync_directory(boot)?;
+    fat_replace(&boot.join(NATIVE_CONFIG), text.as_bytes())
 }
-fn recover_configuration(boot: &Path) -> Result<()> {
-    let active = boot.join("limine.conf");
-    validate_planned_file(&active).map_err(|e| e.to_string())?;
-    if let Ok(text) = fs::read_to_string(&active) {
-        if validate_configuration(boot, &text).is_ok() {
-            return Ok(());
-        }
-    } else if !active.exists() && !boot.join("limine.conf.previous").exists() {
-        return Ok(());
+
+fn verify_loaders(root: &Path, mode: BootMode) -> Result<()> {
+    match mode {
+        BootMode::Bios => Ok(()), // Raw stages are read back from disk during installation.
+        BootMode::Efi => super::install::verify_efi_loader(&root.join("boot/EFI/BOOT/BOOTX64.EFI"))
+            .map_err(|e| e.to_string()),
     }
-    let previous = regular(boot, &boot.join("limine.conf.previous"))?;
-    let text = std::str::from_utf8(&previous).map_err(|_| "invalid previous configuration")?;
-    validate_configuration(boot, text)?;
-    fat_replace(&active, &previous)
 }
-fn verify_loaders(root: &Path) -> Result<()> {
-    regular(root, &root.join("boot/limine-bios.sys"))?;
-    let efi = regular(root, &root.join("boot/EFI/BOOT/BOOTX64.EFI"))?;
-    super::install::verify_efi_loader(&root.join("boot/EFI/BOOT/BOOTX64.EFI"))
-        .map_err(|e| e.to_string())?;
-    if !efi.starts_with(b"MZ") {
-        return Err("invalid Limine EFI image".into());
+/// Linux EFI stub images are EFI applications that also carry the x86 Linux
+/// setup header. A random PE executable is not a bootable Linux generation.
+fn verify_kernel(path: &Path, mode: BootMode) -> Result<()> {
+    use std::io::Read;
+    let mut header = [0u8; 4096];
+    fs::File::open(path)
+        .and_then(|mut f| f.read_exact(&mut header))
+        .map_err(|_| "truncated Linux EFI stub")?;
+    if !rustaller_boot_core::valid_bzimage(&header) {
+        return Err("kernel is not a supported relocatable x86-64 bzImage".into());
+    }
+    if mode == BootMode::Efi && !rustaller_boot_core::valid_efi_stub(&header) {
+        return Err("kernel lacks x86-64 Linux EFI stub with LoadFile2 support".into());
     }
     Ok(())
 }
@@ -702,8 +728,16 @@ fn sync_directory(path: &Path) -> Result<()> {
         .and_then(|v| v.sync_all())
         .map_err(|e| e.to_string())
 }
-fn refresh_lock(root: &Path) -> Result<fs::File> {
-    use std::os::{fd::AsRawFd, unix::fs::OpenOptionsExt};
+struct RefreshLock(fs::File);
+impl Drop for RefreshLock {
+    fn drop(&mut self) {
+        // Release explicitly. A concurrent fork can briefly inherit the open
+        // file description before exec closes its CLOEXEC descriptors.
+        let _ = self.0.unlock();
+    }
+}
+fn refresh_lock(root: &Path) -> Result<RefreshLock> {
+    use std::os::unix::fs::OpenOptionsExt;
     let path = root.join("etc/rustaller/boot-refresh.lock");
     validate_planned_file(&path).map_err(|e| e.to_string())?;
     let file = fs::OpenOptions::new()
@@ -714,14 +748,11 @@ fn refresh_lock(root: &Path) -> Result<fs::File> {
         .mode(0o600)
         .open(path)
         .map_err(|e| e.to_string())?;
-    // SAFETY: valid open descriptor, LOCK_EX|LOCK_NB, no borrowed pointer.
-    if unsafe { flock(file.as_raw_fd(), 2 | 4) } != 0 {
-        return Err("another boot refresh is running".into());
-    }
-    Ok(file)
-}
-unsafe extern "C" {
-    fn flock(fd: std::ffi::c_int, operation: std::ffi::c_int) -> std::ffi::c_int;
+    file.try_lock().map_err(|e| match e {
+        std::fs::TryLockError::WouldBlock => "another boot refresh is running".into(),
+        std::fs::TryLockError::Error(e) => format!("cannot lock boot generation: {e}"),
+    })?;
+    Ok(RefreshLock(file))
 }
 fn checked_source(root: &Path, path: &Path) -> Result<(PathBuf, u64)> {
     let path = fs::canonicalize(path).map_err(|e| e.to_string())?;
@@ -820,22 +851,26 @@ fn managed_generation(name: &str) -> bool {
                 && pid.bytes().chain(time.bytes()).all(|v| v.is_ascii_digit())
         })
 }
-fn prune_old_generations(root: &Path) -> Result<()> {
+fn prune_old_generations(root: &Path, mode: BootMode) -> Result<()> {
     let boot = root.join("boot");
-    let mut current = match fs::read_to_string(boot.join("limine.conf")) {
-        Ok(v) => v,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(e.to_string()),
-    };
-    if let Ok(previous) = fs::read_to_string(boot.join("limine.conf.previous")) {
-        validate_configuration(&boot, &previous)?;
-        current.push_str(&previous);
+    let mut retained = std::collections::BTreeSet::new();
+    for path in [NATIVE_CONFIG, BACKUP_CONFIG] {
+        if let Some(text) = config_text(&boot, path)? {
+            let cfg = validate_toml(&boot, &text, mode)?;
+            for entry in cfg.entries {
+                for path in std::iter::once(entry.kernel).chain(entry.initrds) {
+                    if let Some(name) = path[1..].split('/').next() {
+                        retained.insert(name.to_owned());
+                    }
+                }
+            }
+        }
     }
     for entry in fs::read_dir(&boot).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if !managed_generation(&name) || current.contains(&format!("boot():/{name}/")) {
+        if !managed_generation(&name) || retained.contains(name.as_ref()) {
             continue;
         }
         if !entry.file_type().map_err(|e| e.to_string())?.is_dir() {
@@ -848,8 +883,7 @@ fn prune_old_generations(root: &Path) -> Result<()> {
         for file in &files {
             let n = file.file_name();
             let n = n.to_string_lossy();
-            if n != "limine.conf"
-                && !managed_temporary(&n)
+            if !managed_temporary(&n)
                 && !["kernel-", "initrd-", "microcode-"].iter().any(|p| {
                     n.strip_prefix(p)
                         .is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))

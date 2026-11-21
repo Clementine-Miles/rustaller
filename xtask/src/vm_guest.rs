@@ -65,14 +65,14 @@ fn run() -> Result<(), String> {
     if target == "debian" {
         // Native initramfs-tools silently skips hooks that fail this check.
         for path in [
-            "/etc/initramfs-tools/hooks/zz-rustaller-limine-check",
+            "/etc/initramfs-tools/hooks/zz-rustaller-boot-check",
             "/usr/share/initramfs-tools/conf-hooks.d/00-rustaller-mount",
         ] {
             run_capture("sh", &["-n", path], &transport)?;
         }
         if fs::read_to_string("/etc/initramfs-tools/initramfs.conf")
             .map_err(|e| e.to_string())?
-            .contains("rustaller-limine-worker")
+            .contains("rustaller-boot-update")
         {
             return Err(
                 "build-only mount guard leaked into runtime initramfs configuration".into(),
@@ -89,7 +89,10 @@ fn run() -> Result<(), String> {
     let fstab = fs::read_to_string("/etc/fstab").map_err(|e| e.to_string())?;
     // Read-only post-boot diagnostics; activation belongs to native init.
     println!("{}", run_capture("free", &["-h"], &transport)?);
-    println!("{}", run_capture("swapon", &["--show"], &transport)?);
+    println!(
+        "{}",
+        fs::read_to_string("/proc/swaps").map_err(|e| e.to_string())?
+    );
     println!("{fstab}");
     if !fstab
         .lines()
@@ -160,10 +163,10 @@ fn run() -> Result<(), String> {
     }) {
         return Err("fstab does not bind FAT32 /boot to expected UUID".into());
     }
-    let limine = fs::read_to_string("/boot/limine.conf").map_err(|e| e.to_string())?;
-    verify_limine(&limine, filesystem)?;
-    if !Path::new("/usr/local/libexec/rustaller-limine-worker").is_file() {
-        return Err("Limine refresh worker absent".into());
+    let config = fs::read_to_string(config_path()).map_err(|e| e.to_string())?;
+    verify_boot(&config, filesystem)?;
+    if !Path::new("/usr/local/libexec/rustaller-boot-update").is_file() {
+        return Err("boot-update helper absent".into());
     }
     let route = run_capture("ip", &["-4", "route", "show", "default"], &transport)?;
     if route.trim().is_empty() {
@@ -184,6 +187,13 @@ fn run() -> Result<(), String> {
         return Err("target DNS lookup returned no address".into());
     }
     let cmdline = fs::read_to_string("/proc/cmdline").map_err(|e| e.to_string())?;
+    if config.contains("rustaller_vm=preserved")
+        && !cmdline
+            .split_whitespace()
+            .any(|s| s == "rustaller_vm=preserved")
+    {
+        return Err("guest boot lost user kernel argument".into());
+    }
     if ["password=", "http_proxy=", "https_proxy=", "transport.env"]
         .iter()
         .any(|value| cmdline.to_ascii_lowercase().contains(value))
@@ -228,41 +238,26 @@ fn run() -> Result<(), String> {
     println!("RUSTALLER_VM_ACCEPTANCE_PASS target={target} firmware={firmware}");
     Ok(())
 }
-fn verify_limine(limine: &str, filesystem: &str) -> Result<(), String> {
-    if !limine.contains("protocol: linux")
-        || !limine.contains("root=UUID=")
-        || !limine.contains("console=ttyS0")
-        || (filesystem == "btrfs" && !limine.contains("rootflags=subvol=@"))
+fn config_path() -> &'static str {
+    "/boot/rustaller/boot.toml"
+}
+fn verify_boot(text: &str, filesystem: &str) -> Result<(), String> {
+    if !text.contains("[entries.current]")
+        || (!filesystem.is_empty() && !text.contains(&format!("rootfstype = \"{filesystem}\"")))
     {
-        return Err("Limine configuration is incomplete".into());
+        return Err("native kernel configuration absent or incompatible".into());
     }
-    let mut payloads = 0;
-    for path in limine.lines().filter_map(|line| {
-        line.trim()
-            .strip_prefix("path: boot():/")
-            .or_else(|| line.trim().strip_prefix("module_path: boot():/"))
-    }) {
-        if path.is_empty()
-            || Path::new(path)
-                .components()
-                .any(|c| !matches!(c, std::path::Component::Normal(_)))
-        {
-            return Err("unsafe Limine payload path".into());
-        }
-        let metadata =
-            fs::symlink_metadata(Path::new("/boot").join(path)).map_err(|e| e.to_string())?;
-        if !metadata.is_file() || metadata.len() == 0 {
-            return Err("Limine payload absent or empty".into());
-        }
-        payloads += 1;
-    }
-    if payloads < 2 {
-        return Err("no complete kernel/initramfs references".into());
-    }
-    if !Path::new("/boot/EFI/BOOT/BOOTX64.EFI").is_file()
-        || !Path::new("/boot/limine-bios.sys").is_file()
+    if Path::new("/sys/firmware/efi").exists() && !Path::new("/boot/EFI/BOOT/BOOTX64.EFI").is_file()
     {
-        return Err("Limine firmware payload absent".into());
+        return Err("EFI fallback loader absent".into());
+    }
+    if !std::process::Command::new("/usr/local/libexec/rustaller-boot-update")
+        .arg("verify")
+        .status()
+        .map_err(|e| e.to_string())?
+        .success()
+    {
+        return Err("installed generation validation failed".into());
     }
     Ok(())
 }
@@ -372,7 +367,17 @@ fn native_kernel_update(
     transport: &[(String, String)],
 ) -> Result<(), String> {
     let package = kernel_package(target, choice)?;
-    let before = fs::read_to_string("/boot/limine.conf").map_err(|e| e.to_string())?;
+    let before = fs::read_to_string(config_path()).map_err(|e| e.to_string())?;
+    {
+        let edited = before.replace(
+            "extra_cmdline = \"\"",
+            "extra_cmdline = \"rustaller_vm=preserved\" # acceptance",
+        );
+        if edited == before {
+            return Err("no installer-generated extra_cmdline field".into());
+        }
+        fs::write(config_path(), edited).map_err(|e| e.to_string())?;
+    }
     match target {
         "alpine" => {
             run_capture("apk", &["upgrade", "--available", package], transport)?;
@@ -408,25 +413,32 @@ fn native_kernel_update(
             // Standalone dracut is explicitly followed by Rustaller refresh;
             // Gentoo package installkernel hooks cover kernel transactions.
             run_capture(
-                "/usr/local/libexec/rustaller-limine-worker",
-                &["limine-refresh"],
+                "/usr/local/libexec/rustaller-boot-update",
+                &["refresh"],
                 transport,
             )?;
         }
         _ => unreachable!(),
     }
     run_capture(
-        "/usr/local/libexec/rustaller-limine-worker",
-        &["limine-check"],
+        "/usr/local/libexec/rustaller-boot-update",
+        &["check"],
         transport,
     )?;
-    let after = fs::read_to_string("/boot/limine.conf").map_err(|e| e.to_string())?;
-    let previous = fs::read_to_string("/boot/limine.conf.previous").map_err(|e| e.to_string())?;
+    let after = fs::read_to_string(config_path()).map_err(|e| e.to_string())?;
+    let previous =
+        fs::read_to_string(format!("{}.previous", config_path())).map_err(|e| e.to_string())?;
     if after == before {
-        return Err("native initramfs regeneration did not publish a new Limine generation".into());
+        return Err("native initramfs regeneration did not publish a new boot generation".into());
     }
-    verify_limine(&after, "")?;
-    verify_limine(&previous, "")?;
+    if !after.contains("rustaller_vm=preserved")
+        || !after.contains("# acceptance")
+        || !after.contains("[entries.previous]")
+    {
+        return Err("kernel update lost user settings or recovery entry".into());
+    }
+    verify_boot(&after, "")?;
+    verify_boot(&previous, "")?;
     println!(
         "RUSTALLER_VM_KERNEL_UPDATE transaction/rebuild completed; version change depends on repository candidates"
     );
