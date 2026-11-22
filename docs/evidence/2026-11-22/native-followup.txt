@@ -1,0 +1,31 @@
+Rustaller native boot acceptance on disposable QEMU 10.0.13/TCG images
+Host-to-Alpine Live kexec, target installation, firmware boot and SSH were exercised for each accepted case below.
+
+Arch linux-lts, OVMF/GPT, ext4
+Initial kernel: 6.18.64-1-lts
+Initial installation and reboot: PASS, one OS-requested firmware reset
+Native pacman transaction and mkinitcpio rebuild: PASS, same kernel release
+Reboot after rebuild: PASS, custom kernel argument preserved
+SSH public-key authentication, DNS, IPv4 route, FAT32 /boot UUID, ext4 root, swap policy, boot-update verification, and removal of the installer transport files: PASS
+IPv6 Internet connectivity: not tested
+
+Debian linux-image-cloud-amd64, OVMF/GPT, ext4
+Initial kernel: 6.12.117+deb13-cloud-amd64
+Initial installation and reboot: PASS, one OS-requested firmware reset
+Native APT transaction and update-initramfs rebuild: PASS, same kernel release
+Reboot after rebuild: PASS, custom kernel argument preserved
+SSH public-key authentication, DNS, IPv4 route, FAT32 /boot UUID, ext4 root, swap policy, boot-update verification, and removal of the installer transport files: PASS
+IPv6 Internet connectivity: not tested
+
+Gentoo amd64-nomultilib-openrc stage3, SeaBIOS/MBR, ext4
+Stage3 verification, repository signature, profile default/linux/amd64/23.0/no-multilib and ABI_X86=64: passed
+Gentoo kernel package and dracut, published boot configuration and installed BIOS stages: completed
+Original installation stopped during cleanup before requesting its final reboot. The target's /var/cache/distfiles was a directory with uid=0, gid=250, mode 0775.
+Manual boot on a disposable copy: RUSTALLER-BOOT-BIOS-1 loaded 6.18.64-p1-gentoo-dist-bin. Dracut mounted the ext4 root by UUID and switched root.
+SSH and native kernel update after automatic installation: unverified
+
+The installer now permits the native Portage cache mode only for that exact cache path with the expected owner and group. The published test suite checks symlink and world-writable directory rejection.
+
+Gentoo amd64-nomultilib-systemd stage3, OVMF/GPT, Btrfs
+Stage3 verification, repository signature, profile default/linux/amd64/23.0/no-multilib/systemd and ABI_X86=64: passed
+The 5400-second QEMU/TCG case expired during the native kernel package transaction, before its first target reboot. SSH, target boot and native kernel update are unverified for this case.

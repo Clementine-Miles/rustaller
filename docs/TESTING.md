@@ -170,10 +170,15 @@ exercise the target package hooks and verify the installed system over SSH.
 | Alpine `linux-virt`, SeaBIOS/MBR, ext4 | PASS, full install, update, reboot and SSH |
 | Alpine `linux-virt`, SeaBIOS/GPT, XFS | PASS, full install, update, reboot and SSH on a 3 TiB sparse disk |
 | Alpine `linux-virt`, OVMF/GPT, Btrfs | PASS, installed system rebuilt with `mkinitfs` and rebooted over SSH with matched release artifacts |
+| Debian `linux-image-cloud-amd64`, OVMF/GPT, ext4 | PASS, full install, APT transaction, `update-initramfs`, reboot and SSH |
+| Arch `linux-lts`, OVMF/GPT, ext4 | PASS, full install, pacman transaction, `mkinitcpio`, reboot and SSH |
+| Gentoo OpenRC no-multilib, SeaBIOS/MBR, ext4 | Partial. BIOS and dracut reached the installed root from a disposable copy. The automatic run stopped at the Portage cache guard before the fix. |
+| Gentoo systemd no-multilib, OVMF/GPT, Btrfs | Partial. Verified stage3 and profile. The TCG case timed out in Portage before the first target reboot. |
 
 The Alpine ext4 case also booted the previous generation on a clone of the
 installed disk. IPv6 Internet connectivity and hardware microcode application
-remain unverified. [Captured evidence](evidence/2026-11-21/native-boot.txt)
+remain unverified. [Initial evidence](evidence/2026-11-21/native-boot.txt)
+[Follow-up evidence](evidence/2026-11-22/native-followup.txt)
 
 ## Historical Limine/filesystem acceptance matrix
 
