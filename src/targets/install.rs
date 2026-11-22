@@ -385,11 +385,11 @@ pub fn bootstrap<R: CommandRunner>(
             // GNU wget handles HTTPS CONNECT proxies used by debootstrap. Its
             // CA setting is independent of curl's and affects only Alpine Live.
             let mut bootstrap = command("debootstrap", args, "debian-verified-minbase");
-            if Path::new("/configs/transport-ca.pem").is_file() {
+            if Path::new(LIVE_TRANSPORT_CA).is_file() {
                 let wgetrc = Path::new("/run/rustaller-debootstrap-wgetrc");
                 atomic_replace(
                     wgetrc,
-                    b"ca_certificate = /configs/transport-ca.pem\n",
+                    format!("ca_certificate = {LIVE_TRANSPORT_CA}\n").as_bytes(),
                     0o600,
                 )?;
                 bootstrap = bootstrap.env("WGETRC", wgetrc);
@@ -1743,9 +1743,11 @@ fn installed_module_versions(root: &Path) -> Result<Vec<String>, InstallError> {
     versions.sort();
     Ok(versions)
 }
-const TARGET_TRANSPORT_CA: &str = "/etc/ssl/certs/rustaller-install.pem";
+pub(super) const LIVE_TRANSPORT_CA: &str = "/configs/transport-ca.pem";
+pub(super) const TARGET_TRANSPORT_CA: &str = "/etc/ssl/certs/rustaller-install.pem";
+const TARGET_PACMAN_TRANSPORT: &str = "etc/pacman.rustaller-install.conf";
 fn copy_live_transport(root: &Path, target: Target) -> Result<(), InstallError> {
-    let source = Path::new("/configs/transport-ca.pem");
+    let source = Path::new(LIVE_TRANSPORT_CA);
     if !source.exists() {
         return Ok(());
     }
@@ -1780,6 +1782,7 @@ fn remove_live_transport(root: &Path) -> Result<(), InstallError> {
     for path in [
         TARGET_TRANSPORT_CA.trim_start_matches('/'),
         "etc/apt/apt.conf.d/99rustaller-install-transport",
+        TARGET_PACMAN_TRANSPORT,
     ] {
         let path = root.join(path);
         if path.exists() {
@@ -1812,6 +1815,22 @@ impl<R: CommandRunner> CommandRunner for TargetTransportRunner<'_, R> {
                 "REQUESTS_CA_BUNDLE",
             ] {
                 spec = spec.env(name, TARGET_TRANSPORT_CA);
+            }
+            if spec.args.get(1).is_some_and(|program| program == "pacman") {
+                let config =
+                    crate::shared::configure::read_config(&self.root.join("etc/pacman.conf"))
+                        .map_err(io::Error::other)?;
+                let config = rolling::arch_transport_config(&config, TARGET_TRANSPORT_CA)
+                    .map_err(io::Error::other)?;
+                write_target(self.root, TARGET_PACMAN_TRANSPORT, config.as_bytes(), 0o600)
+                    .map_err(io::Error::other)?;
+                spec.args.splice(
+                    2..2,
+                    [
+                        "--config".into(),
+                        format!("/{TARGET_PACMAN_TRANSPORT}").into(),
+                    ],
+                );
             }
         }
         self.inner.run(&spec)

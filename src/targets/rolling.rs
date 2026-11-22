@@ -100,7 +100,12 @@ pub(super) fn bootstrap_arch_rootfs<R: CommandRunner>(
     }
     validate_packages(firmware)?;
     let config = arch_configuration(plan.plan().system.strip_docs())?;
-    write_file(pacman_config, config.as_bytes())?;
+    let live_config = if Path::new(super::install::LIVE_TRANSPORT_CA).is_file() {
+        arch_transport_config(&config, super::install::LIVE_TRANSPORT_CA)?
+    } else {
+        config.clone()
+    };
+    write_file(pacman_config, live_config.as_bytes())?;
 
     // All packages, including Arch's trust root, are authenticated by APK. There
     // is no --allow-untrusted, unauthenticated bootstrap key or keyserver trust.
@@ -115,6 +120,7 @@ pub(super) fn bootstrap_arch_rootfs<R: CommandRunner>(
             &community,
             "arch-install-scripts",
             "archlinux-keyring",
+            "curl",
             "gnupg",
         ],
         "arch-live-signed-tools",
@@ -457,6 +463,28 @@ fn arch_configuration(strip_docs: bool) -> Result<String, ConfigurationError> {
         strip_docs,
     )
 }
+
+// libalpm's internal curl downloader does not honor curl's CA environment.
+// The explicit downloader only applies to the installer transport, while
+// libalpm continues verifying packages against the native signing keyring.
+pub(super) fn arch_transport_config(config: &str, ca: &str) -> Result<String, ConfigurationError> {
+    if !matches!(
+        ca,
+        super::install::LIVE_TRANSPORT_CA | super::install::TARGET_TRANSPORT_CA
+    ) || !config.contains("[options]\n")
+        || config.lines().any(|line| {
+            line.split_once('=')
+                .is_some_and(|(name, _)| name.trim() == "XferCommand")
+        })
+    {
+        return Err(ConfigurationError::InvalidConfigFile);
+    }
+    Ok(config.replacen(
+        "[options]\n",
+        &format!("[options]\nXferCommand = /usr/bin/curl --disable --fail --location --proto =https --proto-redir =https --cacert {ca} --output %o -- %u\n"),
+        1,
+    ))
+}
 fn validate_route(
     root: &Path,
     plan: &ValidatedLivePlan,
@@ -668,6 +696,21 @@ mod tests {
             assert!(config.contains("LocalFileSigLevel = Required"));
             assert_eq!(config.contains("NoExtract"), minimal);
             assert!(config.contains("https://geo.mirror.pkgbuild.com/$repo/os/$arch"));
+        }
+    }
+    #[test]
+    fn arch_private_transport_uses_https_and_retains_package_verification() {
+        let native = arch_configuration(false).unwrap();
+        assert!(!native.contains("XferCommand"));
+        for ca in [
+            super::super::install::LIVE_TRANSPORT_CA,
+            super::super::install::TARGET_TRANSPORT_CA,
+        ] {
+            let temporary = arch_transport_config(&native, ca).unwrap();
+            assert!(temporary.contains(&format!("--cacert {ca} --output %o -- %u")));
+            assert!(temporary.contains("--proto =https --proto-redir =https"));
+            assert!(temporary.contains("SigLevel = Required DatabaseOptional"));
+            assert!(arch_transport_config(&temporary, ca).is_err());
         }
     }
     #[test]

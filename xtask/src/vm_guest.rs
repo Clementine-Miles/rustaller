@@ -211,7 +211,10 @@ fn run() -> Result<(), String> {
     let (program, arguments): (&str, &[&str]) = match target.as_str() {
         "alpine" => ("apk", &["update"]),
         "debian" => ("apt-get", &["update"]),
-        "arch" => ("pacman", &["-Sy", "--noconfirm"]),
+        "arch" => (
+            "pacman",
+            &["--config", PACMAN_TEST_CONFIG, "-Sy", "--noconfirm"],
+        ),
         "gentoo" => ("emerge-webrsync", &[]),
         _ => unreachable!(),
     };
@@ -220,6 +223,15 @@ fn run() -> Result<(), String> {
         "ca_certificate = /etc/ssl/certs/rustaller-vm-ca.pem\n",
     )
     .map_err(|e| e.to_string())?;
+    if target == "arch" {
+        let config = fs::read_to_string("/etc/pacman.conf").map_err(|e| e.to_string())?;
+        let config = config.replacen(
+            "[options]\n",
+            "[options]\nXferCommand = /usr/bin/curl --disable --fail --location --proto =https --proto-redir =https --cacert /etc/ssl/certs/rustaller-vm-ca.pem --output %o -- %u\n",
+            1,
+        );
+        fs::write(PACMAN_TEST_CONFIG, config).map_err(|e| e.to_string())?;
+    }
     let status = Command::new(program)
         .args(arguments)
         .envs(transport.iter().map(|(key, value)| (key, value)))
@@ -361,6 +373,8 @@ fn verify_gentoo_init(init: &str, transport: &[(String, String)]) -> Result<(), 
     }
     Ok(())
 }
+const PACMAN_TEST_CONFIG: &str = "/run/rustaller-vm/pacman.conf";
+
 fn native_kernel_update(
     target: &str,
     choice: &str,
@@ -394,7 +408,11 @@ fn native_kernel_update(
             run_capture("update-initramfs", &["-u", "-k", "all"], transport)?;
         }
         "arch" => {
-            run_capture("pacman", &["-Syu", "--noconfirm"], transport)?;
+            run_capture(
+                "pacman",
+                &["--config", PACMAN_TEST_CONFIG, "-Syu", "--noconfirm"],
+                transport,
+            )?;
             run_capture("mkinitcpio", &["-P", "-S", "autodetect"], transport)?;
         }
         "gentoo" => {
