@@ -39,3 +39,9 @@ btrfs
 vfat F8DE-B948
 default via 10.0.2.2 dev eth0 onlink
 6.18.64-0-virt
+
+Alpine BIOS/GPT, dedicated BIOS Boot partition, XFS, 3 TiB sparse QEMU disk
+Kernel choice: linux-virt
+Initial install and reboot: PASS
+Native package update and reboot: PASS
+SSH public-key authentication, DNS lookup, IPv4 route, UUID fstab, and rustaller-boot artifact verification: PASS
