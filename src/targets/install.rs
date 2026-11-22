@@ -1868,7 +1868,18 @@ fn clean_target_tree(
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error.into()),
     };
-    crate::shared::configure::validate_directory_tree(&directory)?;
+    // Portage downloads as its unprivileged user into a root-owned cache
+    // with group write enabled. Only this exact cache leaf may have that mode.
+    let portage_cache = relative == "var/cache/distfiles"
+        && metadata.is_dir()
+        && metadata.uid() == 0
+        && metadata.gid() == 250
+        && metadata.mode() & 0o002 == 0;
+    if portage_cache {
+        crate::shared::configure::validate_planned_parent(&directory)?;
+    } else {
+        crate::shared::configure::validate_directory_tree(&directory)?;
+    }
     let root_device = fs::metadata(root)?.dev();
     if metadata.dev() != root_device {
         return Err(InstallError::Invalid(
@@ -2238,6 +2249,25 @@ mod runtime_tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn portage_cache_cleanup_still_refuses_symlinks_and_world_writable_leaves() {
+        const CACHE: &str = "var/cache/distfiles";
+        let root = Scratch::new();
+        let outside = Scratch::new();
+        outside.write("keep", b"outside the installer root");
+        let cache = root.0.join(CACHE);
+        fs::create_dir_all(cache.parent().unwrap()).unwrap();
+        symlink(&outside.0, &cache).unwrap();
+        assert!(clean_target_tree(&root.0, CACHE, false).is_err());
+        assert!(outside.0.join("keep").is_file());
+
+        fs::remove_file(&cache).unwrap();
+        root.write("var/cache/distfiles/archive", b"package cache");
+        fs::set_permissions(&cache, fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(clean_target_tree(&root.0, CACHE, false).is_err());
+        assert!(cache.join("archive").is_file());
     }
     #[test]
     fn efi_loader_rejects_ia32_non_efi_truncated_and_empty_payloads() {
