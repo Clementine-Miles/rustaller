@@ -210,7 +210,7 @@ fn run() -> Result<(), String> {
     println!("RUSTALLER_VM_TARGET_SWAP policy verified for {filesystem}");
     let (program, arguments): (&str, &[&str]) = match target.as_str() {
         "alpine" => ("apk", &["update"]),
-        "debian" => ("apt-get", &["update"]),
+        "debian" => ("apt-get", &["-o", APT_TEST_CA, "update"]),
         "arch" => (
             "pacman",
             &["--config", PACMAN_TEST_CONFIG, "-Sy", "--noconfirm"],
@@ -374,6 +374,7 @@ fn verify_gentoo_init(init: &str, transport: &[(String, String)]) -> Result<(), 
     Ok(())
 }
 const PACMAN_TEST_CONFIG: &str = "/run/rustaller-vm/pacman.conf";
+const APT_TEST_CA: &str = "Acquire::https::CaInfo=/etc/ssl/certs/rustaller-vm-ca.pem";
 
 fn native_kernel_update(
     target: &str,
@@ -402,7 +403,14 @@ fn native_kernel_update(
         "debian" => {
             run_capture(
                 "apt-get",
-                &["install", "-y", "--only-upgrade", package],
+                &[
+                    "-o",
+                    APT_TEST_CA,
+                    "install",
+                    "-y",
+                    "--only-upgrade",
+                    package,
+                ],
                 transport,
             )?;
             run_capture("update-initramfs", &["-u", "-k", "all"], transport)?;
