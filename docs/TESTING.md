@@ -156,6 +156,25 @@ The `smoke --iso` input is the official Alpine Live test image, not an installer
 feature. Its stock boot files and source-image bootloader remain harness inputs;
 new target installations use rustaller-boot.
 
+## Rust-native bootloader acceptance
+
+The following results use disposable QEMU/TCG images. The raw firmware smoke
+loaded a Debian cloud kernel and two ordered initrd archives into a test PID 1.
+That test covers the loader and kernel handoff. The installation cases also
+exercise the target package hooks and verify the installed system over SSH.
+
+| Scenario | Result |
+| --- | --- |
+| OVMF fresh boot and recovery from invalid primary TOML | PASS, test PID 1 |
+| SeaBIOS MBR current generation and GPT previous generation | PASS, test PID 1 |
+| Alpine `linux-virt`, SeaBIOS/MBR, ext4 | PASS, full install, update, reboot and SSH |
+| Alpine `linux-virt`, SeaBIOS/GPT, XFS | PASS, full install, update, reboot and SSH on a 3 TiB sparse disk |
+| Alpine `linux-virt`, OVMF/GPT, Btrfs | PASS, installed system rebuilt with `mkinitfs` and rebooted over SSH with matched release artifacts |
+
+The Alpine ext4 case also booted the previous generation on a clone of the
+installed disk. IPv6 Internet connectivity and hardware microcode application
+remain unverified. [Captured evidence](evidence/2026-11-21/native-boot.txt)
+
 ## Historical Limine/filesystem acceptance matrix
 
 Fresh KVM acceptance and reviewed evidence are recorded in
