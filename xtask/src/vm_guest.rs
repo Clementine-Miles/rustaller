@@ -59,6 +59,17 @@ fn run() -> Result<(), String> {
     }
     let kernel = run_capture("uname", &["-r"], &transport)?;
     verify_kernel(target, selected_kernel, kernel.trim(), &transport)?;
+    for path in [
+        "/etc/ssl/certs/rustaller-install.pem",
+        "/etc/apt/apt.conf.d/99rustaller-install-transport",
+        "/etc/pacman.rustaller-install.conf",
+    ] {
+        if Path::new(path).symlink_metadata().is_ok() {
+            return Err(format!(
+                "installation transport file remains in target: {path}"
+            ));
+        }
+    }
     if target == "gentoo" {
         verify_gentoo_init(selected_init, &transport)?;
     }
