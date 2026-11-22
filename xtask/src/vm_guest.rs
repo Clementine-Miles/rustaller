@@ -227,7 +227,7 @@ fn run() -> Result<(), String> {
         let config = fs::read_to_string("/etc/pacman.conf").map_err(|e| e.to_string())?;
         let config = config.replacen(
             "[options]\n",
-            "[options]\nXferCommand = /usr/bin/curl --disable --fail --location --proto =https --proto-redir =https --cacert /etc/ssl/certs/rustaller-vm-ca.pem --output %o -- %u\n",
+            "[options]\nXferCommand = /usr/bin/curl --disable --fail --silent --show-error --location --proto =https --proto-redir =https --connect-timeout 15 --speed-limit 1 --speed-time 30 --max-time 3600 --cacert /etc/ssl/certs/rustaller-vm-ca.pem --output %o -- %u\n",
             1,
         );
         fs::write(PACMAN_TEST_CONFIG, config).map_err(|e| e.to_string())?;

@@ -481,7 +481,7 @@ pub(super) fn arch_transport_config(config: &str, ca: &str) -> Result<String, Co
     }
     Ok(config.replacen(
         "[options]\n",
-        &format!("[options]\nXferCommand = /usr/bin/curl --disable --fail --location --proto =https --proto-redir =https --cacert {ca} --output %o -- %u\n"),
+        &format!("[options]\nXferCommand = /usr/bin/curl --disable --fail --silent --show-error --location --proto =https --proto-redir =https --connect-timeout 15 --speed-limit 1 --speed-time 30 --max-time 3600 --cacert {ca} --output %o -- %u\n"),
         1,
     ))
 }
