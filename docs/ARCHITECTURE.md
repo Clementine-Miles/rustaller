@@ -9,7 +9,7 @@ There is no current-system administration mode or separate recovery executable.
 src/
 ├── bin/                 host CLI/TUI and internal worker entry points
 ├── model.rs, config.rs  typed InstallPlan and target configuration policy
-├── postinstall.rs       kernel, hostname and timezone validation
+├── postinstall.rs       required kernel policy, hostname and timezone validation
 ├── codec.rs, plan_file.rs, deployment.rs
 │                        bounded private plan, disk identity and network facts
 ├── command.rs, fsutil.rs typed native commands and safe per-file replacement
@@ -26,7 +26,7 @@ tests/                   isolated Rust integration tests and fixtures
 
 ```mermaid
 flowchart TD
-    A[CLI/TUI validated plan] --> B[Read-only host, disk, network and kexec preflight]
+    A[CLI/TUI plan with resolved public keys] --> B[Read-only host, disk, network and kexec preflight]
     B --> C[Exact disk-identity confirmation]
     C --> D[Authenticate resources and create private initrd handoff]
     D --> E[Native PID 1 shutdown and kexec]
@@ -57,15 +57,17 @@ firmware. Default output redacts stable device identifiers and sensitive
 kernel arguments. The TUI uses the same cached report. [Inspection reference](https://github.com/su-haris/simple-network-speedtest/blob/master/speed.sh)
 
 `targets` owns native distribution bootstrap, package trust, accounts, kernel
-payloads, initramfs and boot configuration. Debian uses debootstrap minbase and systemd;
-Alpine uses OpenRC; Arch uses systemd. Gentoo uses a selected OpenRC (new-plan
-default) or systemd amd64 no-multilib stage3 and a matching Portage profile.
+payloads, initramfs and boot configuration. The distribution fixes the kernel
+package and init system. Debian uses debootstrap minbase and systemd. Alpine
+uses OpenRC. Arch uses systemd and authenticated CachyOS packages. Gentoo uses
+the amd64 no-multilib OpenRC stage3 and matching Portage profile.
 The release builds rustaller-boot for UEFI and BIOS. FAT32 is mounted at `/boot`;
 native kernel/initramfs files and immutable Rustaller generations share that
 filesystem. BIOS normally uses MBR with
 FAT32 + root; UEFI uses GPT with ESP + root. BIOS disks at least 2 TiB use GPT
-with a dedicated stage2 partition followed by FAT32 + root. Root can be XFS,
-ext4 or Btrfs (`@`, optional zstd).
+with a dedicated stage2 partition followed by FAT32 + root. New installations
+use XFS by default and can use ext4. Source filesystem inspection is independent
+of the target filesystem policy.
 
 `shared/storage.rs` owns explicit numbered partition roles and pure layout/fstab
 rendering. `boot/core` owns the bounded TOML schema and Linux command line.
@@ -82,7 +84,8 @@ configuration reference, and then publishes `rustaller/boot.toml`. A self-contai
 previous configuration and its generation remain available, including previous
 entries in the active menu. FAT rename/sync cannot promise journaled-filesystem
 power-loss atomicity; recovery can restore the validated previous configuration.
-Root Btrfs snapshots do not include `/boot` or restore matching boot artifacts.
+The installed boot-update contract and firmware TOML format are independent of
+the installation plan schema.
 
 `host/inspect.rs` collects typed optional system, memory, virtualization, storage,
 firmware and network facts independently of installation authorization.
@@ -95,8 +98,8 @@ assertion and cannot switch it.
 
 ## CPU capability methodology
 
-Inspection reports guest-visible capabilities without changing the generic target
-ISA baseline. A dedicated probe thread inherits the caller's affinity, pins itself
+Inspection reports guest-visible capabilities. Arch uses that evidence to select
+a compatible CachyOS repository. A dedicated probe thread inherits the caller's affinity, pins itself
 to each allowed logical CPU, reads guarded CPUID leaves, and intersects their
 capabilities. It restores affinity before exiting; an incomplete scan or failed
 state check reports Unknown. CPU names never determine ISA support.
@@ -116,13 +119,12 @@ missing procfs fields or unavailable affinity/OS-state checks never raise it.
 
 ## Configuration boundaries
 
-`InstallPlan` holds credentials and typed `SystemConfig`/`PostInstallConfig`.
+`InstallPlan` holds resolved public keys and typed `SystemConfig`/`PostInstallConfig`.
 `DeploymentManifest` separately records disk identity and validated source
 network facts. Handoff encoding is bounded and rejects incompatible versions.
-Plan schema 11 includes optional explicit Ethernet policy. Schema 10 is
-migrated in memory with the stored profile and init fields intact. The
-embedded worker matches the host runtime, and older incompatible plan bodies
-are rejected.
+Plan schema 12 represents the fixed kernel and init policy through the target
+and has no password or Btrfs options. Earlier plan schemas require regeneration.
+The embedded worker matches the host runtime.
 
 - `host/network.rs`: observe source addresses, applied policy and supported routing;
   `host/handoff.rs` retains authenticated installation preparation and kexec.
@@ -130,7 +132,8 @@ are rejected.
 - `shared/network.rs`: pure final target rendering, kernel prerequisites, and
   publication of native interface/DNS/MTU/TCP/module/GAI configuration.
 - `shared/configure.rs`: target isolation, safe bounded reads, complete output
-  validation, publication, hostname/timezone and offline service links.
+  validation, publication, hostname/timezone and offline service links. Live
+  and target account provisioning enforce the same effective SSH key policy.
 - `fsutil.rs`: exclusive temporary files, sync, rename and failure cleanup.
 
 Package operations use bootstrap DNS. Final network publication happens after
@@ -142,13 +145,13 @@ installation failure retains Live and prevents the final reboot.
 Alpine's generated ifupdown configuration uses interface names, so a one-shot
 Rust worker repairs them from captured MAC addresses before networking starts.
 Systemd target files match MAC addresses directly and need no filename repair.
-Opt-in Arch CachyOS has a separate native first-boot full upgrade and
-initramfs/boot refresh; failure retains its pending marker for retry.
+Arch's first-boot full upgrade uses the same required CachyOS server kernel and
+refreshes the initramfs and boot files. Failure retains its pending retry marker.
 
-Reset infrastructure is retained; its unconnected execution remains unavailable
-and hidden in the TUI. TUI routes are typed, with separate plan,
-read-only preflight, native confirmation and execution stages. `tui/draft.rs`
-owns shared snapshots and copy-on-write field values.
+`rustaller reset` cancels installer-owned preparation. The Live worker can cancel
+before erasure. TUI routes retain separate plan, read-only preflight, native
+confirmation and execution stages. `tui/draft.rs` owns shared snapshots and
+copy-on-write field values.
 
 Unsupported source
 network managers, complex routing, containers, ARM/Windows, Secure Boot and

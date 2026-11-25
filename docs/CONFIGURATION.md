@@ -1,17 +1,17 @@
 # Target configuration
 
-`InstallPlan.system: SystemConfig` holds Gentoo init selection, filesystem, boot
-partition size, Btrfs compression, package profile, DNS,
-network and optional swap policy. `InstallPlan.post_install: PostInstallConfig`
-holds kernel, hostname and timezone choices. Credentials and SSH settings belong
-to `InstallPlan`; `DeploymentManifest` carries source disk/network facts. These
-settings configure the new target. The resolved Ethernet, MTU and resolver
-policy also applies during Alpine Live. The source stays configured by its
-existing manager.
+`InstallPlan.system: SystemConfig` holds the root filesystem, partition sizes,
+package profile, DNS, network and optional swap policy.
+`InstallPlan.post_install: PostInstallConfig` holds hostname and timezone.
+The target determines the kernel and init system. The account, resolved SSH
+public keys and port belong to `InstallPlan`. `DeploymentManifest` carries
+source disk and network facts. The resolved Ethernet, MTU and resolver policy
+applies during Alpine Live as well as to the new target.
 
-Schema 11 adds the explicit Ethernet settings. Schema 10 can be read with its
-encoded profile and Gentoo init selection intact. Earlier schemas require a
-new plan. Handoff uses the matching embedded worker runtime.
+Plan schema 12 removes the selectable kernel, Gentoo init, Btrfs configuration
+and password fields. Handoff uses the matching embedded worker runtime. If a
+saved plan is incompatible, regenerate it with the current CLI or TUI. Earlier
+plans are rejected before erasure.
 
 ## Unified pipeline
 
@@ -59,7 +59,7 @@ than Alpine's ifupdown-ng files. Per-interface `/etc/conf.d/net` settings preser
 supported static addresses, DHCPv4/DHCPv6/RA and off-link default routes. MAC-bound
 udev rules stabilize the target interface names; the matching `net.INTERFACE`
 services and SSH are added to OpenRC runlevels. Static DNS suppresses client
-resolver replacement. The systemd variant retains networkd and resolved.
+resolver replacement.
 DHCP/RA address, route and client-identity overrides outside the supported policy
 are refused. DNS overrides are selected through the installation plan.
 Only supported Ethernet-style links and simple main-table routing are inherited.
@@ -138,10 +138,18 @@ Alpine/musl rejects this option.
 
 ## Accounts, host settings, kernel and services
 
-Root SSH is permitted only for an explicitly selected root installation account;
-non-root installations disable it and require an independent root password.
-Public keys are validated by OpenSSH before handoff; target SSH syntax is checked
-before final reboot. SSH port is 1–65535 (default 22).
+Installation and SSH-enabled Live rescue require at least one valid public key.
+Set `--ssh-key` once per key, or add the keys in the TUI. Rustaller resolves
+and validates them on the host before handoff. The same account and port apply
+in Live and on the target. The SSH port is 1–65535 (default 22).
+
+The SSH daemon requires public-key authentication and disables password,
+keyboard-interactive and empty-password authentication. The default `admin`
+account and any explicitly selected non-root account get
+`PermitRootLogin no` and validated passwordless administrative sudo.
+Explicitly selecting `root` sets `PermitRootLogin prohibit-password`.
+The native daemon checks syntax and effective policy before starting Live SSH
+and before the target reboots. Client-side private-key passphrases remain usable.
 
 Hostname is one ASCII label, 1–63 characters, with alphanumeric ends. An explicit
 value wins; otherwise the source hostname's valid first label is captured, falling
@@ -149,20 +157,19 @@ back to the distribution name. Timezone is a safe relative IANA name such as
 `Etc/UTC`; the target's bounded TZif data must validate. No host hostname/timezone
 command is invoked. No requested timezone means no timezone overwrite.
 
-[Installation](INSTALLATION.md) lists kernel choices. Arch CachyOS is opt-in,
-requires its authenticated official repositories and performs a native first-boot
-full upgrade, initramfs rebuild and boot refresh. Other kernels do not enable those repositories.
+[Installation](INSTALLATION.md) lists the required kernel for each target. Arch
+requires the authenticated CachyOS server kernel. The compatible repository is
+selected from the ISA visible to the guest. The native first-boot full upgrade
+maintains the same kernel package and refreshes initramfs and boot files.
 Native package/service policy preserves SSH, DNS, CA roots, modules, boot files,
-licenses and package databases. Minimal profile trims documentation/cache unless
-explicitly retained; it is not a measured final size guarantee.
+licenses and package databases. The Minimal profile trims documentation and
+cache unless explicitly retained.
 
-Gentoo uses `--gentoo-init=openrc|systemd` with OpenRC as the new-plan default.
-Both select only the matching official `amd64-nomultilib` stage3. The extracted
-matching stable no-multilib profile is preserved when possible; any replacement
-must contain the exact no-multilib profile segment and match the selected init.
-The final selected profile and `ABI_X86="64"` are checked. OpenRC enables native
-udev, hostname, hwclock, modules, sysctl, local and SSH services; systemd enables
-its existing native units. Kernel configuration, dracut and rustaller-boot remain shared.
+Gentoo uses only the official `amd64-nomultilib-openrc` stage3. The matching
+stable no-multilib profile is retained when available. A replacement must be
+verified as no-multilib OpenRC. The final profile and `ABI_X86="64"` are checked.
+OpenRC enables native udev, hostname, hwclock, modules, sysctl, local and SSH
+services. The distribution binary kernel uses dracut and rustaller-boot.
 
 ## Optional swap
 
@@ -175,21 +182,15 @@ preflight floors. Runtime activation still requires [acceptance](TESTING.md).
 
 ## Storage and kernel updates
 
-`--filesystem xfs|ext4|btrfs` selects the root filesystem. `--boot-size-mib`
+`--filesystem xfs|ext4` selects the root filesystem. `--boot-size-mib`
 sets FAT32 size (512–4096 MiB, default 512) at `/boot`. Explicit partition roles
 determine device numbering, mount paths and UUID fstab bindings. ext4 fsck pass
-is 1; XFS/Btrfs use 0; FAT uses 2. BIOS/UEFI layouts are described in
+is 1, XFS uses 0, and FAT uses 2. BIOS/UEFI layouts are described in
 [installation](INSTALLATION.md#disk-layout-and-boot).
 
-Btrfs creates and mounts `@` and writes `subvol=@,compress=zstd:3` in fstab.
-`--btrfs-compression 0` disables compression; 1–15 selects zstd. Compression
-options require Btrfs. rustaller-boot passes `rootflags=subvol=@`. Each distribution
-installs its filesystem tools and includes Btrfs support through mkinitfs,
-initramfs-tools, mkinitcpio or dracut. Swapfiles on Btrfs fail plan validation;
-there is no snapshot or Btrfs swap management.
-FAT32 `/boot` is outside root-subvolume snapshots. Restoring a Btrfs root snapshot
-does not restore its matching kernel/modules/initramfs; restore and verify matching
-boot artifacts separately before rebooting.
+The target keeps filesystem maintenance tools for the selected root and FAT32
+boot filesystems. Existing installed systems keep their matching boot-update
+helper and filesystem settings.
 
 Rustaller boots Linux from the FAT volume on BIOS and UEFI. The versioned
 TOML, timeout, serial settings, kernel arguments and recovery procedure are
@@ -201,13 +202,12 @@ a directly mounted root and FAT boot partition on the selected disk.
 | --- | --- |
 | Alpine | APK pre/post-commit hook and successful mkinitfs completion |
 | Debian | kernel postinst/postrm and initramfs post-update hooks |
-| Arch | ALPM post-transaction hook on kernel pkgbase/initcpio paths, after mkinitcpio |
+| Arch | CachyOS server kernel, native full upgrade and ALPM post-transaction hook on kernel pkgbase/initcpio paths after mkinitcpio |
 | Gentoo | traditional installkernel postinst, dracut; alternate boot-generator USE flags disabled |
-| Opt-in CachyOS | native full upgrade, initramfs rebuild, Rust boot refresh |
 
-Hook entry points link to the installed matching static Rust worker. Generated
-minimal generator guards and a dracut PATH wrapper call that worker; no separate
-boot-management implementation is maintained. The refresh requires FAT `/boot` mounted with the recorded boot UUID,
+Hook entry points use the matching static `rustaller-boot-update` helper.
+Generated generator guards and a dracut PATH wrapper call that helper. The
+refresh requires FAT `/boot` mounted with the recorded boot UUID,
 valid pinned boot state, safe sources and space for a complete new generation.
 It scans only top-level native files, avoiding recursive copies of existing
 generation directories. Debian's kernel symlink updates are disabled; Gentoo

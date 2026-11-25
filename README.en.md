@@ -8,12 +8,12 @@ Live through kexec, installs Alpine/Debian/Arch/Gentoo and configures the target
 **Development preview with real disk-erasing actions. Full distribution BIOS/UEFI
 acceptance is pending. Back up data and keep independent console access.**
 
-On the earlier Limine backend, five real KVM/QEMU installation cases passed: Alpine BIOS/ext4 and BIOS/XFS,
-Debian UEFI/ext4 and UEFI/Btrfs, and Arch UEFI/ext4, including target SSH,
-network/DNS, native kernel-package transactions, initramfs/Limine regeneration
-and reboot. Alpine/Debian also passed
-previous-generation recovery boots. The [acceptance report and evidence](docs/VERIFICATION-FOLLOWUP-2026-11-19.md)
-record exact revisions, reproducible failures and coverage limits.
+| Target | Kernel package | Init |
+| --- | --- | --- |
+| Alpine | `linux-virt` | OpenRC |
+| Debian | `linux-image-cloud-amd64` | systemd |
+| Arch | `linux-cachyos-server` | systemd |
+| Gentoo | `sys-kernel/gentoo-kernel-bin` | OpenRC |
 
 ```console
 cargo xtask bundle
@@ -23,23 +23,23 @@ cargo xtask bundle
 
 Without arguments on a terminal, the bundled host opens its English TUI.
 Installation requires root, successful preflight and the exact disk-identity
-confirmation. `--inspect` is read-only. Optional settings include XFS/ext4/Btrfs,
-distribution kernels, SSH/accounts, DNS/network policy and a target-only swapfile.
+confirmation. Supply at least one `--ssh-key` for installation or Live SSH.
+The default `admin` account uses public-key authentication and passwordless
+administrative sudo. Select `--username root` explicitly to allow root SSH.
+`--inspect` is read-only and works without a key. New installations use XFS by
+default or ext4, with optional DNS/network settings and a target-only swapfile.
 The automatic path requires kexec and performs one final reboot; failure retains
 Live rescue. New systems use [rustaller-boot](docs/BOOT.md) with FAT32 at `/boot` and a root
-partition; large BIOS disks use a GPT stage2 exception. Btrfs uses `@` with
-optional zstd. The TUI compares detected and planned systems. The default
+partition. Large BIOS disks use a GPT stage2 partition. The TUI compares detected
+and planned systems. The default
 installation profile is Minimal. Run `rustaller reset` to cancel a prepared
 handoff and keep the source system running.
 
 Host inspection includes guest-visible CPU/ISA levels, memory/swap, storage,
 virtualization, firmware and networking without benchmarks or third-party scripts.
-Arch adds hardened and Zen kernels; Gentoo offers authenticated
-`amd64-nomultilib-openrc` (new-plan default) and `amd64-nomultilib-systemd` stage3
-variants via `--gentoo-init`. Root snapshots do not include FAT32 `/boot`.
-Native regeneration/reboot passed at the tested kernel versions. Transitions to
-newer kernel versions, additional kernel/init combinations and multi-host coverage
-still require further real VM acceptance; see the testing limits below.
+Arch requires authenticated CachyOS packages and a repository supported by the
+guest CPU. Gentoo uses the authenticated `amd64-nomultilib-openrc` stage3.
+The testing guide distinguishes current acceptance from historical results.
 
 Source networking supports verified Ethernet configurations from networkd,
 NetworkManager, ifupdown and dhcpcd. An explicit MAC-bound address policy is
@@ -51,7 +51,7 @@ path. [Network configuration and limits](docs/CONFIGURATION.md)
 - [Target configuration](docs/CONFIGURATION.md)
 - [Security and trust boundaries](docs/SECURITY.md)
 - [Testing and actual acceptance limits](docs/TESTING.md)
-- [Real QEMU acceptance report and evidence](docs/VERIFICATION-FOLLOWUP-2026-11-19.md)
+- [Historical QEMU acceptance report and evidence](docs/VERIFICATION-FOLLOWUP-2026-11-19.md)
 - [Development, builds, releases and provenance](docs/DEVELOPMENT.md)
 
 [中文](README.md) · [License](LICENSE)

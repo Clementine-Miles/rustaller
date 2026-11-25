@@ -25,8 +25,8 @@ serial_baudrate = 115200
 
 [linux]
 root = "UUID=01234567-89ab-cdef-0123-456789abcdef"
-rootfstype = "btrfs"
-rootflags = "subvol=@"
+rootfstype = "xfs"
+rootflags = ""
 mode = "rw"
 consoles = ["ttyS0,115200n8", "tty0"]
 extra_cmdline = ""
@@ -42,7 +42,7 @@ kernel = "/rustaller-41-999/kernel-0"
 initrds = ["/rustaller-41-999/initrd-0"]
 ```
 
-The default Linux command line is `root=UUID=<root-uuid> rootfstype=<type> rw console=ttyS0,115200n8 console=tty0`. Btrfs adds `rootflags=subvol=@`. Edit `[linux]` to change the generated arguments. For example, `extra_cmdline = "panic=15"` appends one argument. Managed arguments such as `root=`, `console=`, `ro` and `rw` have dedicated fields. An explicit `cmdline_override` string replaces the entire generated line.
+The default Linux command line is `root=UUID=<root-uuid> rootfstype=<type> rw console=ttyS0,115200n8 console=tty0`. Edit `[linux]` to change the generated arguments. For example, `extra_cmdline = "panic=15"` appends one argument. Managed arguments such as `root=`, `console=`, `ro` and `rw` have dedicated fields. An explicit `cmdline_override` string replaces the entire generated line.
 
 Both loaders use the same maintained TOML parser and policy code. Limits are 32 KiB for the configuration, 2047 printable ASCII bytes for the Linux command line, 240 bytes for a FAT path, three initrd files per entry and 16 entries across two generations. The timeout ranges from 0 to 60 seconds. Serial rates are 9600, 19200, 38400, 57600 and 115200. These settings control the loader's optional serial interface. Firmware console redirection and the kernel's `consoles` setting are independent. The displayed key selects an entry once. Enter or an expired timeout selects `boot.default`.
 
@@ -51,7 +51,7 @@ Both loaders use the same maintained TOML parser and policy code. Limits are 32 
 The distribution owns its normal kernel and initramfs files in `/boot`. Apk/mkinitfs, Debian kernel hooks/initramfs-tools, pacman/mkinitcpio and Gentoo installkernel/dracut invoke `/usr/local/libexec/rustaller-boot-update`. Native hooks verify the mount point, filesystem root, FAT32 boot record and recorded volume serial before writing. The helper selects the newest complete kernel from the recorded installation package family for `current`. Additional complete kernels remain available by name. A legacy installation can infer its family from the existing current entry if recognizable. Microcode precedes the initramfs. Identical payloads already in a managed generation are reused after byte comparison.
 
 Refresh reasserts the root UUID and filesystem from install state. It preserves
-Btrfs settings, user arguments, comments and explicit command-line overrides.
+existing root flags, user arguments, comments and explicit command-line overrides.
 It validates and syncs the complete generation before publishing its entries.
 
 Allow room for the native images, the retained generations and the incoming generation plus 1 MiB of metadata reserve. A 512 MiB boot partition can run out of space during an upgrade. The exact requirement depends on the actual kernel and initramfs sizes. Publication fails if a native pair is incomplete or there is insufficient space.
@@ -75,7 +75,7 @@ repairing the native kernel or initramfs, run these commands.
 /usr/local/libexec/rustaller-boot-update verify
 ```
 
-FAT power loss can damage multiple files. Keep an independent recovery console and backup. A previous kernel can require its matching module tree for drivers loaded after the initramfs. A Btrfs root snapshot excludes this partition. Restore a matching kernel, modules and initramfs when rolling back the root.
+FAT power loss can damage multiple files. Keep an independent recovery console and backup. A previous kernel can require its matching module tree for drivers loaded after the initramfs. On existing deployments with root snapshots, restore a matching kernel, modules and initramfs when rolling back the root, since snapshots exclude the separate boot partition.
 
 ## Build
 

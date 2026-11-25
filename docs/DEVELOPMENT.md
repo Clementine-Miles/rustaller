@@ -23,10 +23,10 @@ initramfs generation. Do not implement another installer, general administration
 layer, plugin registry or recovery executable. OpenRC integration is generated
 minimal native service glue invoking the Rust worker; no separate service scripts
 are maintained. See [architecture](ARCHITECTURE.md) for module ownership.
-Opt-in CachyOS repository setup still invokes its checksum-pinned official
-bootstrap with Bash/gawk inside the target chroot, followed by native package
-signature verification. It requires network/runtime acceptance like the other
-distribution bootstrap tools.
+Arch's CachyOS repository setup verifies the checksum-pinned official bootstrap
+archive as provenance. Rustaller configures the applicable repositories and
+requires native database and package authentication. It requires runtime
+acceptance like the other distribution bootstrap paths.
 
 ## Bundles and preview releases
 

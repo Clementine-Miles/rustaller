@@ -12,9 +12,8 @@ in [testing](TESTING.md), not inferred from compilation or generated files.
 | Alpine Live | Official HTTPS netboot archive, pinned release primary key, signature and SHA-256; extract kernel/initramfs/modloop from authenticated data |
 | Alpine target | Trusted APK keys and signed packages |
 | Debian | Debian archive keyring, authenticated release metadata, package index hashes and APT signatures |
-| Arch | Trusted archlinux-keyring, required package signatures; database signatures remain optional |
-| Opt-in CachyOS | Pinned official archive SHA-256 and full release-key fingerprint; native package signatures remain required |
-| Gentoo | Trusted release primary/subkey binding, signed DIGESTS, archive signature and SHA-512; exact amd64-nomultilib init/timestamp/size identity |
+| Arch | Trusted archlinux-keyring and required Arch package signatures. CachyOS uses a pinned official archive SHA-256, full release-key fingerprint and native database and package signatures. |
+| Gentoo | Trusted release primary/subkey binding for the latest-stage3 index, DIGESTS and archive signature. The worker verifies the SHA-512 and exact `amd64-nomultilib-openrc` archive identity, timestamp and size before disk erasure. |
 | rustaller-boot | Firmware artifacts built from the release source, checked for the expected format and schema, hashed and embedded in the worker |
 | Rustaller release | Matching static host/worker, SHA-256 checksums, source/build metadata and license |
 
@@ -40,12 +39,14 @@ block devices or partition/reboot the development host.
 
 ## Credentials and files
 
-Passwords are redacted in debug/errors/UI and transported in a bounded private
-0600 plan, not the kernel command line. Non-root installations keep root SSH
-disabled and require a separate root password. Native `ssh-keygen` owns private-key
-passphrase entry; only the public key enters the plan. Private files/directories
-use restrictive permissions. Command-line secrets can still be visible to the OS
-and history; prefer interactive private entry.
+The host validates every resolved SSH public key before handoff. Only public
+keys enter the bounded private plan. Native `ssh-keygen` handles private-key
+passphrase entry. Root can connect over SSH only when explicitly selected as
+the account. The default `admin` and other non-root administrators get
+validated passwordless sudo with direct root SSH disabled. Before starting Live
+SSH or booting the target, Rustaller checks the
+native daemon's syntax and effective public-key-only policy. Authorized keys,
+sudoers entries and plan files use restrictive ownership and modes.
 
 Configuration reads are bounded and reject special files before open. Existing
 outputs must be caller-owned regular files with one hard link and no group/world
