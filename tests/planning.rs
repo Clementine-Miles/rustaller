@@ -2,7 +2,6 @@ mod support;
 mod args {
     use rustaller::host::args::{CliOutcome, parse_args};
     use rustaller::model::{BootMode, Target};
-    use rustaller::postinstall::KernelChoice;
 
     fn parse(args: &[&str]) -> CliOutcome {
         parse_args(args.iter().copied()).expect("valid CLI arguments")
@@ -45,11 +44,8 @@ mod args {
     fn parses_target_and_current_option_aliases() {
         let CliOutcome::Plan(plan) = parse(&[
             "--user=admin",
-            "--passwd",
-            "secret",
             "--ssh-port",
             "2222",
-            "--no-cloud-kernel",
             "--sleep",
             "2",
             "--force-boot-mode",
@@ -61,12 +57,7 @@ mod args {
 
         assert_eq!(plan.target, Target::Debian);
         assert_eq!(plan.username.as_deref(), Some("admin"));
-        assert_eq!(
-            plan.password.as_ref().map(|value| value.expose()),
-            Some("secret")
-        );
         assert_eq!(plan.ssh_port, Some(2222));
-        assert!(plan.no_cloud_kernel);
         assert_eq!(plan.hold, Some(2));
         assert_eq!(plan.force_boot_mode, Some(BootMode::Efi));
     }
@@ -123,37 +114,27 @@ mod args {
             ]),
             Ok(CliOutcome::ConfirmedPlan { .. })
         ));
-        // An option-looking credential is its value, never an execution flag.
-        let CliOutcome::Plan(plan) = parse_args(["debian", "--password", "--inspect"]).unwrap()
-        else {
-            panic!("literal credential")
-        };
-        assert_eq!(plan.password.as_ref().unwrap().expose(), "--inspect");
     }
 
     #[test]
-    fn rejects_missing_target_unknown_options_and_conflicting_credentials() {
+    fn rejects_missing_target_unknown_options_and_removed_credentials() {
         assert!(parse_args::<_, &str>([]).is_err());
         assert!(parse_args(["--unknown", "alpine"]).is_err());
-        assert!(
-            parse_args(["alpine", "--password", "x", "--ssh-key", "ssh-ed25519 AAAA"]).is_err()
-        );
+        for flag in ["--password", "--passwd", "--root-password"] {
+            assert!(parse_args(["alpine", flag, "credential"]).is_err());
+            let option = format!("{flag}=PRIVATE-SENTINEL");
+            let error = parse_args(["alpine", &option]).err().expect("removed flag");
+            assert!(!error.to_string().contains("PRIVATE-SENTINEL"));
+        }
     }
 
     #[test]
-    fn target_configuration_uses_shared_validation_and_official_kernel_choices() {
-        let CliOutcome::Plan(plan) = parse_args([
-            "arch",
-            "--kernel=lts",
-            "--hostname",
-            "my-vps",
-            "--timezone",
-            "Etc/UTC",
-        ])
-        .unwrap() else {
+    fn target_configuration_uses_shared_validation_and_rejects_kernel_overrides() {
+        let CliOutcome::Plan(plan) =
+            parse_args(["arch", "--hostname", "my-vps", "--timezone", "Etc/UTC"]).unwrap()
+        else {
             panic!("plan")
         };
-        assert_eq!(plan.post_install.kernel, KernelChoice::Lts);
         assert_eq!(plan.post_install.hostname.as_deref(), Some("my-vps"));
         assert_eq!(plan.post_install.timezone.as_deref(), Some("Etc/UTC"));
         for args in [
@@ -171,17 +152,15 @@ mod args {
         ] {
             assert!(parse_args(&args).is_err(), "accepted {args:?}");
         }
-        assert!(parse_args(["debian", "--kernel", "auto", "--no-cloud-kernel"]).is_ok());
+        assert!(parse_args(["debian", "--no-cloud-kernel"]).is_err());
     }
 
     #[test]
-    fn filesystem_and_root_password_options_preserve_secrets_and_inspection() {
+    fn filesystem_and_non_root_key_configuration_allow_read_only_inspection() {
         use rustaller::config::RootFilesystem;
         let CliOutcome::Plan(plan) = parse_args([
             "debian",
             "--username=admin",
-            "--root-password",
-            " root-secret ",
             "--ssh-key",
             "/root/client.pub",
             "--filesystem=ext4",
@@ -190,39 +169,26 @@ mod args {
             panic!("plan")
         };
         assert_eq!(plan.system.root_filesystem, RootFilesystem::Ext4);
-        assert_eq!(
-            plan.root_password.as_ref().unwrap().expose(),
-            " root-secret "
-        );
         assert_eq!(plan.ssh_keys, ["/root/client.pub"]);
-        assert!(!format!("{plan:?}").contains("root-secret"));
         assert!(plan.validate_install_credentials().is_ok());
         assert!(matches!(
             parse_args(["debian", "--username=admin", "--inspect"]),
             Ok(CliOutcome::Inspect(_))
         ));
         for args in [
-            vec![
-                "debian",
-                "--username=admin",
-                "--root-password",
-                "bad\nsecret",
-            ],
-            vec!["debian", "--root-password", "unused-secret"],
-            vec!["debian", "--filesystem=btrfs", "--swapfile-mib=64"],
+            vec!["debian", "--filesystem=btrfs"],
+            vec!["debian", "--btrfs-compression=3"],
             vec!["debian", "--hold=1", "--filesystem=ext4"],
             vec!["netboot.xyz", "--filesystem=ext4"],
         ] {
-            let error = parse_args(args).err().expect("invalid option combination");
-            assert!(!error.to_string().contains("secret"));
+            assert!(parse_args(args).is_err());
         }
     }
 }
 
 mod model {
     use rustaller::model::{
-        BootMode, CURRENT_SCHEMA_VERSION, InstallPlan, SecretString, Target, validate_host_arch,
-        validate_ram,
+        BootMode, CURRENT_SCHEMA_VERSION, InstallPlan, Target, validate_host_arch, validate_ram,
     };
 
     #[test]
@@ -265,19 +231,7 @@ mod model {
     }
 
     #[test]
-    fn automatic_credentials_are_mutually_exclusive_and_password_debug_is_redacted() {
-        let mut plan = InstallPlan::new(Target::Alpine);
-        plan.password = Some(SecretString::new("never-print-this"));
-        assert!(!format!("{plan:?}").contains("never-print-this"));
-        assert!(plan.validate().is_ok());
-
-        plan.ssh_keys
-            .push("ssh-ed25519 AAAATEST user@example".into());
-        assert!(plan.validate().is_err());
-    }
-
-    #[test]
-    fn account_and_password_inputs_reject_argument_and_line_injection_before_handoff() {
+    fn account_names_reject_argument_and_line_injection_before_handoff() {
         let mut plan = InstallPlan::new(Target::Debian);
         for name in [
             "-root",
@@ -295,18 +249,6 @@ mod model {
             plan.username = Some(name.into());
             assert!(plan.validate().is_ok());
         }
-        for password in [
-            "",
-            "secret\nroot:changed",
-            "secret\0value",
-            "secret\rvalue",
-            "secret\u{1b}value",
-        ] {
-            plan.password = Some(SecretString::new(password));
-            assert!(plan.validate().is_err());
-        }
-        plan.password = Some(SecretString::new("  exact password  "));
-        assert!(plan.validate().is_ok());
     }
 
     #[test]
@@ -323,51 +265,27 @@ mod model {
     }
 
     #[test]
-    fn non_root_installation_requires_a_private_root_password_only_at_dispatch() {
+    fn root_and_non_root_installation_and_rescue_require_keys_at_dispatch() {
         use rustaller::model::PlanError;
         for target in [Target::Alpine, Target::Debian, Target::Arch, Target::Gentoo] {
-            let mut plan = InstallPlan::new(target);
-            plan.username = Some("admin".into());
-            plan.ssh_keys = vec!["ssh-ed25519 AAAATEST admin".into()];
-            assert!(
-                plan.validate().is_ok(),
-                "inspection permits incomplete credentials"
-            );
-            assert_eq!(
-                plan.validate_install_credentials(),
-                Err(PlanError::MissingRootPassword)
-            );
-            plan.root_password = Some(SecretString::new(" root password with spaces "));
-            assert!(plan.validate_install_credentials().is_ok());
-            assert!(!format!("{plan:?}").contains("root password with spaces"));
-            assert!(
-                plan.password.is_none(),
-                "root credential does not change login authentication"
-            );
-            for invalid in [
-                "",
-                "root\nother:password",
-                "root\0password",
-                "root\rpassword",
-            ] {
-                plan.root_password = Some(SecretString::new(invalid));
-                assert_eq!(plan.validate(), Err(PlanError::InvalidPassword));
+            for (account, hold) in [("root", None), ("admin", None), ("admin", Some(1))] {
+                let mut plan = InstallPlan::new(target);
+                plan.username = Some(account.into());
+                plan.hold = hold;
+                assert!(plan.validate().is_ok());
+                assert_eq!(
+                    plan.validate_install_credentials(),
+                    Err(PlanError::MissingSshKey)
+                );
+                plan.ssh_keys.push(crate::support::PUBLIC_KEY.into());
+                assert!(plan.validate_install_credentials().is_ok());
+                assert!(!format!("{plan:?}").contains(crate::support::PUBLIC_KEY));
             }
-            plan.root_password = Some(SecretString::new("valid-root-secret"));
-            plan.hold = Some(1);
-            assert!(
-                plan.validate().is_err(),
-                "rescue must not carry an unused root password"
-            );
-            plan.root_password = None;
-            assert!(plan.validate_install_credentials().is_ok());
         }
-        let mut root = InstallPlan::new(Target::Debian);
-        assert!(root.validate_install_credentials().is_ok());
-        root.root_password = Some(SecretString::new("unused"));
         assert!(
-            root.validate().is_err(),
-            "root login uses the existing password field"
+            InstallPlan::new(Target::Reset)
+                .validate_install_credentials()
+                .is_ok()
         );
     }
 
@@ -379,7 +297,7 @@ mod model {
             "ext4".parse::<RootFilesystem>().unwrap(),
             RootFilesystem::Ext4
         );
-        for invalid in ["", "zfs", "ext4;reboot", "EXT4"] {
+        for invalid in ["", "zfs", "btrfs", "ext4;reboot", "EXT4"] {
             assert!(invalid.parse::<RootFilesystem>().is_err());
         }
         let mut plan = InstallPlan::new(Target::Debian);
@@ -395,22 +313,17 @@ mod model {
 
 mod plan_codec {
     use rustaller::codec::{PlanCodecError, decode_plan, encode_plan};
-    use rustaller::model::{
-        BootMode, CURRENT_SCHEMA_VERSION, InstallPlan, PlanError, SecretString, Target,
-    };
-    use rustaller::postinstall::KernelChoice;
+    use rustaller::model::{BootMode, CURRENT_SCHEMA_VERSION, InstallPlan, PlanError, Target};
 
     #[test]
     fn plan_round_trip_preserves_all_modes_and_private_fields() {
         let mut plan = InstallPlan::new(Target::Debian);
         plan.username = Some("admin".into());
-        plan.password = Some(SecretString::new("p@ssword"));
-        plan.root_password = Some(SecretString::new("root-only-secret"));
+        plan.ssh_keys.push(crate::support::PUBLIC_KEY.into());
         plan.system.root_filesystem = rustaller::config::RootFilesystem::Ext4;
         plan.ssh_port = Some(2200);
         plan.frpc_config = Some("/root/private/frpc.toml".into());
         plan.target_disk = Some("/dev/vda".into());
-        plan.no_cloud_kernel = true;
         plan.post_install.hostname = Some("my-vps".into());
         plan.post_install.timezone = Some("Etc/UTC".into());
         plan.hold = Some(2);
@@ -422,23 +335,14 @@ mod plan_codec {
         assert_eq!(decoded.schema_version, plan.schema_version);
         assert_eq!(decoded.target, plan.target);
         assert_eq!(decoded.username, plan.username);
-        assert_eq!(
-            decoded.password.as_ref().map(SecretString::expose),
-            Some("p@ssword")
-        );
         assert_eq!(decoded.ssh_port, plan.ssh_port);
-        assert_eq!(
-            decoded.root_password.as_ref().map(SecretString::expose),
-            Some("root-only-secret")
-        );
         assert_eq!(
             decoded.system.root_filesystem,
             rustaller::config::RootFilesystem::Ext4
         );
-        assert!(!format!("{decoded:?}").contains("root-only-secret"));
+        assert!(!format!("{decoded:?}").contains(crate::support::PUBLIC_KEY));
         assert_eq!(decoded.frpc_config, plan.frpc_config);
         assert_eq!(decoded.target_disk, plan.target_disk);
-        assert_eq!(decoded.no_cloud_kernel, plan.no_cloud_kernel);
         assert_eq!(decoded.post_install, plan.post_install);
         assert_eq!(decoded.hold, plan.hold);
         assert_eq!(decoded.force_boot_mode, plan.force_boot_mode);
@@ -449,8 +353,8 @@ mod plan_codec {
     fn ssh_key_plan_round_trip_preserves_multiple_public_keys() {
         let mut plan = InstallPlan::new(Target::Arch);
         plan.ssh_keys = vec![
-            "ssh-ed25519 AAAATEST first@host".into(),
-            "ssh-rsa AAAATEST second@host".into(),
+            crate::support::PUBLIC_KEY.into(),
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM2WUfRF3HJsHnADhPcb7X5IcdKGSvmDenGXHA0AkbUV second".into(),
         ];
         plan.validate().expect("valid SSH key plan");
 
@@ -480,66 +384,55 @@ mod plan_codec {
         let mut invalid = InstallPlan::new(Target::Alpine);
         invalid.ssh_port = Some(0);
         assert!(matches!(
-            decode_plan(&encode_plan(&invalid).expect("encode invalid plan")),
-            Err(PlanCodecError::InvalidPlan(_))
+            encode_plan(&invalid),
+            Err(PlanCodecError::InvalidPlan(PlanError::InvalidPort("SSH")))
         ));
     }
 
     #[test]
-    fn kernel_choices_round_trip_and_unsupported_schemas_fail_before_body_decoding() {
-        for (target, kernel) in [
-            (Target::Alpine, KernelChoice::Cloud),
-            (Target::Alpine, KernelChoice::Virt),
-            (Target::Alpine, KernelChoice::Standard),
-            (Target::Debian, KernelChoice::Generic),
-            (Target::Debian, KernelChoice::Standard),
-            (Target::Arch, KernelChoice::Lts),
-            (Target::Arch, KernelChoice::Cachyos),
-            (Target::Gentoo, KernelChoice::Standard),
-        ] {
-            let mut plan = InstallPlan::new(target);
-            plan.post_install.kernel = kernel;
-            assert_eq!(
-                decode_plan(&encode_plan(&plan).unwrap())
-                    .unwrap()
-                    .post_install,
-                plan.post_install
-            );
-        }
-        for schema in (0..10).chain([CURRENT_SCHEMA_VERSION + 1]) {
+    fn incompatible_schemas_fail_before_body_decoding() {
+        for schema in (0..CURRENT_SCHEMA_VERSION).chain([CURRENT_SCHEMA_VERSION + 1]) {
             let mut bytes = b"RINSTALL\0".to_vec();
             bytes.extend_from_slice(&schema.to_le_bytes());
-            assert!(
-                matches!(decode_plan(&bytes), Err(PlanCodecError::InvalidPlan(PlanError::UnsupportedSchema(value))) if value == schema)
+            assert_eq!(
+                decode_plan(&bytes).unwrap_err(),
+                PlanCodecError::InvalidPlan(PlanError::UnsupportedSchema(schema))
             );
         }
-        let mut bytes = encode_plan(&InstallPlan::new(Target::Reset)).unwrap();
-        let kernel_index = bytes.len() - 4;
-        bytes[kernel_index] = 255;
-        assert!(matches!(
-            decode_plan(&bytes),
-            Err(PlanCodecError::InvalidTag)
-        ));
+        let mut plan = InstallPlan::new(Target::Debian);
+        plan.schema_version = 11;
+        assert_eq!(
+            encode_plan(&plan).unwrap_err(),
+            PlanCodecError::InvalidPlan(PlanError::UnsupportedSchema(11))
+        );
+        assert!(
+            decode_plan(b"RINSTALL\0\x0b\0")
+                .unwrap_err()
+                .to_string()
+                .contains("Regenerate")
+        );
     }
 
     #[test]
-    fn schema_ten_preserves_an_explicit_standard_profile() {
-        let mut plan = InstallPlan::new(Target::Debian);
-        plan.schema_version = 10;
-        plan.system.profile = rustaller::config::InstallProfile::Standard;
-        let decoded = decode_plan(&encode_plan(&plan).unwrap()).unwrap();
-        assert_eq!(decoded.schema_version, CURRENT_SCHEMA_VERSION);
-        assert_eq!(
-            decoded.system.profile,
-            rustaller::config::InstallProfile::Standard
-        );
-        assert_eq!(decoded.system.explicit_network, None);
+    fn only_resolved_public_keys_can_be_serialized() {
+        let mut plan = InstallPlan::new(Target::Arch);
+        for source in [
+            "/root/id_ed25519.pub",
+            "https://example.com/public-key",
+            "ssh-ed25519 AAAA\nuser",
+        ] {
+            plan.ssh_keys = vec![source.into()];
+            assert_eq!(
+                encode_plan(&plan).unwrap_err(),
+                PlanCodecError::UnresolvedSshKey
+            );
+        }
     }
 }
 
 mod plan_file {
     use rustaller::codec::encode_plan;
-    use rustaller::model::{InstallPlan, SecretString, Target};
+    use rustaller::model::{InstallPlan, Target};
     use rustaller::plan_file::PrivatePlanFile;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
@@ -551,7 +444,7 @@ mod plan_file {
         let scratch = Scratch::new("plan_file");
         let path = scratch.0.join("install.plan");
         let mut plan = InstallPlan::new(Target::Alpine);
-        plan.password = Some(SecretString::new("plan-secret-sentinel"));
+        plan.ssh_keys.push(crate::support::PUBLIC_KEY.into());
 
         {
             let file = PrivatePlanFile::create(&path, &plan).expect("create private plan");
@@ -562,10 +455,7 @@ mod plan_file {
             );
             let decoded = file.read().expect("read plan");
             assert_eq!(decoded.target, Target::Alpine);
-            assert_eq!(
-                decoded.password.as_ref().map(SecretString::expose),
-                Some("plan-secret-sentinel")
-            );
+            assert_eq!(decoded.ssh_keys, [crate::support::PUBLIC_KEY]);
         }
         assert!(
             !path.exists(),

@@ -13,25 +13,14 @@ Targets:
   gentoo       Gentoo Linux
 
 Options:
-  --username USERNAME           Target account name
-  --password PASSWORD           Target account password
-  --root-password PASSWORD      Separate root password for a non-root account
-  --ssh-key KEY                 SSH public key (repeatable)
+  --username USERNAME           Administrative account (default: admin)
+  --ssh-key KEY                 Required SSH public key or absolute public-key file (repeatable)
   --ssh-port PORT               SSH port
   --frpc-config PATH            frpc configuration
   --target-disk /dev/DISK       Target disk for automatic installation
-  --filesystem xfs|ext4|btrfs   Target root filesystem (default: xfs)
+  --filesystem xfs|ext4         Target root filesystem (default: xfs)
   --root-size-mib MIB          Root partition size (minimum 512 MiB; default: fill disk)
   --boot-size-mib MIB          FAT32 /boot size, 512-4096 MiB (default: 512)
-  --btrfs-compression LEVEL    Btrfs zstd 1-15, 0=off (default: 3)
-  --no-cloud-kernel             Select the non-cloud kernel
-  --kernel CHOICE               Target-specific kernel (aliases accepted)
-    Arch: standard/linux, lts/linux-lts, hardened/linux-hardened,
-          zen/linux-zen, cachyos (existing supported hardware policy)
-    Debian: standard/generic/linux-image-amd64, cloud/linux-image-cloud-amd64
-    Alpine: standard/lts/linux-lts, virt/linux-virt (cloud alias retained)
-    Gentoo: auto/standard/gentoo-kernel-bin
-  --gentoo-init openrc|systemd   Gentoo amd64-nomultilib stage3 (default: openrc)
   --hostname NAME               Set target hostname (one ASCII label)
   --timezone ZONE               Set target timezone, e.g. Etc/UTC
   --profile minimal|standard    Select target footprint (default: minimal)
@@ -73,7 +62,9 @@ Options:
 
 Linux x86_64 hosts only. Automatic installation erases the selected disk.
 Rust embeds its matching worker and verifies official installation sources.
-New target systems use rustaller-boot schema 1; Btrfs swapfiles are unsupported.
+Each target has a fixed kernel and init system. Use TARGET --inspect to review them.
+Installation and Alpine Live rescue require SSH public keys. Inspection and reset do not.
+Use --username root to explicitly allow SSH access as root.
 Without --network-mac, Rustaller inherits a verified source network policy.
 With --network-mac, omitted families get no addresses from the plan. Use --dns for static DNS.
 "rustaller reset" cancels installer-owned preparation before a handoff.
@@ -144,7 +135,6 @@ where
     let mut inspect = false;
     let mut confirmation = None;
     let mut dns_mode = None;
-    let mut kernel_value = None;
     let mut options = InstallPlan::new(Target::Reset);
     let mut options_ended = false;
     let mut index = 0;
@@ -296,31 +286,17 @@ where
                 }
                 index += 1;
             }
-            "--profile"
-            | "--gentoo-init"
-            | "--filesystem"
-            | "--root-size-mib"
-            | "--boot-size-mib"
-            | "--btrfs-compression"
-            | "--dns-mode"
-            | "--dns"
-            | "--dns-search" => {
+            "--profile" | "--filesystem" | "--root-size-mib" | "--boot-size-mib" | "--dns-mode"
+            | "--dns" | "--dns-search" => {
                 let (value, consumed) = take_value(&args, index, &name, inline_value)?;
                 let invalid = || CliError::InvalidValue(name.clone());
                 match name.as_str() {
-                    "--gentoo-init" => {
-                        options.system.gentoo_init = Some(value.parse().map_err(|_| invalid())?)
-                    }
                     "--profile" => options.system.profile = value.parse().map_err(|_| invalid())?,
                     "--root-size-mib" => {
                         options.system.root_size_mib = Some(value.parse().map_err(|_| invalid())?)
                     }
                     "--boot-size-mib" => {
                         options.system.boot_size_mib = Some(value.parse().map_err(|_| invalid())?)
-                    }
-                    "--btrfs-compression" => {
-                        options.system.btrfs_compression =
-                            Some(value.parse().map_err(|_| invalid())?)
                     }
                     "--filesystem" => {
                         options.system.root_filesystem = value.parse().map_err(|_| invalid())?
@@ -355,17 +331,9 @@ where
                 options.debug = true;
                 index += 1;
             }
-            "--no-cloud-kernel" => {
-                reject_inline(&name, inline_value.as_deref())?;
-                options.no_cloud_kernel = true;
-                index += 1;
-            }
-            "--kernel" | "--hostname" | "--timezone" => {
+            "--hostname" | "--timezone" => {
                 let (value, consumed) = take_value(&args, index, &name, inline_value)?;
                 match name.as_str() {
-                    "--kernel" => {
-                        kernel_value = Some(value);
-                    }
                     "--hostname" => options.post_install.hostname = Some(value),
                     "--timezone" => options.post_install.timezone = Some(value),
                     _ => unreachable!(),
@@ -384,16 +352,6 @@ where
             "--user" | "--username" => {
                 let (value, consumed) = take_value(&args, index, &name, inline_value)?;
                 options.username = Some(value.trim().to_owned());
-                index += consumed;
-            }
-            "--passwd" | "--password" => {
-                let (value, consumed) = take_value(&args, index, &name, inline_value)?;
-                options.password = Some(crate::model::SecretString::new(value));
-                index += consumed;
-            }
-            "--root-password" => {
-                let (value, consumed) = take_value(&args, index, &name, inline_value)?;
-                options.root_password = Some(crate::model::SecretString::new(value));
                 index += consumed;
             }
             "--ssh-key" | "--public-key" => {
@@ -427,7 +385,7 @@ where
             }
 
             "-h" | "--help" => return Ok(CliOutcome::Help),
-            _ if arg.starts_with('-') => return Err(CliError::UnknownOption(arg.clone())),
+            _ if name.starts_with('-') => return Err(CliError::UnknownOption(name)),
             _ => {
                 set_target(&mut target, arg)?;
                 index += 1;
@@ -436,25 +394,11 @@ where
     }
 
     let target = target.ok_or(CliError::MissingTarget)?;
-    let mut plan = InstallPlan::new(target);
-    plan.username = options.username;
-    plan.password = options.password;
-    plan.root_password = options.root_password;
-    plan.ssh_keys = options.ssh_keys;
-    plan.ssh_port = options.ssh_port.or(plan.ssh_port);
-    plan.frpc_config = options.frpc_config;
-    plan.target_disk = options.target_disk;
-    plan.no_cloud_kernel = options.no_cloud_kernel;
-    plan.post_install = options.post_install;
-    if let Some(value) = kernel_value {
-        plan.post_install.kernel =
-            crate::postinstall::KernelChoice::parse_for_target(&value, target)
-                .map_err(|error| CliError::InvalidPlan(PlanError::PostInstall(error)))?;
-    }
-    plan.system = options.system;
-    if target == Target::Gentoo && plan.system.gentoo_init.is_none() && options.hold != Some(1) {
-        plan.system.gentoo_init = Some(crate::config::GentooInit::Openrc);
-    }
+    let mut plan = InstallPlan {
+        target,
+        ssh_port: options.ssh_port.or(InstallPlan::new(target).ssh_port),
+        ..options
+    };
     plan.system.dns.mode = dns_mode.unwrap_or({
         if plan.system.dns.servers.is_empty() && plan.system.dns.search_domains.is_empty() {
             DnsMode::Auto
@@ -462,9 +406,6 @@ where
             DnsMode::Static
         }
     });
-    plan.hold = options.hold;
-    plan.force_boot_mode = options.force_boot_mode;
-    plan.debug = options.debug;
     plan.validate().map_err(CliError::InvalidPlan)?;
     if (inspect || confirmation.is_some()) && !plan.target.is_automatic() {
         return Err(CliError::InvalidValue(

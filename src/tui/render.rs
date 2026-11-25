@@ -1,5 +1,5 @@
 use super::PREVIEW;
-use super::state::{Field, Page, Setting, View, Wizard};
+use super::state::{Page, Setting, View, Wizard};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -47,6 +47,8 @@ impl Wizard {
         let entries = self.entries();
         let summary = self.summary();
         let context = self.context_label();
+        let is_automatic = self.is_automatic();
+        let has_keys = !self.draft().keys.is_empty();
         let selector = match &self.view {
             View::Select { setting, .. } => self.choices(*setting),
             _ => Vec::new(),
@@ -74,9 +76,6 @@ impl Wizard {
                 offset,
             } => {
                 let title = match setting {
-                    Setting::Authentication => "Choose authentication",
-                    Setting::Kernel => "Choose target kernel",
-                    Setting::GentooInit => "Gentoo init (amd64, no-multilib)",
                     Setting::Boot => "Choose boot mode",
                     Setting::Hold => "Choose installation hold behavior",
                     Setting::Profile => "Choose installation profile",
@@ -113,15 +112,7 @@ impl Wizard {
                         .style(Style::default().add_modifier(Modifier::BOLD)),
                     label,
                 );
-                let password = matches!(
-                    slot,
-                    super::state::EditSlot::Field(Field::Password | Field::Confirm)
-                );
-                let block = Block::bordered().title(if password {
-                    "Password editor"
-                } else {
-                    "Edit field"
-                });
+                let block = Block::bordered().title("Edit field");
                 let inner = block.inner(input_area);
                 let (visible, cursor) = input.visible(usize::from(inner.width));
                 frame.render_widget(Paragraph::new(visible).block(block), input_area);
@@ -140,7 +131,13 @@ impl Wizard {
                     blocked: false,
                     current: self.report.as_ref().map(|r|r.current.clone()).unwrap_or_else(||"Not inspected yet. Enter runs read-only host and disk checks.\nFirmware, storage eligibility and network ownership remain unknown.".into()),
                     target: summary.join("\n"),
-                    warning: self.report.as_ref().map(|r|r.warning.clone()).unwrap_or_else(||"DESTRUCTIVE INSTALLATION: the selected whole disk will be erased after successful preflight and exact disk-identity confirmation.".into()),
+                    warning: self.report.as_ref().map(|r|r.warning.clone()).unwrap_or_else(|| {
+                        if is_automatic {
+                            "DESTRUCTIVE INSTALLATION: the selected whole disk will be erased after successful preflight and exact disk-identity confirmation.".into()
+                        } else {
+                            "Alpine Live rescue interrupts connectivity without partitioning the disk.".into()
+                        }
+                    }),
                 };
                 render_report(frame, body, &report, scroll);
                 "Enter: read-only preflight  Esc: edit  Up/Down/PgUp/PgDn: scroll"
@@ -155,8 +152,10 @@ impl Wizard {
                 } else {
                     render_text(frame, body, "Preflight blocked", message.clone(), scroll);
                 }
-                if *success {
+                if *success && has_keys {
                     "Enter: final confirmation  Esc: edit  Up/Down: scroll"
+                } else if *success {
+                    "Add an SSH public key before installation  Esc: edit  Up/Down: scroll"
                 } else {
                     "Esc: edit settings; execution blocked  Up/Down: scroll"
                 }

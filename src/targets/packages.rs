@@ -2,7 +2,7 @@
 use crate::command::{
     CommandError, CommandInput, CommandRunner, CommandSpec, OutputMode, run_checked,
 };
-use crate::config::InstallProfile;
+use crate::config::{InstallProfile, RootFilesystem};
 use crate::model::{BootMode, InstallPlan, PlanError, Target};
 use crate::postinstall::ConfigurationPlan;
 use crate::shared::configure::{
@@ -18,7 +18,6 @@ const END: &str = "# END rustaller minimal packages";
 pub fn configuration_for_plan(
     plan: &InstallPlan,
     target: Target,
-    is_virtual_machine: bool,
 ) -> Result<ConfigurationPlan, PlanError> {
     if plan.target != target || plan.hold == Some(1) {
         return Err(PlanError::UnexpectedOption("automatic-install"));
@@ -26,18 +25,11 @@ pub fn configuration_for_plan(
     plan.validate()?;
     let mut configuration = plan
         .post_install
-        .prepare(target, plan.no_cloud_kernel, is_virtual_machine)
+        .prepare(target)
         .map_err(PlanError::PostInstall)?;
-    for package in plan
-        .system
-        .required_packages(target)
-        .iter()
-        .chain(plan.system.tool_packages(target))
-    {
-        if !configuration.extra_packages.contains(package) {
-            configuration.extra_packages.push(package);
-        }
-    }
+    configuration
+        .extra_packages
+        .extend_from_slice(plan.system.tool_packages(target));
     Ok(configuration)
 }
 
@@ -61,13 +53,12 @@ pub struct ProfilePackagePlan {
 pub fn package_plan(
     plan: &InstallPlan,
     boot_mode: BootMode,
-    is_virtual_machine: bool,
     firmware_packages: &[String],
 ) -> Result<ProfilePackagePlan, PlanError> {
     if !plan.target.is_automatic() {
         return Err(PlanError::UnexpectedOption("automatic-install"));
     }
-    let configuration = configuration_for_plan(plan, plan.target, is_virtual_machine)?;
+    let configuration = configuration_for_plan(plan, plan.target)?;
     if plan
         .force_boot_mode
         .is_some_and(|expected| expected != boot_mode)
@@ -86,24 +77,17 @@ pub fn package_plan(
                 "ifupdown-ng",
                 // Boot refresh requires the real util-linux mount inspector.
                 "findmnt",
-                match plan.system.root_filesystem {
-                    crate::config::RootFilesystem::Xfs => "xfsprogs",
-                    crate::config::RootFilesystem::Ext4 => "e2fsprogs",
-                    crate::config::RootFilesystem::Btrfs => "btrfs-progs",
-                },
+                plan.system.root_filesystem.maintenance_package(),
             ]
             .map(str::to_owned)
             .to_vec();
-            let mut later = vec![
-                configuration.kernel.package.to_owned(),
-                "dosfstools".to_owned(),
-            ];
+            let mut later = vec![configuration.kernel.to_owned(), "dosfstools".to_owned()];
             later.extend(firmware_packages.iter().cloned());
             if plan.system.swap.size_mib.is_some() {
                 // util-linux swapon provides --show for post-boot diagnostics.
                 later.push("util-linux-misc".into());
             }
-            if plan.username.as_deref().is_some_and(|user| user != "root") {
+            if plan.account_name() != "root" {
                 later.push("sudo".into());
             }
             (RootfsMethod::AlpineApk, base, later)
@@ -111,33 +95,24 @@ pub fn package_plan(
         Target::Debian => (
             RootfsMethod::DebianMinbase,
             vec![],
-            super::debian::apt_package_list_for_plan(plan, boot_mode, firmware_packages)?,
+            super::debian::apt_package_list_for_plan(plan, firmware_packages)?,
         ),
         Target::Arch => {
-            let mut base = pacstrap_packages(
-                boot_mode,
-                plan.system.root_filesystem.as_str(),
-                plan.username.as_deref().unwrap_or("root"),
+            let base = pacstrap_packages(
+                plan.system.root_filesystem,
+                plan.account_name(),
                 firmware_packages,
             );
-            if plan.system.profile == InstallProfile::Minimal {
-                base.push("archlinux-keyring".into());
-            }
             (
                 RootfsMethod::ArchPacstrap,
                 base,
-                vec![configuration.kernel.package.into(), "mkinitcpio".into()],
+                vec![configuration.kernel.into(), "mkinitcpio".into()],
             )
         }
         Target::Gentoo => (
             RootfsMethod::GentooNomultilibStage3,
             vec![],
-            emerge_package_set_for_plan(
-                plan,
-                boot_mode,
-                plan.system.root_filesystem.as_str(),
-                firmware_packages,
-            )?,
+            emerge_package_set_for_plan(plan, firmware_packages)?,
         ),
         _ => unreachable!(),
     };
@@ -164,18 +139,19 @@ pub fn package_plan(
 }
 
 pub fn pacstrap_packages(
-    _boot_mode: BootMode,
-    root_filesystem: &str,
+    root_filesystem: RootFilesystem,
     username: &str,
     firmware_packages: &[String],
 ) -> Vec<String> {
-    let mut packages = vec!["base".into(), "dosfstools".into(), "openssh".into()];
-    match root_filesystem {
-        "xfs" => packages.push("xfsprogs".into()),
-        "ext4" => packages.push("e2fsprogs".into()),
-        "btrfs" => packages.push("btrfs-progs".into()),
-        _ => {}
-    }
+    let mut packages = vec![
+        "base".into(),
+        "archlinux-keyring".into(),
+        "ca-certificates".into(),
+        "gnupg".into(),
+        "dosfstools".into(),
+        "openssh".into(),
+        root_filesystem.maintenance_package().into(),
+    ];
     if username != "root" {
         packages.push("sudo".into());
     }
@@ -188,14 +164,15 @@ pub fn pacstrap_packages(
 pub fn kernel_install_command_for_plan(
     plan: &InstallPlan,
     root: &Path,
+    server: &str,
 ) -> Result<CommandSpec, PlanError> {
-    let configuration = configuration_for_plan(plan, Target::Arch, false)?;
+    let configuration = configuration_for_plan(plan, Target::Arch)?;
     let mut args = vec![
         root.as_os_str().to_owned(),
         "pacman".into(),
         "-Syu".into(),
         "--noconfirm".into(),
-        configuration.kernel.package.into(),
+        server.into(),
         "mkinitcpio".into(),
     ];
     args.extend(configuration.extra_packages.into_iter().map(Into::into));
@@ -216,7 +193,7 @@ pub fn verify_kernel_available<R: CommandRunner>(
     plan: &InstallPlan,
 ) -> Result<(), KernelAvailabilityError> {
     let configuration =
-        configuration_for_plan(plan, plan.target, false).map_err(KernelAvailabilityError::Plan)?;
+        configuration_for_plan(plan, plan.target).map_err(KernelAvailabilityError::Plan)?;
     let mut args = vec![root.as_os_str().to_owned()];
     let native: Vec<&str> = match plan.target {
         Target::Alpine => vec![
@@ -224,16 +201,7 @@ pub fn verify_kernel_available<R: CommandRunner>(
             "add",
             "--simulate",
             "--no-cache",
-            configuration.kernel.package,
-        ],
-        Target::Arch => vec![
-            "pacman",
-            "-Syp",
-            "--noconfirm",
-            "--print-format",
-            "%n",
-            configuration.kernel.package,
-            "mkinitcpio",
+            configuration.kernel,
         ],
         Target::Gentoo => vec![
             "emerge",
@@ -241,19 +209,11 @@ pub fn verify_kernel_available<R: CommandRunner>(
             "--getbinpkg",
             "--usepkg",
             "--noreplace",
-            configuration.kernel.package,
+            configuration.kernel,
             "sys-kernel/dracut",
             "sys-kernel/installkernel",
         ],
-        Target::Debian => vec![
-            "apt-get",
-            "--simulate",
-            "install",
-            "--no-install-recommends",
-            configuration.kernel.package,
-            "initramfs-tools",
-        ],
-        Target::Reset => {
+        _ => {
             return Err(KernelAvailabilityError::Plan(PlanError::UnexpectedOption(
                 "automatic-install",
             )));
@@ -287,66 +247,37 @@ impl std::fmt::Display for KernelAvailabilityError {
 }
 impl std::error::Error for KernelAvailabilityError {}
 
-pub fn emerge_package_set(
-    _boot_mode: BootMode,
-    root_filesystem: &str,
-    username: &str,
-    firmware_packages: &[String],
-) -> Vec<String> {
-    let mut packages = vec![
-        "sys-block/io-scheduler-udev-rules".to_owned(),
-        "sys-fs/dosfstools".into(),
-    ];
-    match root_filesystem {
-        "xfs" => packages.push("sys-fs/xfsprogs".to_owned()),
-        "ext4" => packages.push("sys-fs/e2fsprogs".to_owned()),
-        "btrfs" => packages.push("sys-fs/btrfs-progs".to_owned()),
-        _ => {}
-    }
-    if username != "root" {
-        packages.push("app-admin/sudo".to_owned());
-    }
-    packages.extend(firmware_packages.iter().cloned());
-    packages.push("sys-kernel/gentoo-kernel-bin".to_owned());
-    packages
-}
-
 pub fn emerge_package_set_for_plan(
     plan: &InstallPlan,
-    boot_mode: BootMode,
-    root_filesystem: &str,
     firmware_packages: &[String],
 ) -> Result<Vec<String>, PlanError> {
-    let configuration = configuration_for_plan(plan, Target::Gentoo, false)?;
-    let mut packages = emerge_package_set(
-        boot_mode,
-        root_filesystem,
-        plan.username.as_deref().unwrap_or("root"),
-        firmware_packages,
-    );
-    if plan.system.profile == InstallProfile::Minimal {
-        // Optional scheduler tuning is not needed for boot, Portage or remote
-        // administration. Keep the native stage3 toolchain and dependencies.
-        packages.retain(|package| package != "sys-block/io-scheduler-udev-rules");
+    let configuration = configuration_for_plan(plan, Target::Gentoo)?;
+    let mut packages = [
+        configuration.kernel,
+        "sys-fs/dosfstools",
+        "sys-apps/openrc",
+        "net-misc/netifrc",
+        "net-misc/dhcpcd",
+        "net-dns/openresolv",
+        "sys-kernel/dracut",
+        "sys-kernel/installkernel",
+        "net-misc/openssh",
+        "app-misc/ca-certificates",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    packages.push(format!(
+        "sys-fs/{}",
+        plan.system.root_filesystem.maintenance_package()
+    ));
+    if plan.system.profile == InstallProfile::Standard {
+        packages.push("sys-block/io-scheduler-udev-rules".into());
     }
+    if plan.account_name() != "root" {
+        packages.push("app-admin/sudo".into());
+    }
+    packages.extend(firmware_packages.iter().cloned());
     packages.extend(configuration.extra_packages.into_iter().map(str::to_owned));
-    packages.extend(
-        ["sys-kernel/dracut", "sys-kernel/installkernel"]
-            .into_iter()
-            .map(str::to_owned),
-    );
-    if plan.system.gentoo_init == Some(crate::config::GentooInit::Openrc) {
-        packages.extend(
-            [
-                "sys-apps/openrc",
-                "net-misc/netifrc",
-                "net-misc/dhcpcd",
-                "net-dns/openresolv",
-            ]
-            .into_iter()
-            .map(str::to_owned),
-        );
-    }
     Ok(packages)
 }
 
@@ -362,7 +293,7 @@ pub fn verify_boot_driver_support(
     use std::collections::BTreeSet;
     use std::fs;
     validate_root(root).map_err(|e| e.to_string())?;
-    if !matches!(filesystem, "xfs" | "ext4" | "btrfs") {
+    if !matches!(filesystem, "xfs" | "ext4") {
         return Err("unsupported target root filesystem".into());
     }
     let mut required = BTreeSet::from([filesystem.to_owned(), "vfat".to_owned()]);

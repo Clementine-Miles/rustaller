@@ -16,7 +16,6 @@ pub mod host {
     pub mod inspect;
     pub mod lifecycle;
     pub mod network;
-    pub mod password;
     pub mod preflight;
     pub mod sources;
     pub mod ssh_keygen;
@@ -40,7 +39,7 @@ pub mod targets {
     pub mod rolling;
 }
 
-pub const RUNTIME_VERSION: &str = "RUSTALLER-CONFIG-20261125-11";
+pub const RUNTIME_VERSION: &str = "RUSTALLER-CONFIG-20261125-12";
 pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub mod worker {
     pub mod args;

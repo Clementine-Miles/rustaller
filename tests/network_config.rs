@@ -98,7 +98,7 @@ fn text(plan: &InstallPlan, manifest: &DeploymentManifest, name: &str) -> String
 
 #[test]
 fn native_networkd_final_files_cover_static_dhcp_ra_mtu_and_mac_matching() {
-    for target in [Target::Debian, Target::Arch, Target::Gentoo] {
+    for target in [Target::Debian, Target::Arch] {
         for (v4, v6) in [(true, false), (false, true), (true, true)] {
             let mut m = manifest();
             if !v4 {
@@ -110,9 +110,6 @@ fn native_networkd_final_files_cover_static_dhcp_ra_mtu_and_mac_matching() {
                 m.network[0].ipv6_gateway = None;
             }
             let mut plan = static_dns(target);
-            if target == Target::Gentoo {
-                plan.system.gentoo_init = Some(rustaller::config::GentooInit::Systemd);
-            }
             plan.system.network.mtu = Some(1450);
             let name = "etc/systemd/network/10-ens3.network";
             let static_text = text(&plan, &m, name);

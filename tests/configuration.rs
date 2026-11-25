@@ -1,166 +1,34 @@
 mod support;
 mod postinstall {
     use rustaller::model::{InstallPlan, Target};
-    use rustaller::postinstall::{KernelChoice, PostInstallConfig, PostInstallError};
+    use rustaller::postinstall::{PostInstallConfig, PostInstallError, required_kernel};
 
     #[test]
-    fn official_kernel_matrix_preserves_defaults_and_rejects_cross_distribution_choices() {
-        for (target, choice, package) in [
-            (Target::Alpine, KernelChoice::Auto, "linux-lts"),
-            (Target::Alpine, KernelChoice::Cloud, "linux-virt"),
-            (Target::Alpine, KernelChoice::Generic, "linux-lts"),
-            (Target::Alpine, KernelChoice::Lts, "linux-lts"),
-            (Target::Alpine, KernelChoice::Virt, "linux-virt"),
-            (Target::Alpine, KernelChoice::Standard, "linux-lts"),
-            (Target::Debian, KernelChoice::Standard, "linux-image-amd64"),
-            (Target::Arch, KernelChoice::Cachyos, "linux-cachyos"),
-            (Target::Debian, KernelChoice::Auto, "linux-image-amd64"),
-            (
-                Target::Debian,
-                KernelChoice::Cloud,
-                "linux-image-cloud-amd64",
-            ),
-            (Target::Debian, KernelChoice::Generic, "linux-image-amd64"),
-            (Target::Arch, KernelChoice::Auto, "linux"),
-            (Target::Arch, KernelChoice::Standard, "linux"),
-            (Target::Arch, KernelChoice::Lts, "linux-lts"),
-            (Target::Arch, KernelChoice::Hardened, "linux-hardened"),
-            (Target::Arch, KernelChoice::Zen, "linux-zen"),
-            (
-                Target::Gentoo,
-                KernelChoice::Auto,
-                "sys-kernel/gentoo-kernel-bin",
-            ),
-            (
-                Target::Gentoo,
-                KernelChoice::Standard,
-                "sys-kernel/gentoo-kernel-bin",
-            ),
-        ] {
-            let config = PostInstallConfig {
-                kernel: choice,
-                ..Default::default()
-            };
-            config.validate(target, false, None).unwrap();
-            assert_eq!(
-                config.kernel_package(target, false, false).unwrap().package,
-                package
-            );
-            for (other_target, other_choice) in [
-                (Target::Debian, KernelChoice::Lts),
-                (Target::Arch, KernelChoice::Cloud),
-                (Target::Arch, KernelChoice::Generic),
-                (Target::Gentoo, KernelChoice::Cloud),
-                (Target::Gentoo, KernelChoice::Generic),
-                (Target::Gentoo, KernelChoice::Lts),
-                (Target::Alpine, KernelChoice::Hardened),
-                (Target::Debian, KernelChoice::Zen),
-                (Target::Gentoo, KernelChoice::Hardened),
-            ] {
-                assert!(
-                    PostInstallConfig {
-                        kernel: other_choice,
-                        ..Default::default()
-                    }
-                    .validate(other_target, false, None)
-                    .is_err()
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn package_spelling_aliases_are_bound_to_their_distribution() {
-        for (target, value, expected) in [
-            (Target::Arch, "linux", KernelChoice::Standard),
-            (Target::Arch, "linux-lts", KernelChoice::Lts),
-            (Target::Arch, "linux-hardened", KernelChoice::Hardened),
-            (Target::Arch, "linux-zen", KernelChoice::Zen),
-            (Target::Debian, "linux-image-amd64", KernelChoice::Generic),
-            (
-                Target::Debian,
-                "linux-image-cloud-amd64",
-                KernelChoice::Cloud,
-            ),
-            (Target::Alpine, "linux-lts", KernelChoice::Lts),
-            (Target::Alpine, "linux-virt", KernelChoice::Virt),
-            (Target::Gentoo, "gentoo-kernel-bin", KernelChoice::Standard),
-        ] {
-            assert_eq!(
-                KernelChoice::parse_for_target(value, target).unwrap(),
-                expected
-            );
-        }
-        for (target, value) in [
-            (Target::Alpine, "linux"),
-            (Target::Alpine, "linux-image-cloud-amd64"),
-            (Target::Gentoo, "linux-image-amd64"),
-            (Target::Debian, "linux-lts"),
-            (Target::Arch, "gentoo-kernel-bin"),
-        ] {
-            assert!(KernelChoice::parse_for_target(value, target).is_err());
-        }
-    }
-
-    #[test]
-    fn additional_arch_kernels_round_trip_through_the_worker_protocol() {
-        use rustaller::codec::{decode_plan, encode_plan};
-        for kernel in [KernelChoice::Hardened, KernelChoice::Zen] {
-            let mut plan = InstallPlan::new(Target::Arch);
-            plan.post_install.kernel = kernel;
-            assert_eq!(
-                decode_plan(&encode_plan(&plan).unwrap())
-                    .unwrap()
-                    .post_install
-                    .kernel,
-                kernel
-            );
-        }
-    }
-
-    #[test]
-    fn standard_defaults_are_predictable_on_physical_and_virtual_hosts() {
+    fn fixed_kernel_and_init_policy_is_authoritative_for_every_target() {
         let config = PostInstallConfig::default();
-        assert_eq!(
-            config
-                .kernel_package(Target::Alpine, false, true)
-                .unwrap()
-                .alpine_flavor,
-            Some("lts")
-        );
-        assert_eq!(
-            config
-                .kernel_package(Target::Alpine, true, true)
-                .unwrap()
-                .alpine_flavor,
-            Some("lts")
-        );
-        assert_eq!(
-            config
-                .kernel_package(Target::Debian, true, true)
-                .unwrap()
-                .package,
-            "linux-image-amd64"
-        );
-        let explicit = PostInstallConfig {
-            kernel: KernelChoice::Generic,
-            ..Default::default()
-        };
-        assert_eq!(
-            explicit.validate(Target::Debian, true, None),
-            Err(PostInstallError::ConflictingKernelOptions)
-        );
+        for (target, package, init) in [
+            (Target::Alpine, "linux-virt", "OpenRC"),
+            (Target::Debian, "linux-image-cloud-amd64", "systemd"),
+            (Target::Arch, "linux-cachyos-server", "systemd"),
+            (Target::Gentoo, "sys-kernel/gentoo-kernel-bin", "OpenRC"),
+        ] {
+            assert_eq!(required_kernel(target).unwrap(), package);
+            assert_eq!(config.prepare(target).unwrap().kernel, package);
+            assert_eq!(target.init_system(), Some(init));
+            assert_eq!(target.uses_openrc(), init == "OpenRC");
+        }
+        assert!(required_kernel(Target::Reset).is_none());
+        assert!(Target::Reset.init_system().is_none());
     }
 
     #[test]
     fn configuration_data_uses_target_relative_paths_and_only_requested_settings() {
         let config = PostInstallConfig {
-            kernel: KernelChoice::Lts,
             hostname: Some("my-vps-1".into()),
             timezone: Some("Etc/UTC".into()),
         };
-        let prepared = config.prepare(Target::Arch, false, true).unwrap();
-        assert_eq!(prepared.kernel.package, "linux-lts");
+        let prepared = config.prepare(Target::Arch).unwrap();
+        assert_eq!(prepared.kernel, "linux-cachyos-server");
         assert_eq!(prepared.hostname_contents.as_deref(), Some("my-vps-1\n"));
         assert_eq!(prepared.timezone_contents.as_deref(), Some("Etc/UTC\n"));
         assert_eq!(
@@ -169,7 +37,7 @@ mod postinstall {
         );
         assert_eq!(prepared.extra_packages, ["tzdata"]);
         let default = PostInstallConfig::default()
-            .prepare(Target::Debian, false, true)
+            .prepare(Target::Debian)
             .unwrap();
         assert!(default.hostname_contents.is_none());
         assert!(default.timezone_contents.is_none());
@@ -179,7 +47,7 @@ mod postinstall {
             timezone: Some("Asia/Shanghai".into()),
             ..Default::default()
         }
-        .prepare(Target::Gentoo, false, true)
+        .prepare(Target::Gentoo)
         .unwrap();
         assert_eq!(gentoo.extra_packages, ["sys-libs/timezone-data"]);
     }
@@ -202,7 +70,7 @@ mod postinstall {
                 ..Default::default()
             };
             assert_eq!(
-                config.validate(Target::Alpine, false, None),
+                config.validate(Target::Alpine, None),
                 Err(PostInstallError::InvalidHostname),
                 "accepted hostname {value:?}"
             );
@@ -211,7 +79,7 @@ mod postinstall {
             hostname: Some("a".repeat(64)),
             ..Default::default()
         };
-        assert!(config.validate(Target::Alpine, false, None).is_err());
+        assert!(config.validate(Target::Alpine, None).is_err());
         for value in [
             "",
             "/Etc/UTC",
@@ -229,7 +97,7 @@ mod postinstall {
                 ..Default::default()
             };
             assert_eq!(
-                config.validate(Target::Alpine, false, None),
+                config.validate(Target::Alpine, None),
                 Err(PostInstallError::InvalidTimezone),
                 "accepted timezone {value:?}"
             );
@@ -246,7 +114,7 @@ mod postinstall {
                 timezone: Some(value.into()),
                 ..Default::default()
             };
-            config.validate(Target::Alpine, false, None).unwrap();
+            config.validate(Target::Alpine, None).unwrap();
         }
     }
 
@@ -265,14 +133,10 @@ mod postinstall {
                     hostname: Some("vps".into()),
                     ..Default::default()
                 }
-                .validate(target, false, None),
+                .validate(target, None),
                 Err(PostInstallError::UnexpectedRoute)
             );
-            assert!(
-                PostInstallConfig::default()
-                    .prepare(target, false, false)
-                    .is_err()
-            );
+            assert!(PostInstallConfig::default().prepare(target).is_err());
         }
     }
 }
@@ -384,8 +248,6 @@ mod system_config {
             "1.1.1.1,2606:4700:4700::1111",
             "--dns-search",
             "example.internal",
-            "--kernel",
-            "cloud",
         ])
         .unwrap() else {
             panic!("plan")
@@ -398,7 +260,7 @@ mod system_config {
         let decoded = decode_plan(&encode_plan(&plan).unwrap()).unwrap();
         assert_eq!(decoded.system, plan.system);
         assert_eq!(
-            debian::apt_package_list_for_plan(&plan, BootMode::Bios, &[]).unwrap()[5],
+            debian::apt_package_list_for_plan(&plan, &[]).unwrap()[5],
             "linux-image-cloud-amd64"
         );
         for schema in [
@@ -435,7 +297,7 @@ mod system_config {
             assert_eq!(original.system.profile, InstallProfile::Minimal);
             assert!(original.system.strip_docs());
             assert!(original.system.clear_package_cache());
-            let packages = profile::package_plan(&original, BootMode::Bios, true, &[]).unwrap();
+            let packages = profile::package_plan(&original, BootMode::Bios, &[]).unwrap();
             assert!(packages.strip_docs);
             assert!(packages.clear_package_cache);
             assert!(
@@ -464,7 +326,7 @@ mod system_config {
             let mut rescue = original;
             rescue.hold = Some(1);
             rescue.validate().unwrap();
-            assert!(profile::package_plan(&rescue, BootMode::Bios, true, &[]).is_err());
+            assert!(profile::package_plan(&rescue, BootMode::Bios, &[]).is_err());
             rescue.system.with_tools = true;
             assert!(rescue.validate().is_err());
         }
@@ -473,7 +335,10 @@ mod system_config {
                 profile,
                 ..Default::default()
             };
-            system.validate(Target::Reset, None).unwrap();
+            assert_eq!(
+                system.validate(Target::Reset, None).is_ok(),
+                profile == InstallProfile::Minimal
+            );
             let system = SystemConfig {
                 profile,
                 dns: dns(),
@@ -484,43 +349,13 @@ mod system_config {
     }
 
     #[test]
-    fn schema_ten_explicit_profiles_survive_the_new_plan_default() {
-        for target in [
-            Target::Alpine,
-            Target::Debian,
-            Target::Arch,
-            Target::Gentoo,
-            Target::Reset,
-        ] {
-            for profile in [InstallProfile::Standard, InstallProfile::Minimal] {
-                let mut previous = InstallPlan::new(target);
-                previous.schema_version = 10;
-                previous.system.profile = profile;
-                let bytes = encode_plan(&previous).unwrap();
-                let decoded = decode_plan(&bytes).unwrap();
-                assert_eq!(
-                    decoded.schema_version,
-                    rustaller::model::CURRENT_SCHEMA_VERSION
-                );
-                assert_eq!(decoded.system.profile, profile);
-                assert!(decoded.system.explicit_network.is_none());
-            }
-        }
-    }
-
-    #[test]
     fn minimal_packages_retain_only_selected_filesystem_tools_without_purging_native_base() {
         use rustaller::config::RootFilesystem;
-        for filesystem in [
-            RootFilesystem::Xfs,
-            RootFilesystem::Ext4,
-            RootFilesystem::Btrfs,
-        ] {
+        for filesystem in RootFilesystem::ALL.iter().copied() {
             let mut selected = InstallPlan::new(Target::Debian);
             selected.system.root_filesystem = filesystem;
             selected.username = Some("admin".into());
-            let packages =
-                debian::apt_package_list_for_plan(&selected, BootMode::Bios, &[]).unwrap();
+            let packages = debian::apt_package_list_for_plan(&selected, &[]).unwrap();
             assert_eq!(
                 packages.iter().any(|p| p == "xfsprogs"),
                 filesystem == RootFilesystem::Xfs
@@ -529,10 +364,7 @@ mod system_config {
                 packages.iter().any(|p| p == "e2fsprogs"),
                 filesystem == RootFilesystem::Ext4
             );
-            assert_eq!(
-                packages.iter().any(|p| p == "btrfs-progs"),
-                filesystem == RootFilesystem::Btrfs
-            );
+            assert!(!packages.iter().any(|p| p == "btrfs-progs"));
             for essential in [
                 "dosfstools",
                 "initramfs-tools",
@@ -549,13 +381,21 @@ mod system_config {
                 );
             }
             selected.system.profile = InstallProfile::Standard;
-            let standard =
-                debian::apt_package_list_for_plan(&selected, BootMode::Bios, &[]).unwrap();
-            assert!(standard.iter().any(|p| p == "xfsprogs"));
-            assert!(standard.iter().any(|p| p == "e2fsprogs"));
+            let standard = debian::apt_package_list_for_plan(&selected, &[]).unwrap();
+            assert!(
+                standard
+                    .iter()
+                    .any(|p| p == filesystem.maintenance_package())
+            );
+            let other = if filesystem == RootFilesystem::Xfs {
+                RootFilesystem::Ext4
+            } else {
+                RootFilesystem::Xfs
+            };
+            assert!(!standard.iter().any(|p| p == other.maintenance_package()));
         }
         let selected = InstallPlan::new(Target::Gentoo);
-        let minimal = profile::package_plan(&selected, BootMode::Bios, true, &[]).unwrap();
+        let minimal = profile::package_plan(&selected, BootMode::Bios, &[]).unwrap();
         assert!(
             !minimal
                 .later_packages
@@ -718,7 +558,7 @@ mod configure {
                 ..Default::default()
             };
             let plan = live_plan(Target::Debian, configuration, None);
-            apply_basic_configuration(&scratch.0, &plan, true).unwrap();
+            apply_basic_configuration(&scratch.0, &plan).unwrap();
             assert_eq!(fs::read(scratch.0.join("etc/localtime")).unwrap(), bytes);
         }
     }
@@ -748,7 +588,6 @@ mod configure {
         PostInstallConfig {
             hostname: Some("my-vps".into()),
             timezone: Some("UTC".into()),
-            ..Default::default()
         }
     }
 
@@ -767,7 +606,7 @@ mod configure {
             let plan = live_plan(target, requested_configuration(), None);
 
             for _ in 0..2 {
-                apply_basic_configuration(&scratch.0, &plan, true).unwrap();
+                apply_basic_configuration(&scratch.0, &plan).unwrap();
                 assert_eq!(
                     fs::read(scratch.0.join("etc/hostname")).unwrap(),
                     b"my-vps\n"
@@ -806,7 +645,7 @@ mod configure {
                 scratch.zonefile("UTC", &bytes);
             }
             let plan = live_plan(Target::Debian, requested_configuration(), None);
-            assert!(apply_basic_configuration(&scratch.0, &plan, false).is_err());
+            assert!(apply_basic_configuration(&scratch.0, &plan).is_err());
             assert_eq!(
                 fs::read(scratch.0.join("etc/hostname")).unwrap(),
                 b"existing\n"
@@ -872,7 +711,7 @@ mod configure {
             scratch.zonefile("UTC", &bytes);
             let plan = live_plan(Target::Debian, requested_configuration(), None);
             assert!(matches!(
-                apply_basic_configuration(&scratch.0, &plan, false),
+                apply_basic_configuration(&scratch.0, &plan),
                 Err(ConfigurationError::InvalidZonefile)
             ));
             assert_eq!(fs::read_dir(scratch.0.join("etc")).unwrap().count(), 0);
@@ -890,7 +729,7 @@ mod configure {
             let scratch = Scratch::with_etc("configure");
             scratch.zonefile("UTC", &bytes);
             let plan = live_plan(Target::Debian, requested_configuration(), None);
-            apply_basic_configuration(&scratch.0, &plan, false).unwrap();
+            apply_basic_configuration(&scratch.0, &plan).unwrap();
             assert_eq!(fs::read(scratch.0.join("etc/localtime")).unwrap(), bytes);
         }
     }
@@ -904,7 +743,7 @@ mod configure {
         symlink(&outside, scratch.0.join("usr/share/zoneinfo/UTC")).unwrap();
         let plan = live_plan(Target::Debian, requested_configuration(), None);
         assert!(matches!(
-            apply_basic_configuration(&scratch.0, &plan, false),
+            apply_basic_configuration(&scratch.0, &plan),
             Err(ConfigurationError::ZonefileOutsideTarget)
         ));
         assert_eq!(fs::read_dir(scratch.0.join("etc")).unwrap().count(), 0);
@@ -926,18 +765,18 @@ mod configure {
         let linked_root = scratch.0.join("linked-root");
         symlink(&real_root, &linked_root).unwrap();
         assert!(matches!(
-            apply_basic_configuration(&linked_root, &plan, false),
+            apply_basic_configuration(&linked_root, &plan),
             Err(ConfigurationError::UnsafePath)
         ));
         fs::create_dir_all(real_root.join("child/etc")).unwrap();
         assert!(matches!(
-            apply_basic_configuration(&linked_root.join("child"), &plan, false),
+            apply_basic_configuration(&linked_root.join("child"), &plan),
             Err(ConfigurationError::UnsafePath)
         ));
         fs::remove_dir(scratch.0.join("etc")).unwrap();
         symlink(real_root.join("etc"), scratch.0.join("etc")).unwrap();
         assert!(matches!(
-            apply_basic_configuration(&scratch.0, &plan, false),
+            apply_basic_configuration(&scratch.0, &plan),
             Err(ConfigurationError::UnsafePath)
         ));
         assert!(!real_root.join("etc/hostname").exists());
@@ -950,7 +789,7 @@ mod configure {
         fs::create_dir(scratch.0.join("etc/localtime")).unwrap();
         let plan = live_plan(Target::Debian, requested_configuration(), None);
         assert!(matches!(
-            apply_basic_configuration(&scratch.0, &plan, false),
+            apply_basic_configuration(&scratch.0, &plan),
             Err(ConfigurationError::UnsafePath)
         ));
         assert!(!scratch.0.join("etc/hostname").exists());
@@ -966,17 +805,17 @@ mod configure {
             Path::new("/tmp/../etc"),
         ] {
             assert!(matches!(
-                apply_basic_configuration(root, &plan, true),
+                apply_basic_configuration(root, &plan),
                 Err(ConfigurationError::InvalidRoot)
             ));
         }
         let scratch = Scratch::with_etc("configure");
         let rescue = live_plan(Target::Alpine, PostInstallConfig::default(), Some(1));
         assert!(matches!(
-            apply_basic_configuration(&scratch.0, &rescue, true),
+            apply_basic_configuration(&scratch.0, &rescue),
             Err(ConfigurationError::RescuePlan)
         ));
-        apply_basic_configuration(&scratch.0, &plan, true).unwrap();
+        apply_basic_configuration(&scratch.0, &plan).unwrap();
         assert_eq!(fs::read_dir(scratch.0.join("etc")).unwrap().count(), 0);
     }
 }

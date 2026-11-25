@@ -2,18 +2,11 @@ use super::editor::TextValue;
 use super::fields::Field;
 use super::state::clean;
 use rustaller::config::{
-    AddressPreference, CongestionControl, DnsMode, GentooInit, InstallProfile, Ipv6Policy,
-    QueueDiscipline, RootFilesystem,
+    AddressPreference, CongestionControl, DnsMode, InstallProfile, Ipv6Policy, QueueDiscipline,
+    RootFilesystem,
 };
 use rustaller::host::ssh_keygen::KeyType;
-use rustaller::model::BootMode;
-use rustaller::postinstall::KernelChoice;
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub(super) enum Authentication {
-    Password,
-    PublicKeys,
-}
-
+use rustaller::model::{BootMode, DEFAULT_ACCOUNT};
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) enum DnsProvider {
     Custom,
@@ -35,12 +28,8 @@ impl DnsProvider {
 pub(super) struct Draft {
     pub values: Vec<std::rc::Rc<TextValue>>,
     pub keys: Vec<TextValue>,
-    pub authentication: Authentication,
-    pub kernel: KernelChoice,
-    pub gentoo_init: GentooInit,
     pub boot: Option<BootMode>,
     pub hold: Option<u8>,
-    pub generic_kernel: bool,
     pub debug: bool,
     pub profile: InstallProfile,
     pub dns_mode: DnsMode,
@@ -67,12 +56,8 @@ impl Draft {
                 .map(|_| std::rc::Rc::new(TextValue::new("")))
                 .collect(),
             keys: Vec::new(),
-            authentication: Authentication::Password,
-            kernel: KernelChoice::Auto,
-            gentoo_init: GentooInit::Openrc,
             boot: None,
             hold: None,
-            generic_kernel: false,
             debug: false,
             profile: InstallProfile::default(),
             dns_mode: DnsMode::Auto,
@@ -93,7 +78,7 @@ impl Draft {
             key_cipher: 0,
         };
         for (field, value) in [
-            (Field::Username, "root"),
+            (Field::Username, DEFAULT_ACCOUNT),
             (Field::SshPort, "22"),
             (Field::SwapSize, "2048"),
             (Field::KeyPath, key_path),
@@ -112,15 +97,7 @@ impl Draft {
         self.values[field as usize] = std::rc::Rc::new(TextValue::new(value));
     }
     pub fn display(&self, field: Field) -> String {
-        let value = self.get(field);
-        let value = if matches!(
-            field,
-            Field::Password | Field::Confirm | Field::RootPassword | Field::RootConfirm
-        ) {
-            value
-        } else {
-            value.trim()
-        };
+        let value = self.get(field).trim();
         if value.is_empty() {
             return "Not set".into();
         }

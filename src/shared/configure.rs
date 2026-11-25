@@ -5,6 +5,7 @@
 //! before publication, but replacement of several files is not a transaction:
 //! an I/O error during publication can leave some settings already written.
 
+use crate::command::{CommandInput, CommandSpec, OutputMode};
 use crate::config::SystemConfigError;
 use crate::fsutil::atomic_replace;
 use crate::postinstall::PostInstallError;
@@ -83,7 +84,6 @@ impl From<io::Error> for ConfigurationError {
 pub fn apply_basic_configuration(
     root: &Path,
     plan: &ValidatedLivePlan,
-    is_virtual_machine: bool,
 ) -> Result<(), ConfigurationError> {
     let plan = plan.plan();
     if plan.hold == Some(1) {
@@ -91,7 +91,7 @@ pub fn apply_basic_configuration(
     }
     let configuration = plan
         .post_install
-        .prepare(plan.target, plan.no_cloud_kernel, is_virtual_machine)
+        .prepare(plan.target)
         .map_err(ConfigurationError::Plan)?;
     validate_root(root)?;
     let etc = root.join("etc");
@@ -122,6 +122,44 @@ pub fn apply_basic_configuration(
         atomic_replace(&localtime, &zonefile, 0o644)?;
     }
     Ok(())
+}
+
+/// Lexical validation for a resolved authorized_keys line. The native
+/// ssh-keygen check also validates the serialized key body before use.
+pub fn valid_public_key(line: &str) -> bool {
+    if line.is_empty()
+        || line.len() > 8192
+        || line.trim() != line
+        || line.chars().any(char::is_control)
+    {
+        return false;
+    }
+    let mut fields = line.split_ascii_whitespace();
+    matches!(
+        fields.next(),
+        Some(
+            "ssh-ed25519"
+                | "ssh-rsa"
+                | "ecdsa-sha2-nistp256"
+                | "ecdsa-sha2-nistp384"
+                | "ecdsa-sha2-nistp521"
+                | "sk-ssh-ed25519@openssh.com"
+                | "sk-ecdsa-sha2-nistp256@openssh.com"
+        )
+    ) && fields.next().is_some_and(|value| {
+        value.len() >= 4
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"+/=".contains(&byte))
+    })
+}
+
+pub(crate) fn public_key_check(key: &str, phase: &str) -> CommandSpec {
+    CommandSpec::new("ssh-keygen", ["-l", "-f", "-"])
+        .phase(phase)
+        .stdin(CommandInput::Bytes(format!("{key}\n").into_bytes()))
+        .stdout_mode(OutputMode::Discard)
+        .stderr_mode(OutputMode::Capture)
 }
 
 pub(crate) fn validate_root(root: &Path) -> Result<(), ConfigurationError> {

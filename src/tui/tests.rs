@@ -1,15 +1,15 @@
 use super::editor::{Editor, MAX_INPUT, TextValue};
-use super::state::{
-    Action, Authentication, DnsProvider, EditSlot, Field, MenuFrame, Page, Setting, View,
-};
+use super::state::{Action, DnsProvider, EditSlot, Field, MenuFrame, Page, Setting, View};
 use super::*;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{Terminal, backend::TestBackend};
 use rustaller::codec::encode_plan;
 use rustaller::config::{DnsMode, InstallProfile, Ipv6Policy, RootFilesystem};
 use rustaller::host::args::{CliOutcome, parse_args};
-use rustaller::model::{BootMode, SecretString};
-use rustaller::postinstall::KernelChoice;
+use rustaller::model::BootMode;
+
+const PUBLIC_KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIE2kmWV2TOsArVwWboLjrmQX8eZ7Dw6P/7uF6m2L9TM+ rustaller-test";
+const KEY_SOURCE: &str = "https://example.test/KEY-SOURCE-SENTINEL";
 
 fn wizard() -> Wizard {
     Wizard::new()
@@ -64,10 +64,7 @@ fn set(wizard: &mut Wizard, field: Field, value: &str) {
     wizard.draft_mut().set(field, value.into());
 }
 fn credentials(wizard: &mut Wizard) {
-    set(wizard, Field::Password, "test-password");
-    set(wizard, Field::Confirm, "test-password");
-    set(wizard, Field::RootPassword, "test-root-password");
-    set(wizard, Field::RootConfirm, "test-root-password");
+    wizard.draft_mut().keys = vec![TextValue::new(KEY_SOURCE)];
 }
 fn render(wizard: &mut Wizard, width: u16, height: u16) -> String {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -95,10 +92,7 @@ fn assert_same_plan(wizard: &Wizard, args: &[&str]) {
     let CliOutcome::Plan(cli) = parse_args(args).unwrap() else {
         panic!("CLI plan")
     };
-    assert_eq!(
-        encode_plan(&wizard.build_plan().unwrap()).unwrap(),
-        encode_plan(&cli).unwrap()
-    );
+    assert_eq!(wizard.build_plan().unwrap(), cli);
 }
 
 #[test]
@@ -200,106 +194,70 @@ fn keyboard_navigates_nested_categories_and_editor_commit_or_cancel_preserves_dr
     control(&mut wizard, 'u');
     wizard.paste("discarded");
     press(&mut wizard, KeyCode::Esc);
-    assert_eq!(wizard.draft().get(Field::Username), "root");
+    assert_eq!(
+        wizard.draft().get(Field::Username),
+        rustaller::model::DEFAULT_ACCOUNT
+    );
     press(&mut wizard, KeyCode::Enter);
     control(&mut wizard, 'u');
     wizard.paste("alice");
     press(&mut wizard, KeyCode::Enter);
     assert_eq!(wizard.draft().get(Field::Username), "alice");
-    assert_eq!(wizard.page(), Page::RootPasswords);
-    press(&mut wizard, KeyCode::Enter);
-    wizard.paste("  separate root password  ");
-    press(&mut wizard, KeyCode::Enter);
-    press(&mut wizard, KeyCode::Down);
-    press(&mut wizard, KeyCode::Enter);
-    wizard.paste("  separate root password  ");
-    press(&mut wizard, KeyCode::Enter);
-    press(&mut wizard, KeyCode::Esc);
-    press(&mut wizard, KeyCode::Down);
-    press(&mut wizard, KeyCode::Enter);
-    assert_eq!(wizard.page(), Page::Auth);
-    press(&mut wizard, KeyCode::Down);
-    press(&mut wizard, KeyCode::Enter);
-    assert_eq!(wizard.page(), Page::Passwords);
+    assert_eq!(wizard.page(), Page::Account);
+    open(&mut wizard, Page::Keys);
     assert!(
         wizard
             .breadcrumb()
-            .contains("Account and SSH / Authentication / Password settings")
+            .contains("Account and SSH / SSH public keys")
     );
+    focus(&mut wizard, |action| {
+        matches!(action, Action::Edit(EditSlot::NewKey))
+    });
     press(&mut wizard, KeyCode::Enter);
-    wizard.paste("  exact password  ");
+    wizard.paste(PUBLIC_KEY);
     press(&mut wizard, KeyCode::Enter);
-    press(&mut wizard, KeyCode::Down);
-    press(&mut wizard, KeyCode::Enter);
-    wizard.paste("  exact password  ");
-    press(&mut wizard, KeyCode::Enter);
-    for _ in 0..3 {
-        press(&mut wizard, KeyCode::Esc);
-    }
+    press(&mut wizard, KeyCode::Esc);
+    press(&mut wizard, KeyCode::Esc);
     assert_eq!(wizard.page(), Page::Overview);
-    assert_eq!(
-        wizard
-            .build_plan()
-            .unwrap()
-            .password
-            .as_ref()
-            .map(SecretString::expose),
-        Some("  exact password  ")
-    );
-    assert_eq!(
-        wizard
-            .build_plan()
-            .unwrap()
-            .root_password
-            .as_ref()
-            .map(SecretString::expose),
-        Some("  separate root password  ")
-    );
+    let plan = wizard.authorization_plan().unwrap();
+    assert_eq!(plan.username.as_deref(), Some("alice"));
+    assert_eq!(plan.ssh_keys, [PUBLIC_KEY]);
     assert!(
-        !wizard
+        wizard
             .summary()
             .join("\n")
-            .contains("separate root password")
+            .contains("Root SSH login: disabled")
     );
 }
 
 #[test]
-fn password_confirmation_and_selected_authentication_are_required_without_secret_errors() {
+fn inspection_works_without_a_key_but_authorization_requires_one_for_every_route() {
     let mut wizard = wizard();
-    choose(&mut wizard, 1);
-    assert!(wizard.build_plan().is_err());
-    set(&mut wizard, Field::Password, "UNIQUE-PASSWORD");
-    set(&mut wizard, Field::Confirm, "DIFFERENT-SECRET");
-    let error = wizard.build_plan().err().unwrap();
-    assert!(error.contains("do not match"));
-    assert!(!error.contains("SECRET"));
-    assert!(!error.contains("PASSWORD"));
-    set(&mut wizard, Field::Confirm, "UNIQUE-PASSWORD");
-    wizard
-        .draft_mut()
-        .keys
-        .push(TextValue::new("ssh-ed25519 AAAA hidden@example"));
-    let plan = wizard.build_plan().unwrap();
-    assert!(plan.password.is_some());
-    assert!(plan.ssh_keys.is_empty());
-    wizard.draft_mut().authentication = Authentication::PublicKeys;
-    let plan = wizard.build_plan().unwrap();
-    assert!(plan.password.is_none());
-    assert_eq!(plan.ssh_keys.len(), 1);
-    wizard.draft_mut().keys.clear();
-    assert!(wizard.build_plan().is_err());
+    for index in 0..super::state::CHOICES.len() {
+        choose(&mut wizard, index);
+        assert!(wizard.build_plan().unwrap().ssh_keys.is_empty());
+        assert!(
+            wizard
+                .authorization_plan()
+                .unwrap_err()
+                .contains("SSH public key")
+        );
+        press(&mut wizard, KeyCode::F(2));
+        assert!(matches!(
+            wizard.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Progress::Preflight(_)
+        ));
+        wizard.preflight_complete(Ok("offline inspection complete".to_owned().into()));
+        press(&mut wizard, KeyCode::Enter);
+        assert!(wizard.error.contains("SSH public key"));
+    }
 }
 
 #[test]
-fn public_key_manager_adds_edits_removes_and_switches_authentication_with_keyboard() {
+fn public_key_manager_adds_edits_and_removes_sources_with_keyboard() {
     let mut wizard = wizard();
     choose(&mut wizard, 0);
-    credentials(&mut wizard);
     open(&mut wizard, Page::Account);
-    open(&mut wizard, Page::Auth);
-    press(&mut wizard, KeyCode::Enter); // method selector
-    press(&mut wizard, KeyCode::Down);
-    press(&mut wizard, KeyCode::Enter);
     open(&mut wizard, Page::Keys);
     focus(&mut wizard, |action| {
         matches!(action, Action::Edit(EditSlot::NewKey))
@@ -326,13 +284,11 @@ fn public_key_manager_adds_edits_removes_and_switches_authentication_with_keyboa
     assert_eq!(wizard.page(), Page::Keys);
     assert_eq!(wizard.draft().keys.len(), 1);
     assert_eq!(wizard.build_plan().unwrap().ssh_keys, ["github:alice"]);
-    press(&mut wizard, KeyCode::Esc);
-    press(&mut wizard, KeyCode::Home);
+    open(&mut wizard, Page::KeyActions(0));
+    focus(&mut wizard, |action| matches!(action, Action::DeleteKey(0)));
     press(&mut wizard, KeyCode::Enter);
-    press(&mut wizard, KeyCode::Up);
-    press(&mut wizard, KeyCode::Enter);
-    assert!(wizard.draft().authentication == Authentication::Password);
     assert!(wizard.build_plan().unwrap().ssh_keys.is_empty());
+    assert!(wizard.authorization_plan().is_err());
 }
 
 #[test]
@@ -340,8 +296,6 @@ fn private_key_input_and_overfull_key_list_are_rejected_without_echoing() {
     let mut wizard = wizard();
     choose(&mut wizard, 0);
     open(&mut wizard, Page::Account);
-    open(&mut wizard, Page::Auth);
-    wizard.draft_mut().authentication = Authentication::PublicKeys;
     open(&mut wizard, Page::Keys);
     focus(&mut wizard, |action| {
         matches!(action, Action::Edit(EditSlot::NewKey))
@@ -385,8 +339,9 @@ fn tcp_and_swap_submenus_reuse_cli_validation_and_inactive_swap_values_are_ignor
             &wizard,
             &[
                 target,
-                "--username=root",
-                "--password=test-password",
+                "--username=admin",
+                "--ssh-key",
+                KEY_SOURCE,
                 "--ssh-port=22",
                 "--tcp-congestion=bbr",
                 "--qdisc=fq",
@@ -467,9 +422,7 @@ fn native_key_generator_is_nested_and_only_generated_public_key_enters_the_plan(
     use rustaller::host::ssh_keygen::GeneratedKey;
     let mut wizard = wizard();
     choose(&mut wizard, 1);
-    wizard.draft_mut().authentication = Authentication::PublicKeys;
     open(&mut wizard, Page::Account);
-    open(&mut wizard, Page::Auth);
     open(&mut wizard, Page::Keys);
     open(&mut wizard, Page::Keygen);
     set(
@@ -489,13 +442,12 @@ fn native_key_generator_is_nested_and_only_generated_public_key_enters_the_plan(
     assert_eq!(options.key_type.as_str(), "ed25519");
     assert_eq!(options.comment, "20261026");
     wizard.keygen_complete(Ok(GeneratedKey {
-        public_key: "ssh-ed25519 AAAA generated-key".into(),
+        public_key: PUBLIC_KEY.into(),
         private_path: options.output.clone(),
         public_path: options.output.with_extension("pub"),
     }));
     let plan = wizard.build_plan().unwrap();
-    assert!(plan.password.is_none());
-    assert_eq!(plan.ssh_keys, ["ssh-ed25519 AAAA generated-key"]);
+    assert_eq!(plan.ssh_keys, [PUBLIC_KEY]);
     let bytes = encode_plan(&plan).unwrap();
     assert!(!bytes.windows(b"id_unique".len()).any(|v| v == b"id_unique"));
     let screen = render(&mut wizard, 100, 30);
@@ -554,18 +506,18 @@ fn text_editor_handles_unicode_cursor_delete_and_atomic_input_limits() {
 }
 
 #[test]
-fn overflow_is_visible_and_cannot_commit_a_partial_password() {
+fn overflow_keeps_the_original_public_key_source_in_the_editor() {
     let mut wizard = wizard();
     choose(&mut wizard, 0);
+    credentials(&mut wizard);
     open(&mut wizard, Page::Account);
-    open(&mut wizard, Page::Auth);
-    open(&mut wizard, Page::Passwords);
+    open(&mut wizard, Page::Keys);
+    open(&mut wizard, Page::KeyActions(0));
     press(&mut wizard, KeyCode::Enter);
-    wizard.paste("original");
     wizard.paste(&"x".repeat(MAX_INPUT));
     assert!(wizard.error.contains("8192"));
     press(&mut wizard, KeyCode::Enter);
-    assert_eq!(wizard.draft().get(Field::Password), "original");
+    assert_eq!(wizard.draft().keys[0].0, KEY_SOURCE);
 }
 
 #[test]
@@ -575,14 +527,11 @@ fn drafts_survive_back_navigation_and_switching_targets_without_cross_target_opt
     credentials(&mut wizard);
     set(&mut wizard, Field::Username, "debian_user");
     set(&mut wizard, Field::Hostname, "debian-vps");
-    wizard.draft_mut().kernel = KernelChoice::Generic;
     choose(&mut wizard, 2);
     credentials(&mut wizard);
-    wizard.draft_mut().kernel = KernelChoice::Lts;
     set(&mut wizard, Field::Username, "arch_user");
     choose(&mut wizard, 1);
     assert_eq!(wizard.draft().get(Field::Username), "debian_user");
-    assert!(wizard.draft().kernel == KernelChoice::Generic);
     assert_eq!(
         wizard
             .build_plan()
@@ -594,52 +543,35 @@ fn drafts_survive_back_navigation_and_switching_targets_without_cross_target_opt
     );
     choose(&mut wizard, 2);
     assert_eq!(wizard.draft().get(Field::Username), "arch_user");
-    assert!(wizard.draft().kernel == KernelChoice::Lts);
 }
 
 #[test]
-fn all_automatic_targets_match_cli_plan_encoding_including_multiple_keys_and_host_fields() {
-    for (index, target, kernel) in [
-        (0, "alpine", "cloud"),
-        (1, "debian", "generic"),
-        (2, "arch", "lts"),
-        (3, "gentoo", "standard"),
-    ] {
+fn all_automatic_targets_match_cli_plan_including_multiple_keys_and_host_fields() {
+    for (index, target) in [(0, "alpine"), (1, "debian"), (2, "arch"), (3, "gentoo")] {
         let mut wizard = wizard();
         choose(&mut wizard, index);
         set(&mut wizard, Field::Username, "admin");
-        set(&mut wizard, Field::RootPassword, "test-root-password");
-        set(&mut wizard, Field::RootConfirm, "test-root-password");
         set(&mut wizard, Field::Hostname, "my-vps");
         set(&mut wizard, Field::Timezone, "Etc/UTC");
         set(&mut wizard, Field::Disk, "/dev/vda");
         set(&mut wizard, Field::SshPort, "2200");
         set(&mut wizard, Field::Frpc, "/root/frpc.toml");
-        wizard.draft_mut().kernel = kernel.parse().unwrap();
         wizard.draft_mut().boot = Some(BootMode::Efi);
         wizard.draft_mut().hold = Some(2);
         wizard.draft_mut().debug = true;
-        wizard.draft_mut().authentication = Authentication::PublicKeys;
-        wizard.draft_mut().keys = vec![
-            TextValue::new("ssh-ed25519 AAAA one@host"),
-            TextValue::new("github:alice"),
-        ];
+        wizard.draft_mut().keys = vec![TextValue::new(PUBLIC_KEY), TextValue::new("github:alice")];
         assert_same_plan(
             &wizard,
             &[
                 target,
                 "--username",
                 "admin",
-                "--root-password",
-                "test-root-password",
                 "--ssh-port",
                 "2200",
                 "--target-disk",
                 "/dev/vda",
                 "--frpc-config",
                 "/root/frpc.toml",
-                "--kernel",
-                kernel,
                 "--hostname",
                 "my-vps",
                 "--timezone",
@@ -650,7 +582,7 @@ fn all_automatic_targets_match_cli_plan_encoding_including_multiple_keys_and_hos
                 "2",
                 "--debug",
                 "--ssh-key",
-                "ssh-ed25519 AAAA one@host",
+                PUBLIC_KEY,
                 "--ssh-key",
                 "github:alice",
             ],
@@ -663,20 +595,18 @@ fn rescue_and_manual_targets_match_cli_and_hide_installation_categories() {
     let mut wizard = wizard();
     choose(&mut wizard, 4);
     credentials(&mut wizard);
-    wizard.draft_mut().generic_kernel = true;
     assert_same_plan(
         &wizard,
         &[
             "alpine",
             "--username",
-            "root",
+            "admin",
             "--ssh-port",
             "22",
-            "--password",
-            "test-password",
+            "--ssh-key",
+            KEY_SOURCE,
             "--hold",
             "1",
-            "--no-cloud-kernel",
         ],
     );
     assert!(
@@ -693,26 +623,26 @@ fn rescue_and_manual_targets_match_cli_and_hide_installation_categories() {
 }
 
 #[test]
-fn selectors_offer_only_target_kernels_and_do_not_apply_cancelled_choices() {
+fn filesystem_selector_offers_xfs_and_ext4_and_leaves_cancelled_choices_untouched() {
     let mut wizard = wizard();
     choose(&mut wizard, 1);
     credentials(&mut wizard);
-    open(&mut wizard, Page::Host);
+    open(&mut wizard, Page::Boot);
     focus(&mut wizard, |action| {
-        matches!(action, Action::Select(super::state::Setting::Kernel))
+        matches!(action, Action::Select(Setting::RootFilesystem))
     });
     press(&mut wizard, KeyCode::Enter);
     let View::Select { setting, .. } = wizard.view else {
         panic!("selector")
     };
-    assert_eq!(wizard.choices(setting), ["standard", "cloud", "generic"]);
+    assert_eq!(wizard.choices(setting), ["xfs", "ext4"]);
     press(&mut wizard, KeyCode::End);
     press(&mut wizard, KeyCode::Esc);
-    assert!(wizard.draft().kernel == KernelChoice::Auto);
+    assert_eq!(wizard.draft().root_filesystem, RootFilesystem::Xfs);
     press(&mut wizard, KeyCode::Enter);
     press(&mut wizard, KeyCode::End);
     press(&mut wizard, KeyCode::Enter);
-    assert!(wizard.draft().kernel == KernelChoice::Generic);
+    assert_eq!(wizard.draft().root_filesystem, RootFilesystem::Ext4);
 }
 
 #[test]
@@ -720,8 +650,6 @@ fn validation_failures_and_all_sensitive_views_hide_raw_values() {
     let mut wizard = wizard();
     choose(&mut wizard, 1);
     credentials(&mut wizard);
-    set(&mut wizard, Field::Password, "UNIQUE-PASSWORD");
-    set(&mut wizard, Field::Confirm, "UNIQUE-PASSWORD");
     set(
         &mut wizard,
         Field::Frpc,
@@ -760,23 +688,16 @@ fn username_and_option_like_values_cannot_hijack_shared_parser() {
 }
 
 #[test]
-fn summary_displays_effective_trimmed_options_but_keeps_exact_password_whitespace() {
+fn summary_displays_effective_trimmed_account_and_host_values() {
     let mut wizard = wizard();
     choose(&mut wizard, 1);
     set(&mut wizard, Field::Username, "  alice  ");
     set(&mut wizard, Field::Hostname, "  my-vps  ");
     set(&mut wizard, Field::Frpc, "   ");
-    set(&mut wizard, Field::Password, "  exact  ");
-    set(&mut wizard, Field::Confirm, "  exact  ");
-    set(&mut wizard, Field::RootPassword, "test-root-password");
-    set(&mut wizard, Field::RootConfirm, "test-root-password");
+    credentials(&mut wizard);
     let plan = wizard.build_plan().unwrap();
     assert_eq!(plan.username.as_deref(), Some("alice"));
     assert!(plan.frpc_config.is_none());
-    assert_eq!(
-        plan.password.as_ref().map(SecretString::expose),
-        Some("  exact  ")
-    );
     let summary = wizard.summary().join("\n");
     assert!(summary.contains("Username: alice"));
     assert!(summary.contains("Hostname: my-vps"));
@@ -799,7 +720,7 @@ fn result_screen_redacts_effective_values_and_returns_without_auto_retry() {
         &mut wizard,
         &mut |_| {
             calls += 1;
-            Err("first line\nhttps://private.example/FRPC-TOKEN test-password\u{1b}[31m".into())
+            Err("first line\nhttps://private.example/FRPC-TOKEN https://example.test/KEY-SOURCE-SENTINEL\u{1b}[31m".into())
         },
         &plan,
     );
@@ -809,14 +730,14 @@ fn result_screen_redacts_effective_values_and_returns_without_auto_retry() {
     };
     assert!(message.contains('\n'));
     assert!(!message.contains("FRPC-TOKEN"));
-    assert!(!message.contains("test-password"));
+    assert!(!message.contains("KEY-SOURCE-SENTINEL"));
     assert!(!message.contains('\u{1b}'));
     press(&mut wizard, KeyCode::Enter);
     assert!(matches!(wizard.view, View::Review { .. }));
     assert_eq!(calls, 1);
     press(&mut wizard, KeyCode::Esc);
     assert!(matches!(wizard.view, View::Menu));
-    assert_eq!(wizard.draft().get(Field::Password), "test-password");
+    assert_eq!(wizard.draft().keys[0].0, KEY_SOURCE);
 }
 
 #[test]
@@ -824,7 +745,6 @@ fn lists_and_review_scroll_and_tiny_terminal_blocks_hidden_actions() {
     let mut wizard = wizard();
     choose(&mut wizard, 0);
     credentials(&mut wizard);
-    wizard.draft_mut().authentication = Authentication::PublicKeys;
     wizard.draft_mut().keys = (0..30)
         .map(|index| TextValue::new(format!("github:user{index}")))
         .collect();
@@ -893,9 +813,9 @@ fn minimal_and_dns_submenus_match_cli_for_all_four_targets() {
             &[
                 target,
                 "--username",
-                "root",
-                "--password",
-                "test-password",
+                "admin",
+                "--ssh-key",
+                KEY_SOURCE,
                 "--ssh-port",
                 "22",
                 "--minimal",
@@ -958,8 +878,9 @@ fn explicit_network_tui_builds_the_same_dual_stack_policy_as_cli() {
         &wizard,
         &[
             "debian",
-            "--username=root",
-            "--password=test-password",
+            "--username=admin",
+            "--ssh-key",
+            KEY_SOURCE,
             "--ssh-port=22",
             "--network-mac=52:54:00:12:34:56",
             "--dhcp4",
@@ -967,56 +888,6 @@ fn explicit_network_tui_builds_the_same_dual_stack_policy_as_cli() {
             "--ipv6-gateway=fe80::1",
         ],
     );
-}
-
-#[test]
-fn nonroot_installation_prompts_for_separate_confirmed_root_password_and_redacts_it() {
-    let mut wizard = wizard();
-    choose(&mut wizard, 1);
-    credentials(&mut wizard);
-    open(&mut wizard, Page::Account);
-    focus(&mut wizard, |action| {
-        matches!(action, Action::Edit(EditSlot::Field(Field::Username)))
-    });
-    press(&mut wizard, KeyCode::Enter);
-    control(&mut wizard, 'u');
-    wizard.paste("admin");
-    // An existing valid root password does not require a repeat prompt.
-    set(&mut wizard, Field::RootPassword, "");
-    set(&mut wizard, Field::RootConfirm, "");
-    press(&mut wizard, KeyCode::Enter);
-    assert_eq!(wizard.page(), Page::RootPasswords);
-    assert!(
-        wizard
-            .build_plan()
-            .unwrap_err()
-            .contains("root account password")
-    );
-    set(
-        &mut wizard,
-        Field::RootPassword,
-        "  ROOT-PRIVATE-SENTINEL  ",
-    );
-    set(&mut wizard, Field::RootConfirm, "mismatch");
-    assert!(wizard.build_plan().unwrap_err().contains("root passwords"));
-    set(&mut wizard, Field::RootConfirm, "  ROOT-PRIVATE-SENTINEL  ");
-    let plan = wizard.build_plan().unwrap();
-    assert_eq!(
-        plan.root_password.as_ref().unwrap().expose(),
-        "  ROOT-PRIVATE-SENTINEL  "
-    );
-    assert_eq!(plan.password.as_ref().unwrap().expose(), "test-password");
-    assert!(
-        !wizard
-            .summary()
-            .join("\n")
-            .contains("ROOT-PRIVATE-SENTINEL")
-    );
-    assert!(!render(&mut wizard, 100, 30).contains("ROOT-PRIVATE-SENTINEL"));
-    wizard.complete(Err("failure: ROOT-PRIVATE-SENTINEL".into()));
-    assert!(!render(&mut wizard, 100, 30).contains("ROOT-PRIVATE-SENTINEL"));
-    set(&mut wizard, Field::Username, "root");
-    assert!(wizard.build_plan().unwrap().root_password.is_none());
 }
 
 #[test]
@@ -1130,30 +1001,30 @@ fn custom_dns_editor_rejects_empty_invalid_duplicate_and_unsafe_addresses() {
 }
 
 #[test]
-fn filesystem_and_new_kernel_choices_reach_the_plan_and_stay_target_scoped() {
+fn every_target_previews_its_fixed_kernel_and_init_system() {
     let mut wizard = wizard();
-    for (index, kernels) in [
-        (0, vec!["standard", "virt", "lts"]),
-        (1, vec!["standard", "cloud", "generic"]),
-        (2, vec!["standard", "lts", "hardened", "zen", "cachyos"]),
-        (3, vec!["auto", "standard"]),
+    for (index, kernel, init) in [
+        (0, "linux-virt", "OpenRC"),
+        (1, "linux-image-cloud-amd64", "systemd"),
+        (2, "linux-cachyos-server", "systemd"),
+        (3, "sys-kernel/gentoo-kernel-bin", "OpenRC"),
     ] {
         choose(&mut wizard, index);
         credentials(&mut wizard);
-        assert_eq!(wizard.choices(Setting::Kernel), kernels);
-        for (selected, kernel) in kernels.into_iter().enumerate() {
-            wizard.select(Setting::Kernel, selected);
-            for (fs_index, fs) in [
-                (0, RootFilesystem::Xfs),
-                (1, RootFilesystem::Ext4),
-                (2, RootFilesystem::Btrfs),
-            ] {
-                wizard.select(Setting::RootFilesystem, fs_index);
-                let plan = wizard.build_plan().unwrap();
-                assert_eq!(plan.post_install.kernel.as_str(), kernel);
-                assert_eq!(plan.system.root_filesystem, fs);
-            }
+        let summary = wizard.summary().join("\n");
+        assert!(summary.contains(&format!("Kernel package: {kernel}")));
+        assert!(summary.contains(&format!("Init: {init}")));
+        if index == 3 {
+            assert!(summary.contains("Stage3: stage3-amd64-nomultilib-openrc"));
+            assert!(summary.contains("no-multilib (64-bit only)"));
         }
+        open(&mut wizard, Page::Host);
+        assert!(
+            !wizard
+                .entries()
+                .iter()
+                .any(|entry| matches!(entry.action, Action::Select(_)))
+        );
     }
 }
 
@@ -1239,11 +1110,15 @@ fn preflight_is_a_separate_stage_and_failed_checks_cannot_execute() {
         wizard.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
         Progress::Preflight(_)
     ));
-    wizard.preflight_complete(Ok("verified host; test-password".to_owned().into()));
+    wizard.preflight_complete(Ok(
+        "verified host; https://example.test/KEY-SOURCE-SENTINEL"
+            .to_owned()
+            .into(),
+    ));
     let View::Preflight { message, .. } = &wizard.view else {
         panic!("preflight report")
     };
-    assert!(!message.contains("test-password"));
+    assert!(!message.contains("KEY-SOURCE-SENTINEL"));
     assert!(matches!(
         wizard.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
         Progress::Ready(_)
@@ -1283,10 +1158,6 @@ fn repeat_and_release_events_cannot_submit_generate_or_delete() {
         ));
     }
     wizard.view = View::Menu;
-    wizard
-        .draft_mut()
-        .keys
-        .push(super::editor::TextValue::new("ssh-ed25519 AAAA test"));
     wizard.frames.push(MenuFrame {
         page: Page::KeyActions(0),
         selected: 0,
@@ -1352,12 +1223,13 @@ fn directory_snapshots_share_unchanged_secrets_and_discard_only_the_edited_draft
     let mut wizard = wizard();
     choose(&mut wizard, 1);
     credentials(&mut wizard);
+    set(&mut wizard, Field::Frpc, "https://example.test/FRPC-TOKEN");
     let before = Rc::clone(&wizard.drafts[wizard.choice]);
     open(&mut wizard, Page::Host);
     set(&mut wizard, Field::Hostname, "changed");
     assert!(Rc::ptr_eq(
-        &before.values[Field::Password as usize],
-        &wizard.draft().values[Field::Password as usize]
+        &before.values[Field::Frpc as usize],
+        &wizard.draft().values[Field::Frpc as usize]
     ));
     assert_ne!(
         before.get(Field::Hostname),
@@ -1373,7 +1245,7 @@ fn directory_snapshots_share_unchanged_secrets_and_discard_only_the_edited_draft
         wizard.draft().get(Field::Hostname),
         before.get(Field::Hostname)
     );
-    assert_eq!(wizard.draft().get(Field::Password), "test-password");
+    assert_eq!(wizard.draft().keys[0].0, KEY_SOURCE);
 }
 
 #[test]
@@ -1384,13 +1256,13 @@ fn current_and_target_panels_are_responsive_private_and_render_without_probing()
     credentials(&mut wizard);
     wizard.preflight_complete(Ok(PreflightReport{
         blocked:false,
-        current:"OS: Debian (simulated)\nCPU: virtual CPU\nFirmware: bios\nDisk: /dev/vda\nUnknown: unknown\nSECRET test-password".into(),
-        target:"Distribution: Debian\nBootloader: rustaller-boot schema 1\nRoot: btrfs @\nFAT32: 512 MiB at /boot".into(),
+        current:"OS: Debian (simulated)\nCPU: virtual CPU\nFirmware: bios\nDisk: /dev/vda\nUnknown: unknown\nSECRET https://example.test/KEY-SOURCE-SENTINEL".into(),
+        target:"Distribution: Debian\nBootloader: rustaller-boot schema 1\nRoot: ext4\nFAT32: 512 MiB at /boot".into(),
         warning:"ERASE ALL PARTITIONS ON /dev/vda".into(),
     }));
     for (width, height) in [(120, 40), (60, 40), (48, 25)] {
         let text = render(&mut wizard, width, height);
-        assert!(!text.contains("test-password"));
+        assert!(!text.contains("KEY-SOURCE-SENTINEL"));
         assert!(text.contains("CURRENT SYSTEM") && text.contains("TARGET SYSTEM"));
         assert!(text.contains("/dev/vda"));
         assert!(text.contains("rustaller-boot"));
@@ -1416,78 +1288,26 @@ fn current_and_target_panels_are_responsive_private_and_render_without_probing()
     ));
 }
 #[test]
-fn btrfs_and_boot_size_tui_fields_share_cli_validation_and_target_drafts() {
+fn ext4_and_boot_size_tui_fields_share_cli_validation_and_target_drafts() {
     for index in 0..4 {
         let mut wizard = wizard();
         choose(&mut wizard, index);
         credentials(&mut wizard);
-        wizard.draft_mut().root_filesystem = rustaller::config::RootFilesystem::Btrfs;
-        set(&mut wizard, Field::Compression, "3");
+        wizard.draft_mut().root_filesystem = RootFilesystem::Ext4;
         set(&mut wizard, Field::BootSize, "1024");
         let args = [
             super::state::CHOICES[index].1,
-            "--username=root",
-            "--password=test-password",
-            "--filesystem=btrfs",
-            "--btrfs-compression=3",
+            "--username=admin",
+            "--ssh-key",
+            KEY_SOURCE,
+            "--filesystem=ext4",
             "--boot-size-mib=1024",
         ];
         assert_same_plan(&wizard, &args);
-        assert!(wizard.validate_input(Field::Compression, "16").is_err());
         assert!(wizard.validate_input(Field::BootSize, "511").is_err());
         set(&mut wizard, Field::BootSize, "511");
         assert_eq!(wizard.invalid_field(), Some(Field::BootSize));
     }
-}
-
-#[test]
-fn gentoo_init_menu_is_target_specific_and_preserves_both_typed_plans() {
-    use rustaller::config::GentooInit;
-    let mut wizard = wizard();
-    choose(&mut wizard, 3);
-    credentials(&mut wizard);
-    open(&mut wizard, Page::Host);
-    assert!(
-        wizard
-            .entries()
-            .iter()
-            .any(|entry| matches!(entry.action, Action::Select(Setting::GentooInit)))
-    );
-    assert_eq!(wizard.choices(Setting::GentooInit), ["openrc", "systemd"]);
-    for (index, init) in [GentooInit::Openrc, GentooInit::Systemd]
-        .into_iter()
-        .enumerate()
-    {
-        wizard.select(Setting::GentooInit, index);
-        assert_eq!(wizard.build_plan().unwrap().system.gentoo_init, Some(init));
-        assert!(
-            wizard
-                .summary()
-                .iter()
-                .any(|line| line.contains(init.stage3_variant()))
-        );
-        assert!(
-            wizard
-                .summary()
-                .iter()
-                .any(|line| line == "ABI: amd64, no-multilib (64-bit only)")
-        );
-    }
-    choose(&mut wizard, 2);
-    credentials(&mut wizard);
-    open(&mut wizard, Page::Host);
-    assert!(
-        !wizard
-            .entries()
-            .iter()
-            .any(|entry| matches!(entry.action, Action::Select(Setting::GentooInit)))
-    );
-    assert_eq!(wizard.build_plan().unwrap().system.gentoo_init, None);
-    choose(&mut wizard, 3);
-    assert_eq!(
-        wizard.build_plan().unwrap().system.gentoo_init,
-        Some(GentooInit::Systemd)
-    );
 }
 
 #[test]

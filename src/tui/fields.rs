@@ -1,14 +1,9 @@
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Field {
     Username,
-    Password,
-    Confirm,
-    RootPassword,
-    RootConfirm,
     SshPort,
     BootSize,
     RootSize,
-    Compression,
     Hostname,
     Timezone,
     Disk,
@@ -39,14 +34,9 @@ impl Field {
     pub fn label(self) -> &'static str {
         match self {
             Self::Username => "Username",
-            Self::Password => "New password",
-            Self::Confirm => "Confirm password",
-            Self::RootPassword => "Root account password",
-            Self::RootConfirm => "Confirm root password",
             Self::SshPort => "SSH port",
             Self::RootSize => "Root size (MiB)",
             Self::BootSize => "FAT32 boot size (MiB)",
-            Self::Compression => "Btrfs zstd level (0 disables)",
             Self::Hostname => "Hostname",
             Self::Timezone => "Timezone",
             Self::Disk => "Target disk",
@@ -75,22 +65,14 @@ impl Field {
         }
     }
     pub fn secret(self) -> bool {
-        matches!(
-            self,
-            Self::Password | Self::Confirm | Self::RootPassword | Self::RootConfirm | Self::Frpc
-        )
+        self == Self::Frpc
     }
     pub fn option(self) -> &'static str {
         match self {
             Self::Username => "--username",
-            Self::Password => "--password",
-            Self::Confirm => "",
-            Self::RootPassword => "--root-password",
-            Self::RootConfirm => "",
             Self::SshPort => "--ssh-port",
             Self::RootSize => "--root-size-mib",
             Self::BootSize => "--boot-size-mib",
-            Self::Compression => "--btrfs-compression",
             Self::Hostname => "--hostname",
             Self::Timezone => "--timezone",
             Self::Disk => "--target-disk",
@@ -118,18 +100,12 @@ impl Field {
     pub fn hint(self) -> &'static str {
         match self {
             Self::Username => "1-32 ASCII letters, digits, _ or -; begin with a letter or _.",
-            Self::Password | Self::Confirm | Self::RootPassword | Self::RootConfirm => {
-                "Hidden input. Leading/trailing spaces are preserved; both passwords must match."
-            }
             Self::SshPort => "Use a port from 1 to 65535. SSH default: 22.",
             Self::RootSize => {
                 "Blank fills the remaining disk. Enter at least 512 MiB to leave unused space after root."
             }
             Self::BootSize => {
                 "512-4096 MiB; blank uses 512. FAT32 mounted at /boot; generations must fit."
-            }
-            Self::Compression => {
-                "Btrfs only: 0 disables compression, 1-15 select zstd; blank uses zstd:3."
             }
             Self::Hostname => {
                 "One ASCII label, 1-63 letters, digits or hyphens. Blank: use the existing hostname, then the target system name."

@@ -1,10 +1,11 @@
 mod support;
 mod debian {
     use rustaller::command::{CommandOutput, MockRunner};
-    use rustaller::model::BootMode;
+    use rustaller::config::RootFilesystem;
+    use rustaller::model::{InstallPlan, Target};
     use rustaller::targets::debian::{
-        apt_package_list, apt_sources_text, bootstrap_rootfs, debian_kernel_package,
-        install_apt_packages, write_apt_sources,
+        apt_package_list_for_plan, apt_sources_text, bootstrap_rootfs, install_apt_packages,
+        write_apt_sources,
     };
     use std::fs;
 
@@ -17,13 +18,11 @@ mod debian {
     }
 
     #[test]
-    fn apt_sources_and_kernel_selection_match_the_debian_stable_contract() {
+    fn apt_sources_match_the_debian_stable_contract() {
         assert_eq!(
             apt_sources_text("stablecodename", None).unwrap(),
             "# Debian stable repositories\ndeb https://deb.debian.org/debian stablecodename main contrib non-free non-free-firmware\ndeb https://deb.debian.org/debian stablecodename-updates main contrib non-free non-free-firmware\ndeb https://security.debian.org/debian-security stablecodename-security main contrib non-free non-free-firmware\n"
         );
-        assert_eq!(debian_kernel_package(false), "linux-image-cloud-amd64");
-        assert_eq!(debian_kernel_package(true), "linux-image-amd64");
         assert!(apt_sources_text("bookworm1", None).is_err());
         assert!(apt_sources_text("bookworm", Some("http://mirror.example/debian")).is_err());
     }
@@ -52,8 +51,10 @@ mod debian {
     #[test]
     fn apt_install_order_and_package_selection_preserve_networkd_systemd_requirements() {
         let firmware = vec!["firmware-linux".to_owned()];
+        let mut plan = InstallPlan::new(Target::Debian);
+        let packages = apt_package_list_for_plan(&plan, &firmware).unwrap();
         assert_eq!(
-            apt_package_list(false, BootMode::Efi, "admin", &firmware),
+            packages,
             [
                 "ca-certificates",
                 "systemd-sysv",
@@ -64,35 +65,23 @@ mod debian {
                 "dosfstools",
                 "initramfs-tools",
                 "iproute2",
-                "e2fsprogs",
                 "sudo",
                 "firmware-linux"
             ]
         );
-        assert_eq!(
-            apt_package_list(true, BootMode::Bios, "root", &[]),
-            [
-                "ca-certificates",
-                "systemd-sysv",
-                "systemd-resolved",
-                "openssh-server",
-                "xfsprogs",
-                "linux-image-amd64",
-                "dosfstools",
-                "initramfs-tools",
-                "iproute2",
-                "e2fsprogs"
-            ]
+        plan.username = Some("root".into());
+        plan.system.root_filesystem = RootFilesystem::Ext4;
+        let root = apt_package_list_for_plan(&plan, &[]).unwrap();
+        assert!(root.iter().any(|name| name == "e2fsprogs"));
+        assert!(
+            !root
+                .iter()
+                .any(|name| matches!(name.as_str(), "sudo" | "xfsprogs" | "linux-image-amd64"))
         );
 
         let scratch = Scratch::new("debian");
         let mut runner = MockRunner::new(success_outputs(3));
-        install_apt_packages(
-            &mut runner,
-            &scratch.0,
-            &apt_package_list(false, BootMode::Efi, "admin", &firmware),
-        )
-        .unwrap();
+        install_apt_packages(&mut runner, &scratch.0, &packages).unwrap();
         assert_eq!(runner.calls().len(), 3);
         assert_eq!(runner.calls()[0].args[1..], ["apt-get", "update"]);
         assert_eq!(
@@ -141,7 +130,7 @@ mod debian {
             install_apt_packages(
                 &mut runner,
                 &scratch.0,
-                &apt_package_list(false, BootMode::Bios, "root", &[])
+                &apt_package_list_for_plan(&InstallPlan::new(Target::Debian), &[]).unwrap()
             )
             .is_err()
         );
@@ -187,62 +176,69 @@ mod debian {
 }
 
 mod target_config {
-    use rustaller::command::{CommandInput, OutputMode};
-    use rustaller::config::InstallProfile;
+    use rustaller::command::{CommandInput, CommandOutput, MockRunner, OutputMode};
+    use rustaller::config::{InstallProfile, RootFilesystem};
     use rustaller::model::{BootMode, InstallPlan, Target};
-    use rustaller::postinstall::KernelChoice;
     use rustaller::targets::{debian, packages};
     use std::path::Path;
 
     #[test]
-    fn standard_plan_adapters_preserve_existing_kernel_and_package_selection() {
-        for no_cloud in [false, true] {
-            let mut alpine_plan = InstallPlan::new(Target::Alpine);
-            alpine_plan.system.profile = InstallProfile::Standard;
-            alpine_plan.no_cloud_kernel = no_cloud;
-            for is_vm in [false, true] {
-                let configuration =
-                    packages::configuration_for_plan(&alpine_plan, Target::Alpine, is_vm).unwrap();
-                assert_eq!(configuration.kernel.alpine_flavor, Some("lts"));
-                assert!(configuration.extra_packages.is_empty());
-            }
-            let mut debian_plan = InstallPlan::new(Target::Debian);
-            debian_plan.system.profile = InstallProfile::Standard;
-            debian_plan.no_cloud_kernel = no_cloud;
-            for boot_mode in [BootMode::Bios, BootMode::Efi] {
-                assert_eq!(
-                    debian::apt_package_list_for_plan(&debian_plan, boot_mode, &[]).unwrap(),
-                    debian::apt_package_list(true, boot_mode, "root", &[])
-                );
-            }
-        }
-        let mut gentoo_plan = InstallPlan::new(Target::Gentoo);
-        gentoo_plan.system.profile = InstallProfile::Standard;
-        for boot_mode in [BootMode::Bios, BootMode::Efi] {
-            assert_eq!(
-                packages::emerge_package_set_for_plan(&gentoo_plan, boot_mode, "ext4", &[])
-                    .unwrap(),
-                {
-                    let mut expected = packages::emerge_package_set(boot_mode, "ext4", "root", &[]);
-                    expected.extend(
-                        [
-                            "sys-kernel/dracut",
-                            "sys-kernel/installkernel",
-                            "sys-apps/openrc",
-                            "net-misc/netifrc",
-                            "net-misc/dhcpcd",
-                            "net-dns/openresolv",
-                        ]
-                        .into_iter()
-                        .map(str::to_owned),
+    fn every_package_plan_contains_only_the_fixed_kernel() {
+        let required = [
+            (Target::Alpine, "linux-virt"),
+            (Target::Debian, "linux-image-cloud-amd64"),
+            (Target::Arch, "linux-cachyos-server"),
+            (Target::Gentoo, "sys-kernel/gentoo-kernel-bin"),
+        ];
+        for (target, kernel) in required {
+            for profile in [InstallProfile::Minimal, InstallProfile::Standard] {
+                let mut plan = InstallPlan::new(target);
+                plan.system.profile = profile;
+                for mode in [BootMode::Bios, BootMode::Efi] {
+                    let packages = packages::package_plan(&plan, mode, &[]).unwrap();
+                    assert!(
+                        packages
+                            .bootstrap_packages
+                            .iter()
+                            .all(|name| name != kernel)
                     );
-                    expected
+                    assert_eq!(
+                        packages
+                            .later_packages
+                            .iter()
+                            .filter(|name| *name == kernel)
+                            .count(),
+                        1
+                    );
+                    for (_, other) in required {
+                        if other != kernel {
+                            assert!(!packages.later_packages.iter().any(|name| name == other));
+                        }
+                    }
                 }
-            );
+            }
         }
+    }
+
+    #[test]
+    fn timezone_is_planned_for_the_native_package_manager() {
+        let mut alpine = InstallPlan::new(Target::Alpine);
+        alpine.post_install.timezone = Some("Asia/Tokyo".into());
+        let config = packages::configuration_for_plan(&alpine, Target::Alpine).unwrap();
+        assert_eq!(config.kernel, "linux-virt");
+        assert_eq!(config.extra_packages, ["tzdata"]);
+
+        let mut debian = InstallPlan::new(Target::Debian);
+        debian.post_install.timezone = Some("Etc/UTC".into());
+        let packages = debian::apt_package_list_for_plan(&debian, &[]).unwrap();
+        assert_eq!(packages.last().unwrap(), "tzdata");
+
+        let mut arch = InstallPlan::new(Target::Arch);
+        arch.post_install.timezone = Some("Etc/UTC".into());
         let command = packages::kernel_install_command_for_plan(
-            &InstallPlan::new(Target::Arch),
+            &arch,
             Path::new("/os"),
+            "cachyos/linux-cachyos-server",
         )
         .unwrap();
         assert_eq!(command.program, "chroot");
@@ -253,84 +249,19 @@ mod target_config {
                 "pacman",
                 "-Syu",
                 "--noconfirm",
-                "linux",
-                "mkinitcpio"
+                "cachyos/linux-cachyos-server",
+                "mkinitcpio",
+                "tzdata"
             ]
         );
         assert_eq!(command.stdin, CommandInput::Null);
         assert_eq!(command.stdout_mode, OutputMode::Stream);
         assert_eq!(command.stderr_mode, OutputMode::Stream);
-        assert!(command.cwd.is_none());
-        assert!(command.env.is_empty());
-    }
 
-    #[test]
-    fn official_kernel_and_timezone_choices_reach_the_target_specific_package_phase() {
-        let mut alpine_plan = InstallPlan::new(Target::Alpine);
-        alpine_plan.post_install.kernel = KernelChoice::Cloud;
-        alpine_plan.post_install.timezone = Some("Asia/Tokyo".into());
-        let configuration =
-            packages::configuration_for_plan(&alpine_plan, Target::Alpine, false).unwrap();
-        assert_eq!(configuration.kernel.alpine_flavor, Some("virt"));
-        assert_eq!(
-            configuration.extra_packages,
-            ["tzdata", "openssh", "ca-certificates", "dhcpcd"]
-        );
-
-        let mut debian_plan = InstallPlan::new(Target::Debian);
-        debian_plan.post_install.kernel = KernelChoice::Generic;
-        debian_plan.post_install.timezone = Some("Etc/UTC".into());
-        let packages =
-            debian::apt_package_list_for_plan(&debian_plan, BootMode::Bios, &[]).unwrap();
-        assert_eq!(packages[5], "linux-image-amd64");
-        assert!(
-            !packages
-                .iter()
-                .any(|package| package == "linux-image-cloud-amd64")
-        );
-        assert_eq!(packages.last().unwrap(), "tzdata");
-
-        let mut arch_plan = InstallPlan::new(Target::Arch);
-        arch_plan.post_install.kernel = KernelChoice::Lts;
-        arch_plan.post_install.timezone = Some("Etc/UTC".into());
-        let command =
-            packages::kernel_install_command_for_plan(&arch_plan, Path::new("/os")).unwrap();
-        assert_eq!(
-            command.args,
-            [
-                "/os",
-                "pacman",
-                "-Syu",
-                "--noconfirm",
-                "linux-lts",
-                "mkinitcpio",
-                "tzdata"
-            ]
-        );
-        assert!(
-            !packages::pacstrap_packages(BootMode::Bios, "ext4", "root", &[])
-                .iter()
-                .any(|package| package.starts_with("linux"))
-        );
-
-        let mut gentoo_plan = InstallPlan::new(Target::Gentoo);
-        gentoo_plan.post_install.kernel = KernelChoice::Standard;
-        gentoo_plan.post_install.timezone = Some("Etc/UTC".into());
-        let packages =
-            packages::emerge_package_set_for_plan(&gentoo_plan, BootMode::Bios, "ext4", &[])
-                .unwrap();
-        assert_eq!(
-            packages
-                .iter()
-                .filter(|package| *package == "sys-kernel/gentoo-kernel-bin")
-                .count(),
-            1
-        );
-        assert!(
-            packages
-                .iter()
-                .any(|package| package == "sys-libs/timezone-data")
-        );
+        let mut gentoo = InstallPlan::new(Target::Gentoo);
+        gentoo.post_install.timezone = Some("Etc/UTC".into());
+        let packages = packages::emerge_package_set_for_plan(&gentoo, &[]).unwrap();
+        assert!(packages.iter().any(|name| name == "sys-libs/timezone-data"));
     }
 
     #[test]
@@ -342,124 +273,94 @@ mod target_config {
             Target::Gentoo,
             Target::Reset,
         ] {
-            let mut candidate = InstallPlan::new(target);
-            candidate.hold = Some(1);
-            assert!(packages::configuration_for_plan(&candidate, Target::Alpine, true).is_err());
-            assert!(debian::apt_package_list_for_plan(&candidate, BootMode::Bios, &[]).is_err());
+            let mut plan = InstallPlan::new(target);
+            plan.hold = Some(1);
+            let kernel = "cachyos/linux-cachyos-server";
+            assert!(packages::configuration_for_plan(&plan, Target::Alpine).is_err());
+            assert!(debian::apt_package_list_for_plan(&plan, &[]).is_err());
             assert!(
-                packages::kernel_install_command_for_plan(&candidate, Path::new("/os")).is_err()
+                packages::kernel_install_command_for_plan(&plan, Path::new("/os"), kernel).is_err()
             );
-            assert!(
-                packages::emerge_package_set_for_plan(&candidate, BootMode::Bios, "ext4", &[])
-                    .is_err()
+            assert!(packages::emerge_package_set_for_plan(&plan, &[]).is_err());
+            plan.hold = None;
+            assert_eq!(
+                packages::configuration_for_plan(&plan, Target::Alpine).is_ok(),
+                target == Target::Alpine
             );
-            candidate.hold = None;
-            if target != Target::Alpine {
-                assert!(
-                    packages::configuration_for_plan(&candidate, Target::Alpine, true).is_err()
-                );
-            }
-            if target != Target::Debian {
-                assert!(
-                    debian::apt_package_list_for_plan(&candidate, BootMode::Bios, &[]).is_err()
-                );
-            }
-            if target != Target::Arch {
-                assert!(
-                    packages::kernel_install_command_for_plan(&candidate, Path::new("/os"))
-                        .is_err()
-                );
-            }
-            if target != Target::Gentoo {
-                assert!(
-                    packages::emerge_package_set_for_plan(&candidate, BootMode::Bios, "ext4", &[])
-                        .is_err()
-                );
-            }
+            assert_eq!(
+                debian::apt_package_list_for_plan(&plan, &[]).is_ok(),
+                target == Target::Debian
+            );
+            assert_eq!(
+                packages::kernel_install_command_for_plan(&plan, Path::new("/os"), kernel).is_ok(),
+                target == Target::Arch
+            );
+            assert_eq!(
+                packages::emerge_package_set_for_plan(&plan, &[]).is_ok(),
+                target == Target::Gentoo
+            );
         }
-        let mut invalid = InstallPlan::new(Target::Arch);
-        invalid.schema_version += 1;
-        assert!(packages::kernel_install_command_for_plan(&invalid, Path::new("/os")).is_err());
-        let mut invalid = InstallPlan::new(Target::Debian);
-        invalid.ssh_port = Some(0);
-        assert!(debian::apt_package_list_for_plan(&invalid, BootMode::Bios, &[]).is_err());
+        let mut plan = InstallPlan::new(Target::Arch);
+        plan.schema_version += 1;
+        assert!(
+            packages::kernel_install_command_for_plan(
+                &plan,
+                Path::new("/os"),
+                "cachyos/linux-cachyos-server"
+            )
+            .is_err()
+        );
+        let mut plan = InstallPlan::new(Target::Debian);
+        plan.ssh_port = Some(0);
+        assert!(debian::apt_package_list_for_plan(&plan, &[]).is_err());
     }
 
     #[test]
-    fn pacstrap_package_order_matches_boot_mode_filesystem_and_user() {
+    fn pacstrap_installs_only_userspace_and_the_selected_filesystem_tools() {
         let firmware = vec!["intel-ucode".to_owned()];
-        assert_eq!(
-            packages::pacstrap_packages(BootMode::Efi, "btrfs", "admin", &firmware),
-            [
-                "base",
-                "dosfstools",
-                "openssh",
-                "btrfs-progs",
-                "sudo",
-                "intel-ucode"
-            ]
+        let xfs = packages::pacstrap_packages(RootFilesystem::Xfs, "admin", &firmware);
+        for required in [
+            "base",
+            "dosfstools",
+            "openssh",
+            "archlinux-keyring",
+            "xfsprogs",
+            "sudo",
+            "intel-ucode",
+        ] {
+            assert!(xfs.iter().any(|name| name == required));
+        }
+        assert!(
+            !xfs.iter()
+                .any(|name| name.starts_with("linux") || name == "e2fsprogs")
         );
-        assert_eq!(
-            packages::pacstrap_packages(BootMode::Bios, "ext4", "root", &[]),
-            ["base", "dosfstools", "openssh", "e2fsprogs"]
-        );
-        assert_eq!(
-            packages::pacstrap_packages(BootMode::Bios, "xfs", "root", &[]),
-            ["base", "dosfstools", "openssh", "xfsprogs"]
+        let ext4 = packages::pacstrap_packages(RootFilesystem::Ext4, "root", &[]);
+        assert!(ext4.iter().any(|name| name == "e2fsprogs"));
+        assert!(
+            !ext4
+                .iter()
+                .any(|name| matches!(name.as_str(), "xfsprogs" | "sudo"))
         );
     }
 
     #[test]
-    fn kernel_availability_resolves_only_the_selected_native_family() {
-        use rustaller::command::{CommandOutput, MockRunner};
-        for (target, kernel, package, native) in [
-            (Target::Alpine, KernelChoice::Lts, "linux-lts", "apk"),
-            (Target::Alpine, KernelChoice::Virt, "linux-virt", "apk"),
-            (
-                Target::Debian,
-                KernelChoice::Generic,
-                "linux-image-amd64",
-                "apt-get",
-            ),
-            (
-                Target::Debian,
-                KernelChoice::Cloud,
-                "linux-image-cloud-amd64",
-                "apt-get",
-            ),
-            (Target::Arch, KernelChoice::Standard, "linux", "pacman"),
-            (Target::Arch, KernelChoice::Lts, "linux-lts", "pacman"),
-            (
-                Target::Arch,
-                KernelChoice::Hardened,
-                "linux-hardened",
-                "pacman",
-            ),
-            (Target::Arch, KernelChoice::Zen, "linux-zen", "pacman"),
-            (
-                Target::Arch,
-                KernelChoice::Cachyos,
-                "linux-cachyos",
-                "pacman",
-            ),
+    fn kernel_availability_resolves_the_fixed_native_family() {
+        for (target, package, native, check) in [
+            (Target::Alpine, "linux-virt", "apk", "--simulate"),
             (
                 Target::Gentoo,
-                KernelChoice::Standard,
                 "sys-kernel/gentoo-kernel-bin",
                 "emerge",
+                "--pretend",
             ),
         ] {
-            let mut plan = InstallPlan::new(target);
-            plan.post_install.kernel = kernel;
+            let plan = InstallPlan::new(target);
             let mut runner = MockRunner::new([CommandOutput::new(Some(0), vec![], vec![])]);
             packages::verify_kernel_available(&mut runner, Path::new("/os"), &plan).unwrap();
             let args = &runner.calls()[0].args;
             assert_eq!(args[1], native);
             assert_eq!(args.iter().filter(|arg| *arg == package).count(), 1);
-            assert!(
-                args.iter()
-                    .any(|arg| matches!(arg.to_str(), Some("--simulate" | "-Syp" | "--pretend")))
-            );
+            assert!(args.iter().any(|arg| arg == check));
             let mut unavailable = MockRunner::new([CommandOutput::new(Some(1), vec![], vec![])]);
             assert!(
                 packages::verify_kernel_available(&mut unavailable, Path::new("/os"), &plan)
@@ -477,9 +378,9 @@ mod target_config {
             let path = scratch.0.join("lib/modules").join(release);
             fs::create_dir_all(&path).unwrap();
             fs::write(path.join("modules.dep"), "").unwrap();
-            fs::write(path.join("modules.builtin"), "kernel/fs/btrfs/btrfs.ko\nkernel/fs/fat/vfat.ko\nkernel/drivers/block/virtio_blk.ko\n").unwrap();
+            fs::write(path.join("modules.builtin"), "kernel/fs/ext4/ext4.ko\nkernel/fs/fat/vfat.ko\nkernel/drivers/block/virtio_blk.ko\n").unwrap();
         }
-        packages::verify_boot_driver_support(&scratch.0, "btrfs", "/dev/vd-rustaller-test", &[])
+        packages::verify_boot_driver_support(&scratch.0, "ext4", "/dev/vd-rustaller-test", &[])
             .unwrap();
         assert!(
             packages::verify_boot_driver_support(&scratch.0, "xfs", "/dev/vd-rustaller-test", &[])
@@ -487,17 +388,12 @@ mod target_config {
         );
         fs::write(
             scratch.0.join("lib/modules/6.19-test/modules.builtin"),
-            "kernel/fs/btrfs/btrfs.ko\nkernel/fs/fat/vfat.ko\n",
+            "kernel/fs/ext4/ext4.ko\nkernel/fs/fat/vfat.ko\n",
         )
         .unwrap();
         assert!(
-            packages::verify_boot_driver_support(
-                &scratch.0,
-                "btrfs",
-                "/dev/vd-rustaller-test",
-                &[]
-            )
-            .is_err()
+            packages::verify_boot_driver_support(&scratch.0, "ext4", "/dev/vd-rustaller-test", &[])
+                .is_err()
         );
         fs::write(
             scratch.0.join("lib/modules/6.19-test/modules.dep"),
@@ -505,20 +401,15 @@ mod target_config {
         )
         .unwrap();
         assert!(
-            packages::verify_boot_driver_support(
-                &scratch.0,
-                "btrfs",
-                "/dev/vd-rustaller-test",
-                &[]
-            )
-            .is_err()
+            packages::verify_boot_driver_support(&scratch.0, "ext4", "/dev/vd-rustaller-test", &[])
+                .is_err()
         );
         let module = scratch
             .0
             .join("lib/modules/6.19-test/kernel/drivers/block/virtio_blk.ko.zst");
         fs::create_dir_all(module.parent().unwrap()).unwrap();
         fs::write(&module, "module").unwrap();
-        packages::verify_boot_driver_support(&scratch.0, "btrfs", "/dev/vd-rustaller-test", &[])
+        packages::verify_boot_driver_support(&scratch.0, "ext4", "/dev/vd-rustaller-test", &[])
             .unwrap();
         fs::write(
             scratch.0.join("lib/modules/6.19-test/modules.dep"),
@@ -526,68 +417,43 @@ mod target_config {
         )
         .unwrap();
         assert!(
-            packages::verify_boot_driver_support(
-                &scratch.0,
-                "btrfs",
-                "/dev/vd-rustaller-test",
-                &[]
-            )
-            .is_err()
+            packages::verify_boot_driver_support(&scratch.0, "ext4", "/dev/vd-rustaller-test", &[])
+                .is_err()
         );
     }
 
     #[test]
-    fn gentoo_init_variants_share_binary_kernel_but_only_openrc_needs_netifrc() {
-        use rustaller::config::GentooInit;
-        for init in [GentooInit::Openrc, GentooInit::Systemd] {
-            let mut plan = InstallPlan::new(Target::Gentoo);
-            plan.system.gentoo_init = Some(init);
-            let selected =
-                packages::emerge_package_set_for_plan(&plan, BootMode::Bios, "btrfs", &[]).unwrap();
-            for atom in [
-                "sys-kernel/gentoo-kernel-bin",
-                "sys-kernel/dracut",
-                "sys-kernel/installkernel",
-                "sys-fs/btrfs-progs",
-            ] {
-                assert_eq!(selected.iter().filter(|item| *item == atom).count(), 1);
-            }
-            for atom in [
-                "sys-apps/openrc",
-                "net-misc/netifrc",
-                "net-misc/dhcpcd",
-                "net-dns/openresolv",
-            ] {
-                assert_eq!(
-                    selected.iter().any(|item| item == atom),
-                    init == GentooInit::Openrc
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn gentoo_packages_preserve_systemd_kernel_efi_filesystem_and_sudo_selection() {
+    fn gentoo_keeps_openrc_network_and_binary_kernel_and_selected_filesystem_tools() {
         let firmware = vec!["sys-kernel/linux-firmware".to_owned()];
-        assert_eq!(
-            packages::emerge_package_set(BootMode::Efi, "xfs", "admin", &firmware),
-            [
-                "sys-block/io-scheduler-udev-rules",
-                "sys-fs/dosfstools",
-                "sys-fs/xfsprogs",
-                "app-admin/sudo",
-                "sys-kernel/linux-firmware",
-                "sys-kernel/gentoo-kernel-bin"
-            ]
+        let mut plan = InstallPlan::new(Target::Gentoo);
+        let xfs = packages::emerge_package_set_for_plan(&plan, &firmware).unwrap();
+        for atom in [
+            "sys-kernel/gentoo-kernel-bin",
+            "sys-kernel/dracut",
+            "sys-kernel/installkernel",
+            "sys-fs/dosfstools",
+            "sys-fs/xfsprogs",
+            "sys-apps/openrc",
+            "net-misc/netifrc",
+            "net-misc/dhcpcd",
+            "net-dns/openresolv",
+            "app-admin/sudo",
+            "sys-kernel/linux-firmware",
+        ] {
+            assert_eq!(xfs.iter().filter(|name| *name == atom).count(), 1);
+        }
+        assert!(
+            !xfs.iter()
+                .any(|name| name.contains("systemd") || name.ends_with("e2fsprogs"))
         );
-        assert_eq!(
-            packages::emerge_package_set(BootMode::Bios, "ext4", "root", &[]),
-            [
-                "sys-block/io-scheduler-udev-rules",
-                "sys-fs/dosfstools",
-                "sys-fs/e2fsprogs",
-                "sys-kernel/gentoo-kernel-bin"
-            ]
+        plan.username = Some("root".into());
+        plan.system.root_filesystem = RootFilesystem::Ext4;
+        let ext4 = packages::emerge_package_set_for_plan(&plan, &[]).unwrap();
+        assert!(ext4.iter().any(|name| name == "sys-fs/e2fsprogs"));
+        assert!(
+            !ext4
+                .iter()
+                .any(|name| matches!(name.as_str(), "sys-fs/xfsprogs" | "app-admin/sudo"))
         );
     }
 }
@@ -595,35 +461,43 @@ mod target_config {
 mod cachyos {
     use crate::support::Scratch;
     use rustaller::command::{CommandOutput, MockRunner};
-    use rustaller::targets::cachyos::{self, IsaLevel, RELEASE_FINGERPRINT};
+    use rustaller::host::inspect::cpu::IsaLevel;
+    use rustaller::targets::cachyos::{self, BASELINE_REPOSITORY, RELEASE_FINGERPRINT};
+
+    const BASE: &str = "[options]\nArchitecture = x86_64\nSigLevel = Required DatabaseOptional\n[core]\nServer = https://geo.mirror.pkgbuild.com/$repo/os/$arch\n";
 
     fn root() -> Scratch {
         let dir = Scratch::with_etc("cachyos");
         dir.write("etc/arch-release", "");
+        dir.write(
+            "etc/pacman.conf",
+            &cachyos::repository_config(BASE, IsaLevel::V1).unwrap(),
+        );
         dir
     }
-    fn ok() -> CommandOutput {
-        CommandOutput::new(Some(0), vec![], vec![])
-    }
+
     #[test]
-    fn isa_selection_uses_os_usable_glibc_hwcaps_instead_of_cpu_flags() {
-        assert_eq!(
-            cachyos::isa_level("x86-64-v4 (supported)\nx86-64-v3 (supported, searched)\n"),
-            IsaLevel::V3
-        );
-        assert_eq!(
-            cachyos::isa_level("x86-64-v4 (supported, searched)\nx86-64-v3 (supported, searched)"),
-            IsaLevel::V4
-        );
-        assert_eq!(
-            cachyos::isa_level("x86-64-v2 (supported, searched)"),
-            IsaLevel::V2
-        );
-        assert_eq!(
-            cachyos::isa_level("AVX512 avx2 x86-64-v4\n"),
-            IsaLevel::Baseline
-        );
+    fn repositories_enable_only_the_usable_guest_tier_and_require_signatures() {
+        for isa in [IsaLevel::V1, IsaLevel::V2, IsaLevel::V3, IsaLevel::V4] {
+            let config = cachyos::repository_config(BASE, isa).unwrap();
+            assert!(config.contains(&format!(
+                "[cachyos]\nSigLevel = Required\nServer = {BASELINE_REPOSITORY}"
+            )));
+            assert!(!config.contains("znver"));
+            for (level, tier) in [(IsaLevel::V3, "v3"), (IsaLevel::V4, "v4")] {
+                for repository in [
+                    format!("cachyos-{tier}"),
+                    format!("cachyos-core-{tier}"),
+                    format!("cachyos-extra-{tier}"),
+                ] {
+                    let policy = format!("[{repository}]\nSigLevel = Required");
+                    assert_eq!(config.contains(&policy), isa == level);
+                }
+            }
+            assert!(cachyos::repository_config(&config, isa).is_err());
+        }
     }
+
     #[test]
     fn release_key_matches_exactly_one_pinned_primary_not_a_short_id_or_subkey() {
         let good = format!(
@@ -641,96 +515,80 @@ mod cachyos {
         )));
     }
     #[test]
-    fn audited_official_script_is_noninteractive_and_uses_pinned_full_key() {
-        let original = concat!(
-            "pacman-key --recv-keys F3B607488DB35A47 --keyserver keyserver.ubuntu.com\n",
-            "pacman-key --lsign-key F3B607488DB35A47\n",
-            "gawk -i inplace -f $gawk_script $pacman_conf_cachyos || true\n",
-            "pacman -U \"${mirror_url}package\"\n",
-            "    pacman -Syu\n",
-        );
-        let adapted = cachyos::adapt_official_script(original).unwrap();
-        assert!(adapted.contains("pacman-key --add ./rustaller-cachyos.asc"));
-        assert!(adapted.contains(&format!("pacman-key --lsign-key {RELEASE_FINGERPRINT}")));
-        assert!(!adapted.contains("--recv-keys"));
-        assert!(adapted.contains("pacman --noconfirm -U"));
-        assert!(adapted.contains("pacman --noconfirm -Syu"));
-        assert!(!adapted.contains("gawk -i inplace -f $gawk_script $pacman_conf_cachyos || true"));
-        assert!(
-            cachyos::adapt_official_script(
-                &original.replace("    pacman -Syu\n", "    pacman -Syyu\n")
-            )
-            .is_err()
-        );
-    }
-    #[test]
-    fn repo_policy_rejects_signature_downgrades_and_unsupported_isa() {
-        let v3 = "[options]\nSigLevel = Required DatabaseOptional\n[cachyos-v3]\n[cachyos-core-v3]\n[cachyos-extra-v3]\n[cachyos]\n[core]\n";
-        assert!(cachyos::validate_repository_config(v3, IsaLevel::V3).is_ok());
-        assert!(cachyos::validate_repository_config(v3, IsaLevel::V2).is_err());
-        assert!(cachyos::validate_repository_config(v3, IsaLevel::V4).is_err());
-        assert!(
-            cachyos::validate_repository_config(
-                &v3.replace("Required DatabaseOptional", "Never"),
-                IsaLevel::V3
-            )
-            .is_err()
-        );
-        assert!(
-            cachyos::validate_repository_config(
-                &format!("{v3}SigLevel = Optional TrustAll\n"),
-                IsaLevel::V3
-            )
-            .is_err()
-        );
-    }
-    #[test]
     fn firstboot_failure_retains_pending_update_and_success_rebuilds_then_cleans() {
-        for failure in 0..3 {
-            let root = root();
-            let worker = format!("fake-test-ELF {}", rustaller::RUNTIME_VERSION);
-            cachyos::install_firstboot_update_with_worker(&root.0, worker.as_bytes()).unwrap();
-            let mut outputs = (0..failure).map(|_| ok()).collect::<Vec<_>>();
-            outputs.push(CommandOutput::new(Some(1), vec![], vec![]));
-            let mut runner = MockRunner::new(outputs);
-            assert!(cachyos::run_firstboot_update(&mut runner, &root.0).is_err());
-            assert!(
-                root.0
-                    .join("var/lib/rustaller/cachyos-firstboot.pending")
-                    .is_file()
-            );
-            assert!(
-                root.0
-                    .join("usr/local/libexec/rustaller-cachyos-worker")
-                    .is_file()
-            );
-            assert_eq!(runner.calls().len(), failure + 1);
-            let mut retry = MockRunner::new([ok(), ok(), ok()]);
-            cachyos::run_firstboot_update(&mut retry, &root.0).unwrap();
-            assert_eq!(
-                retry
-                    .calls()
-                    .iter()
-                    .map(|c| c.phase.as_str())
-                    .collect::<Vec<_>>(),
-                [
-                    "cachyos-firstboot-full-upgrade",
-                    "cachyos-firstboot-initramfs",
-                    "cachyos-firstboot-boot-refresh"
-                ]
-            );
-            assert!(
-                !root
-                    .0
-                    .join("var/lib/rustaller/cachyos-firstboot.pending")
-                    .exists()
-            );
-            assert!(
-                !root
-                    .0
-                    .join("usr/local/libexec/rustaller-cachyos-worker")
-                    .exists()
-            );
-        }
+        let root = root();
+        let worker = format!("fake-test-ELF {}", rustaller::RUNTIME_VERSION);
+        cachyos::install_firstboot_update_with_worker(&root.0, worker.as_bytes()).unwrap();
+        let ok = || CommandOutput::new(Some(0), vec![], vec![]);
+        let mut runner = MockRunner::new([ok(), CommandOutput::new(Some(1), vec![], vec![])]);
+        assert!(cachyos::run_firstboot_update(&mut runner, &root.0).is_err());
+        assert!(
+            root.0
+                .join("var/lib/rustaller/cachyos-firstboot.pending")
+                .is_file()
+        );
+        assert!(
+            root.0
+                .join("usr/local/libexec/rustaller-cachyos-worker")
+                .is_file()
+        );
+        assert_eq!(
+            runner.calls()[1].args[1..],
+            [
+                "pacman",
+                "-Syu",
+                "--noconfirm",
+                "--needed",
+                "cachyos/linux-cachyos-server"
+            ]
+        );
+
+        let module = "usr/lib/modules/7.3.5-cachyos-server";
+        std::fs::create_dir_all(root.0.join(module)).unwrap();
+        std::fs::create_dir_all(root.0.join("boot")).unwrap();
+        root.write(&format!("{module}/pkgbase"), "linux-cachyos-server\n");
+        root.write(&format!("{module}/vmlinuz"), "kernel");
+        root.write("boot/vmlinuz-linux-cachyos-server", "kernel");
+        root.write("boot/initramfs-linux-cachyos-server.img", "initramfs");
+        let text = |message: String| CommandOutput::new(Some(0), message.into_bytes(), vec![]);
+        let hash = "A".repeat(64);
+        let mut retry = MockRunner::new([
+            ok(),
+            ok(),
+            ok(),
+            text(format!("/{module}/vmlinuz\n")),
+            text(format!("{hash}  /a\n{hash}  /b\n")),
+            text(format!("{module}/modules.dep\n")),
+            ok(),
+        ]);
+        cachyos::run_firstboot_update(&mut retry, &root.0).unwrap();
+        assert_eq!(
+            retry
+                .calls()
+                .iter()
+                .map(|call| call.phase.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "cachyos-firstboot-check-boot-mount",
+                "cachyos-firstboot-full-upgrade",
+                "cachyos-firstboot-initramfs",
+                "cachyos-list-installed-server-files",
+                "cachyos-compare-native-server-kernel",
+                "cachyos-verify-matching-initramfs",
+                "cachyos-firstboot-boot-refresh",
+            ]
+        );
+        assert!(
+            !root
+                .0
+                .join("var/lib/rustaller/cachyos-firstboot.pending")
+                .exists()
+        );
+        assert!(
+            !root
+                .0
+                .join("usr/local/libexec/rustaller-cachyos-worker")
+                .exists()
+        );
     }
 }

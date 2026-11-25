@@ -5,110 +5,30 @@
 
 use crate::model::Target;
 use std::fmt;
-use std::str::FromStr;
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum KernelChoice {
-    #[default]
-    Auto,
-    Cloud,
-    Generic,
-    Lts,
-    Standard,
-    Virt,
-    Cachyos,
-    Hardened,
-    Zen,
-}
-
-impl KernelChoice {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Cloud => "cloud",
-            Self::Generic => "generic",
-            Self::Lts => "lts",
-            Self::Standard => "standard",
-            Self::Virt => "virt",
-            Self::Cachyos => "cachyos",
-            Self::Hardened => "hardened",
-            Self::Zen => "zen",
-        }
-    }
-
-    /// Package-spelling aliases are checked against the requested distribution
-    /// before being normalized to the backwards-compatible choice enum.
-    pub fn parse_for_target(value: &str, target: Target) -> Result<Self, PostInstallError> {
-        let allowed = match value {
-            "linux" | "linux-hardened" | "linux-zen" | "linux-cachyos" => target == Target::Arch,
-            "linux-lts" => matches!(target, Target::Arch | Target::Alpine),
-            "linux-virt" => target == Target::Alpine,
-            "linux-image-amd64" | "linux-image-cloud-amd64" => target == Target::Debian,
-            "gentoo-kernel-bin" | "sys-kernel/gentoo-kernel-bin" => target == Target::Gentoo,
-            _ => true,
-        };
-        let kernel = value.parse()?;
-        if !allowed {
-            return Err(PostInstallError::UnsupportedKernel { target, kernel });
-        }
-        PostInstallConfig {
-            kernel,
-            ..Default::default()
-        }
-        .kernel_package(target, false, false)?;
-        Ok(kernel)
-    }
-
-    pub const fn choices_for(target: Target) -> &'static str {
-        match target {
-            Target::Alpine => "standard/virt/lts",
-            Target::Debian => "standard/cloud/generic",
-            Target::Arch => "standard/lts/hardened/zen/cachyos",
-            Target::Gentoo => "auto/standard",
-            Target::Reset => "auto",
-        }
-    }
-}
-
-impl FromStr for KernelChoice {
-    type Err = PostInstallError;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "auto" => Ok(Self::Auto),
-            "cloud" | "linux-image-cloud-amd64" => Ok(Self::Cloud),
-            "generic" | "linux-image-amd64" => Ok(Self::Generic),
-            "lts" | "linux-lts" => Ok(Self::Lts),
-            "standard" | "linux" | "gentoo-kernel-bin" | "sys-kernel/gentoo-kernel-bin" => {
-                Ok(Self::Standard)
-            }
-            "virt" | "linux-virt" => Ok(Self::Virt),
-            "cachyos" | "linux-cachyos" => Ok(Self::Cachyos),
-            "hardened" | "linux-hardened" => Ok(Self::Hardened),
-            "zen" | "linux-zen" => Ok(Self::Zen),
-            _ => Err(PostInstallError::InvalidKernel),
-        }
-    }
-}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PostInstallConfig {
-    pub kernel: KernelChoice,
     pub hostname: Option<String>,
     pub timezone: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct KernelPackage {
-    pub package: &'static str,
-    pub alpine_flavor: Option<&'static str>,
+/// The required target package is independent of the Live kernel and firmware.
+pub const fn required_kernel(target: Target) -> Option<&'static str> {
+    let package = match target {
+        Target::Alpine => "linux-virt",
+        Target::Debian => "linux-image-cloud-amd64",
+        Target::Arch => "linux-cachyos-server",
+        Target::Gentoo => "sys-kernel/gentoo-kernel-bin",
+        Target::Reset => return None,
+    };
+    Some(package)
 }
 
 /// Configuration data for a target root; paths are relative to that root.
 /// The zonefile must be checked in the installed target after tzdata is present.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfigurationPlan {
-    pub kernel: KernelPackage,
+    pub kernel: &'static str,
     pub hostname_contents: Option<String>,
     pub timezone_contents: Option<String>,
     pub zoneinfo_relative_path: Option<String>,
@@ -117,12 +37,6 @@ pub struct ConfigurationPlan {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PostInstallError {
-    InvalidKernel,
-    UnsupportedKernel {
-        target: Target,
-        kernel: KernelChoice,
-    },
-    ConflictingKernelOptions,
     InvalidHostname,
     InvalidTimezone,
     UnexpectedRoute,
@@ -131,16 +45,6 @@ pub enum PostInstallError {
 impl fmt::Display for PostInstallError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidKernel => f.write_str("Invalid kernel selection"),
-            Self::UnsupportedKernel { target, kernel } => write!(
-                f,
-                "Kernel {} is unavailable for {target}; choose {}",
-                kernel.as_str(),
-                KernelChoice::choices_for(*target)
-            ),
-            Self::ConflictingKernelOptions => {
-                f.write_str("Use either --kernel or --no-cloud-kernel")
-            }
             Self::InvalidHostname => {
                 f.write_str("Hostname must be an ASCII label of 1-63 letters, digits or hyphens")
             }
@@ -156,20 +60,12 @@ impl std::error::Error for PostInstallError {}
 
 impl PostInstallConfig {
     pub fn is_default(&self) -> bool {
-        self.kernel == KernelChoice::Auto && self.hostname.is_none() && self.timezone.is_none()
+        self.hostname.is_none() && self.timezone.is_none()
     }
 
-    pub fn validate(
-        &self,
-        target: Target,
-        no_cloud_kernel: bool,
-        hold: Option<u8>,
-    ) -> Result<(), PostInstallError> {
+    pub fn validate(&self, target: Target, hold: Option<u8>) -> Result<(), PostInstallError> {
         if !self.is_default() && (!target.is_automatic() || hold == Some(1)) {
             return Err(PostInstallError::UnexpectedRoute);
-        }
-        if no_cloud_kernel && self.kernel != KernelChoice::Auto {
-            return Err(PostInstallError::ConflictingKernelOptions);
         }
         if let Some(hostname) = self.hostname.as_deref()
             && !valid_hostname(hostname)
@@ -181,70 +77,12 @@ impl PostInstallConfig {
         {
             return Err(PostInstallError::InvalidTimezone);
         }
-        if target.is_automatic() {
-            self.kernel_package(target, no_cloud_kernel, false)?;
-        }
         Ok(())
     }
 
-    /// Resolve distribution-standard defaults and explicit kernel packages.
-    pub fn kernel_package(
-        &self,
-        target: Target,
-        no_cloud_kernel: bool,
-        _is_virtual_machine: bool,
-    ) -> Result<KernelPackage, PostInstallError> {
-        if no_cloud_kernel && self.kernel != KernelChoice::Auto {
-            return Err(PostInstallError::ConflictingKernelOptions);
-        }
-        let (package, alpine_flavor) = match (target, self.kernel) {
-            (
-                Target::Alpine,
-                KernelChoice::Auto
-                | KernelChoice::Standard
-                | KernelChoice::Generic
-                | KernelChoice::Lts,
-            ) => ("linux-lts", Some("lts")),
-            (Target::Alpine, KernelChoice::Cloud | KernelChoice::Virt) => {
-                ("linux-virt", Some("virt"))
-            }
-            (
-                Target::Debian,
-                KernelChoice::Auto | KernelChoice::Standard | KernelChoice::Generic,
-            ) => ("linux-image-amd64", None),
-            (Target::Debian, KernelChoice::Cloud) => ("linux-image-cloud-amd64", None),
-            (Target::Arch, KernelChoice::Auto | KernelChoice::Standard) => ("linux", None),
-            (Target::Arch, KernelChoice::Lts) => ("linux-lts", None),
-            (Target::Arch, KernelChoice::Hardened) => ("linux-hardened", None),
-            (Target::Arch, KernelChoice::Zen) => ("linux-zen", None),
-            (Target::Arch, KernelChoice::Cachyos) => ("linux-cachyos", None),
-            (Target::Gentoo, KernelChoice::Auto | KernelChoice::Standard) => {
-                ("sys-kernel/gentoo-kernel-bin", None)
-            }
-            (Target::Reset, _) => {
-                return Err(PostInstallError::UnexpectedRoute);
-            }
-            _ => {
-                return Err(PostInstallError::UnsupportedKernel {
-                    target,
-                    kernel: self.kernel,
-                });
-            }
-        };
-        Ok(KernelPackage {
-            package,
-            alpine_flavor,
-        })
-    }
-
-    pub fn prepare(
-        &self,
-        target: Target,
-        no_cloud_kernel: bool,
-        is_virtual_machine: bool,
-    ) -> Result<ConfigurationPlan, PostInstallError> {
-        self.validate(target, no_cloud_kernel, None)?;
-        let kernel = self.kernel_package(target, no_cloud_kernel, is_virtual_machine)?;
+    pub fn prepare(&self, target: Target) -> Result<ConfigurationPlan, PostInstallError> {
+        self.validate(target, None)?;
+        let kernel = required_kernel(target).ok_or(PostInstallError::UnexpectedRoute)?;
         Ok(ConfigurationPlan {
             kernel,
             hostname_contents: self.hostname.as_ref().map(|name| format!("{name}\n")),

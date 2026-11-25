@@ -1,12 +1,13 @@
 use super::fields::{ADDRESS_FIELDS, Field, TCP_FIELDS};
 use super::state::{
-    Authentication, CHOICES, Draft, Page, Route, Wizard, boot_label, hold_label, optional_label,
+    CHOICES, Draft, Page, Route, Wizard, boot_label, hold_label, optional_label,
     valid_public_key_source, valid_username, yes_no,
 };
 use rustaller::config::{DnsConfig, DnsMode, InstallProfile};
 use rustaller::host::args::{CliError, CliOutcome, parse_args};
 use rustaller::host::ssh_keygen::{self, KeyType, KeygenOptions};
-use rustaller::model::{InstallPlan, SecretString};
+use rustaller::model::{InstallPlan, Target};
+use rustaller::postinstall::required_kernel;
 
 impl Wizard {
     pub fn validate_input(&self, field: Field, value: &str) -> Result<(), String> {
@@ -17,7 +18,6 @@ impl Wizard {
             field,
             Field::BootSize
                 | Field::RootSize
-                | Field::Compression
                 | Field::Hostname
                 | Field::Timezone
                 | Field::Disk
@@ -38,9 +38,6 @@ impl Wizard {
                 CHOICES[self.choice].1.to_owned(),
                 format!("{}={}", field.option(), value.trim()),
             ];
-            if field == Field::Compression {
-                args.push("--filesystem=btrfs".into());
-            }
             if field == Field::Swappiness {
                 args.push("--swapfile-mib=2048".into());
             }
@@ -49,10 +46,7 @@ impl Wizard {
         Ok(())
     }
     pub fn invalid_field(&self) -> Option<Field> {
-        let mut fields = Vec::new();
-        if self.has_account() {
-            fields.extend([Field::Username, Field::SshPort]);
-        }
+        let mut fields = vec![Field::Username, Field::SshPort];
         if self.is_automatic() {
             fields.extend([
                 Field::Hostname,
@@ -62,9 +56,6 @@ impl Wizard {
                 Field::RootSize,
                 Field::Mtu,
             ]);
-            if self.draft().root_filesystem == rustaller::config::RootFilesystem::Btrfs {
-                fields.push(Field::Compression);
-            }
             fields.extend_from_slice(TCP_FIELDS);
             if self.draft().swap_enabled {
                 fields.extend([Field::SwapSize, Field::Swappiness]);
@@ -88,13 +79,11 @@ impl Wizard {
                 args.push(format!("{}={value}", field.option()));
             }
         };
-        if self.has_account() {
-            if !valid_username(draft.get(Field::Username).trim()) {
-                return Err("Set a valid username".into());
-            }
-            for field in [Field::Username, Field::SshPort, Field::Frpc] {
-                add(field);
-            }
+        if !valid_username(draft.get(Field::Username).trim()) {
+            return Err("Set a valid username".into());
+        }
+        for field in [Field::Username, Field::SshPort, Field::Frpc] {
+            add(field);
         }
         if self.is_automatic() {
             for field in [Field::Hostname, Field::Timezone, Field::Disk] {
@@ -109,9 +98,6 @@ impl Wizard {
             }
             add(Field::BootSize);
             add(Field::RootSize);
-            if draft.root_filesystem.as_str() == "btrfs" {
-                add(Field::Compression);
-            }
             if draft.swap_enabled {
                 if draft.get(Field::SwapSize).trim().is_empty() {
                     return Err("An enabled swapfile requires a size in MiB".into());
@@ -137,10 +123,6 @@ impl Wizard {
             }
             for domain in &dns.search_domains {
                 args.push(format!("--dns-search={domain}"));
-            }
-            args.push(format!("--kernel={}", draft.kernel.as_str()));
-            if self.selected_target() == Some(rustaller::model::Target::Gentoo) {
-                args.push(format!("--gentoo-init={}", draft.gentoo_init.as_str()));
             }
             args.push(format!("--filesystem={}", draft.root_filesystem.as_str()));
             args.push(format!("--profile={}", draft.profile.as_str()));
@@ -169,9 +151,6 @@ impl Wizard {
         }
         if self.route() == Route::Rescue {
             args.push("--hold=1".into());
-            if draft.generic_kernel {
-                args.push("--no-cloud-kernel".into());
-            }
         }
         if let Some(boot) = draft.boot {
             args.push(format!("--force-boot-mode={}", boot.as_str()));
@@ -179,63 +158,36 @@ impl Wizard {
         if draft.debug {
             args.push("--debug".into());
         }
-        if self.has_account() && draft.authentication == Authentication::PublicKeys {
-            if draft.keys.is_empty()
-                || draft.keys.len() > 128
-                || draft
-                    .keys
-                    .iter()
-                    .any(|key| !valid_public_key_source(&key.0))
-            {
-                return Err("Add 1-128 valid SSH public key sources".into());
-            }
-            args.extend(
-                draft
-                    .keys
-                    .iter()
-                    .map(|key| format!("--ssh-key={}", key.0.trim())),
-            );
+        if draft.keys.len() > 128
+            || draft
+                .keys
+                .iter()
+                .any(|key| !valid_public_key_source(&key.0))
+        {
+            return Err("Review the SSH public key sources in Account and SSH".into());
         }
-        let CliOutcome::Plan(mut plan) = parse_args(&args).map_err(safe_cli_error)? else {
+        args.extend(
+            draft
+                .keys
+                .iter()
+                .map(|key| format!("--ssh-key={}", key.0.trim())),
+        );
+        let CliOutcome::Plan(plan) = parse_args(&args).map_err(safe_cli_error)? else {
             return Err("Cannot create the install plan; check the fields".into());
         };
-        if self.has_account() && draft.authentication == Authentication::Password {
-            let password = draft.get(Field::Password);
-            if password.is_empty() {
-                return Err("Set and confirm the login password, or select SSH public keys".into());
-            }
-            if password != draft.get(Field::Confirm) {
-                return Err("The two passwords do not match".into());
-            }
-            plan.password = Some(SecretString::new(password));
-        }
-        if self.is_automatic() && draft.get(Field::Username).trim() != "root" {
-            let password = draft.get(Field::RootPassword);
-            if password.is_empty() {
-                return Err("Set and confirm a separate root account password".into());
-            }
-            if password != draft.get(Field::RootConfirm) {
-                return Err("The two root passwords do not match".into());
-            }
-            plan.root_password = Some(SecretString::new(password));
-        }
-        plan.validate().map_err(|error| error.to_string())?;
+        Ok(plan)
+    }
+
+    pub fn authorization_plan(&self) -> Result<Box<InstallPlan>, String> {
+        let plan = self.build_plan()?;
         plan.validate_install_credentials()
             .map_err(|error| error.to_string())?;
-
         Ok(plan)
     }
 
     pub fn keygen_options(&self) -> Result<KeygenOptions, String> {
-        if self.page() != Page::Keygen
-            || !self.has_account()
-            || self.draft().authentication != Authentication::PublicKeys
-            || self.draft().keys.len() >= 128
-        {
-            return Err(
-                "Key generation requires SSH public-key authentication and fewer than 128 keys"
-                    .into(),
-            );
+        if self.page() != Page::Keygen || self.draft().keys.len() >= 128 {
+            return Err("Key generation requires fewer than 128 configured SSH public keys".into());
         }
         let draft = self.draft();
         let options = KeygenOptions {
@@ -264,21 +216,23 @@ impl Wizard {
 
     pub fn summary(&self) -> Vec<String> {
         let draft = self.draft();
-        let mut lines = vec![format!("System: {}", CHOICES[self.choice].0), "".into()];
-        if self.has_account() {
-            lines.extend([
-                format!("Username: {}", draft.display(Field::Username)),
-                format!(
-                    "Authentication: {}",
-                    match draft.authentication {
-                        Authentication::Password => "Password configured (hidden)".into(),
-                        Authentication::PublicKeys =>
-                            format!("{} SSH public keys (hidden)", draft.keys.len()),
-                    }
-                ),
-                format!("SSH port: {}", draft.display(Field::SshPort)),
-            ]);
-        }
+        let target = self.route().target();
+        let mut lines = vec![
+            format!("System: {}", CHOICES[self.choice].0),
+            "".into(),
+            format!("Username: {}", draft.display(Field::Username)),
+            if draft.keys.is_empty() {
+                "SSH public keys: add at least one in Account and SSH before installation".into()
+            } else {
+                format!("SSH public keys only: {} sources", draft.keys.len())
+            },
+            format!("SSH port: {}", draft.display(Field::SshPort)),
+            if draft.get(Field::Username).trim() == "root" {
+                "Root SSH login: public key only".into()
+            } else {
+                "Root SSH login: disabled. The selected account has sudo access.".into()
+            },
+        ];
         if self.is_automatic() {
             lines.extend([
                 format!("Install profile: {}", draft.profile.as_str()),
@@ -305,7 +259,6 @@ impl Wizard {
                 format!("Target bootloader: rustaller-boot {}; FAT32 at /boot",rustaller::targets::boot::VERSION),
                 format!("Root partition size: {}", if draft.get(Field::RootSize).is_empty() {"fill remaining disk".into()} else {format!("{} MiB",draft.get(Field::RootSize))}),
                 format!("Boot partition: {} MiB", optional_label(draft.get(Field::BootSize), "512")),
-                format!("Btrfs: {}", if draft.root_filesystem == rustaller::config::RootFilesystem::Btrfs { format!("@ root; zstd level {} (0=off)", optional_label(draft.get(Field::Compression), "3")) } else { "not selected".into() }),
                 format!(
                     "Hostname: {}",
                     optional_label(draft.get(Field::Hostname), "Existing hostname, otherwise target system name")
@@ -314,8 +267,11 @@ impl Wizard {
                     "Timezone: {}",
                     optional_label(draft.get(Field::Timezone), "Installer default")
                 ),
-                format!("Kernel choice: {}", self.kernel_label()),
-                format!("Kernel package: {}", self.kernel_package_label()),
+                format!(
+                    "Kernel package: {}",
+                    required_kernel(target).unwrap_or("Unavailable")
+                ),
+                format!("Init: {}", target.init_system().unwrap_or("Unavailable")),
                 format!(
                     "Target disk: {}",
                     optional_label(draft.get(Field::Disk), "Auto-detect (not scanned yet)")
@@ -349,24 +305,11 @@ impl Wizard {
                     optional_label(draft.get(Field::Mtu), "Target defaults; not inherited")
                 ),
             ]);
-            if self.selected_target() == Some(rustaller::model::Target::Gentoo) {
+            if target == Target::Gentoo {
                 lines.extend([
-                    format!("Stage3: {}", draft.gentoo_init.stage3_variant()),
-                    format!("Init: {}", draft.gentoo_init.as_str()),
+                    format!("Stage3: {}", rustaller::host::sources::GENTOO_STAGE3_PREFIX),
                     "ABI: amd64, no-multilib (64-bit only)".into(),
                 ]);
-            } else {
-                lines.push(format!(
-                    "Init: {}",
-                    if self.selected_target() == Some(rustaller::model::Target::Alpine) {
-                        "OpenRC"
-                    } else {
-                        "systemd"
-                    }
-                ));
-            }
-            if draft.root_filesystem == rustaller::config::RootFilesystem::Btrfs {
-                lines.push("Btrfs snapshots exclude FAT32 /boot; restore matching kernels and initramfs separately.".into());
             }
             for field in TCP_FIELDS {
                 if !draft.get(*field).trim().is_empty() {
@@ -404,24 +347,14 @@ impl Wizard {
                 ),
             ]);
         }
-        if self.is_automatic() && draft.get(Field::Username).trim() != "root" {
-            lines.push(format!(
-                "Root account password: {}",
-                draft.display(Field::RootPassword)
-            ));
-        }
         if self.route() == Route::Rescue {
-            lines.extend([
-                "Mode: rescue (hold=1), no automatic partitioning".into(),
-                format!("Generic kernel: {}", yes_no(draft.generic_kernel)),
-            ]);
+            lines.push(format!(
+                "Init: {}",
+                target.init_system().unwrap_or("Unavailable")
+            ));
+            lines.push("Mode: rescue (hold=1), no automatic partitioning".into());
         }
-        if self.has_account() {
-            lines.extend([
-                "IP addressing/routes: inherit existing network configuration".into(),
-                format!("frpc: {}", draft.display(Field::Frpc)),
-            ]);
-        }
+        lines.push(format!("frpc: {}", draft.display(Field::Frpc)));
 
         lines.push(format!("Boot mode: {}", boot_label(draft.boot)));
         lines.push(format!("Debug output: {}", yes_no(draft.debug)));
@@ -431,23 +364,6 @@ impl Wizard {
             "BIOS/UEFI acceptance status is reported separately; unit tests do not prove boot compatibility.".into(),
         ]);
         lines
-    }
-
-    fn kernel_package_label(&self) -> String {
-        use rustaller::model::Target;
-        use rustaller::postinstall::{KernelChoice, PostInstallConfig};
-        let target = self.route().target();
-        let draft = self.draft();
-        if target == Target::Debian && draft.kernel == KernelChoice::Auto {
-            return "automatic: linux-image-amd64 or linux-image-cloud-amd64 (host selection pending)".into();
-        }
-        PostInstallConfig {
-            kernel: draft.kernel,
-            ..Default::default()
-        }
-        .kernel_package(target, false, false)
-        .map(|kernel| kernel.package.to_owned())
-        .unwrap_or_else(|_| "Unavailable (invalid target/kernel combination)".into())
     }
 }
 

@@ -2,39 +2,6 @@
 use crate::model::Target;
 use std::{fmt, net::IpAddr, str::FromStr};
 
-/// Gentoo's init selection is independent of the guest CPU's ISA level.
-/// Both supported variants are amd64 glibc, with a 64-bit-only ABI.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum GentooInit {
-    #[default]
-    Openrc,
-    Systemd,
-}
-impl GentooInit {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Openrc => "openrc",
-            Self::Systemd => "systemd",
-        }
-    }
-    pub const fn stage3_variant(self) -> &'static str {
-        match self {
-            Self::Openrc => "amd64-nomultilib-openrc",
-            Self::Systemd => "amd64-nomultilib-systemd",
-        }
-    }
-}
-impl FromStr for GentooInit {
-    type Err = SystemConfigError;
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "openrc" => Ok(Self::Openrc),
-            "systemd" => Ok(Self::Systemd),
-            _ => Err(SystemConfigError::InvalidGentooInit),
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum InstallProfile {
     Standard,
@@ -179,15 +146,20 @@ pub enum RootFilesystem {
     #[default]
     Xfs,
     Ext4,
-    Btrfs,
 }
 impl RootFilesystem {
-    pub const ALL: &'static [Self] = &[Self::Xfs, Self::Ext4, Self::Btrfs];
+    pub const fn maintenance_package(self) -> &'static str {
+        match self {
+            Self::Xfs => "xfsprogs",
+            Self::Ext4 => "e2fsprogs",
+        }
+    }
+
+    pub const ALL: &'static [Self] = &[Self::Xfs, Self::Ext4];
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Xfs => "xfs",
             Self::Ext4 => "ext4",
-            Self::Btrfs => "btrfs",
         }
     }
 }
@@ -197,7 +169,6 @@ impl FromStr for RootFilesystem {
         match value {
             "xfs" => Ok(Self::Xfs),
             "ext4" => Ok(Self::Ext4),
-            "btrfs" => Ok(Self::Btrfs),
             _ => Err(SystemConfigError::InvalidFilesystem),
         }
     }
@@ -205,10 +176,8 @@ impl FromStr for RootFilesystem {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SystemConfig {
-    pub gentoo_init: Option<GentooInit>,
     pub boot_size_mib: Option<u32>,
     pub root_size_mib: Option<u32>,
-    pub btrfs_compression: Option<u8>,
     pub root_filesystem: RootFilesystem,
     pub profile: InstallProfile,
     pub with_tools: bool,
@@ -275,32 +244,7 @@ impl SystemConfig {
         self == &Self::default()
     }
     pub fn validate(&self, target: Target, hold: Option<u8>) -> Result<(), SystemConfigError> {
-        if self.gentoo_init.is_some() && target != Target::Gentoo {
-            return Err(SystemConfigError::UnexpectedGentooInit);
-        }
-        // A Gentoo plan carries its default init variant even if switched to
-        // rescue later. It is not an applied target setting in hold=1 mode.
-        let route_default = target == Target::Gentoo
-            && self
-                == &Self {
-                    gentoo_init: self.gentoo_init,
-                    profile: self.profile,
-                    ..Self::default()
-                };
-        // Earlier plans explicitly encoded Standard even on routes that do not
-        // install a target. Keep that neutral value readable after changing the
-        // default; neither profile is applied to reset or Live rescue routes.
-        let legacy_neutral_standard = self.profile == InstallProfile::Standard
-            && self
-                == &Self {
-                    profile: InstallProfile::Standard,
-                    ..Self::default()
-                };
-        if !self.is_default()
-            && !route_default
-            && !legacy_neutral_standard
-            && (!target.is_automatic() || hold == Some(1))
-        {
+        if !self.is_default() && (!target.is_automatic() || hold == Some(1)) {
             return Err(SystemConfigError::UnexpectedRoute);
         }
         if self
@@ -311,11 +255,6 @@ impl SystemConfig {
         }
         if self.root_size_mib.is_some_and(|size| size < 512) {
             return Err(SystemConfigError::InvalidRootSize);
-        }
-        if self.btrfs_compression.is_some_and(|n| n > 15)
-            || (self.btrfs_compression.is_some() && self.root_filesystem != RootFilesystem::Btrfs)
-        {
-            return Err(SystemConfigError::InvalidCompression);
         }
         self.dns.validate()?;
         self.network
@@ -342,9 +281,6 @@ impl SystemConfig {
             }
         }
         self.swap.validate().map_err(SystemConfigError::Swap)?;
-        if self.root_filesystem == RootFilesystem::Btrfs && self.swap.size_mib.is_some() {
-            return Err(SystemConfigError::BtrfsSwapUnsupported);
-        }
         if self.network.ipv6 == Ipv6Policy::Disable
             && self
                 .dns
@@ -362,16 +298,6 @@ impl SystemConfig {
     pub fn clear_package_cache(&self) -> bool {
         self.profile == InstallProfile::Minimal && !self.keep_package_cache
     }
-    pub fn required_packages(&self, target: Target) -> &'static [&'static str] {
-        if self.profile != InstallProfile::Minimal {
-            return &[];
-        }
-        match target {
-            Target::Alpine => &["openssh", "ca-certificates", "dhcpcd"],
-            Target::Gentoo => &["net-misc/openssh", "app-misc/ca-certificates"],
-            _ => &[],
-        }
-    }
     pub fn tool_packages(&self, target: Target) -> &'static [&'static str] {
         if !self.with_tools {
             return &[];
@@ -386,14 +312,9 @@ impl SystemConfig {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SystemConfigError {
-    InvalidGentooInit,
-    UnexpectedGentooInit,
-    MissingGentooInit,
     InvalidFilesystem,
     InvalidBootSize,
     InvalidRootSize,
-    InvalidCompression,
-    BtrfsSwapUnsupported,
     InvalidProfile,
     InvalidDnsMode,
     AutomaticDnsWithValues,
@@ -415,20 +336,9 @@ impl fmt::Display for SystemConfigError {
             return error.fmt(f);
         }
         f.write_str(match self {
-            Self::InvalidGentooInit => "Gentoo init must be openrc or systemd",
-            Self::UnexpectedGentooInit => "--gentoo-init requires a Gentoo installation target",
-            Self::MissingGentooInit => {
-                "Gentoo installation requires an explicit typed init selection"
-            }
-            Self::InvalidFilesystem => "Root filesystem must be xfs, ext4 or btrfs",
+            Self::InvalidFilesystem => "Root filesystem must be xfs or ext4",
             Self::InvalidRootSize => "Root partition requires at least 512 MiB",
             Self::InvalidBootSize => "FAT32 boot partition must be 512-4096 MiB",
-            Self::InvalidCompression => {
-                "Btrfs compression requires Btrfs and a zstd level 0-15 (0=off)"
-            }
-            Self::BtrfsSwapUnsupported => {
-                "Btrfs swapfile allocation is not implemented; omit swapfile"
-            }
             Self::InvalidProfile => "Profile must be standard or minimal",
             Self::InvalidDnsMode => "DNS mode must be auto or static",
             Self::AutomaticDnsWithValues => {

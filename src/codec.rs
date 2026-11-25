@@ -1,12 +1,9 @@
-use crate::config::SwapConfig;
 use crate::config::{
-    DnsConfig, DnsMode, GentooInit, InstallProfile, RootFilesystem, SystemConfig, SystemConfigError,
+    DnsConfig, DnsMode, ExplicitNetwork, InstallProfile, NetworkConfig, RootFilesystem, SwapConfig,
+    SystemConfig, SystemConfigError,
 };
-use crate::config::{ExplicitNetwork, NetworkConfig};
-use crate::model::{
-    BootMode, CURRENT_SCHEMA_VERSION, InstallPlan, PlanError, SecretString, Target,
-};
-use crate::postinstall::{KernelChoice, PostInstallConfig};
+use crate::model::{BootMode, CURRENT_SCHEMA_VERSION, InstallPlan, PlanError, Target};
+use crate::postinstall::PostInstallConfig;
 
 const MAGIC: &[u8] = b"RINSTALL\0";
 const MAX_PLAN_SIZE: usize = 4 * 1024 * 1024;
@@ -21,6 +18,7 @@ pub enum PlanCodecError {
     InvalidUtf8,
     Oversized,
     TooManySshKeys,
+    UnresolvedSshKey,
     TrailingData,
     InvalidPlan(PlanError),
 }
@@ -34,6 +32,9 @@ impl std::fmt::Display for PlanCodecError {
             Self::InvalidUtf8 => f.write_str("Install plan contains invalid UTF-8"),
             Self::Oversized => f.write_str("Install plan exceeds the supported size"),
             Self::TooManySshKeys => f.write_str("Install plan contains too many SSH keys"),
+            Self::UnresolvedSshKey => {
+                f.write_str("Install plans can contain only resolved SSH public keys")
+            }
             Self::TrailingData => f.write_str("Install plan contains trailing data"),
             Self::InvalidPlan(error) => write!(f, "Invalid install plan: {error}"),
         }
@@ -43,32 +44,14 @@ impl std::fmt::Display for PlanCodecError {
 impl std::error::Error for PlanCodecError {}
 
 pub fn encode_plan(plan: &InstallPlan) -> Result<Vec<u8>, PlanCodecError> {
-    if plan.schema_version == 10 && plan.system.explicit_network.is_some() {
-        return Err(PlanCodecError::InvalidPlan(PlanError::UnsupportedSchema(
-            10,
-        )));
-    }
+    plan.validate().map_err(PlanCodecError::InvalidPlan)?;
+    validate_public_keys(&plan.ssh_keys)?;
     let mut output = Vec::new();
     output.extend_from_slice(MAGIC);
     output.extend_from_slice(&plan.schema_version.to_le_bytes());
     output.push(target_to_tag(plan.target));
     put_optional_string(&mut output, plan.username.as_deref())?;
-    put_optional_bytes(
-        &mut output,
-        plan.password
-            .as_ref()
-            .map(|secret| secret.expose().as_bytes()),
-    )?;
-    put_optional_bytes(
-        &mut output,
-        plan.root_password
-            .as_ref()
-            .map(|secret| secret.expose().as_bytes()),
-    )?;
 
-    if plan.ssh_keys.len() > MAX_SSH_KEYS {
-        return Err(PlanCodecError::TooManySshKeys);
-    }
     put_u32(&mut output, plan.ssh_keys.len() as u32);
     for key in &plan.ssh_keys {
         put_bytes(&mut output, key.as_bytes())?;
@@ -77,7 +60,6 @@ pub fn encode_plan(plan: &InstallPlan) -> Result<Vec<u8>, PlanCodecError> {
     put_optional_u16(&mut output, plan.ssh_port);
     put_optional_string(&mut output, plan.frpc_config.as_deref())?;
     put_optional_string(&mut output, plan.target_disk.as_deref())?;
-    output.push(u8::from(plan.no_cloud_kernel));
     put_optional_u8(&mut output, plan.hold);
     output.push(match plan.force_boot_mode {
         None => 0,
@@ -85,18 +67,11 @@ pub fn encode_plan(plan: &InstallPlan) -> Result<Vec<u8>, PlanCodecError> {
         Some(BootMode::Efi) => 2,
     });
     output.push(u8::from(plan.debug));
-    output.push(match plan.system.gentoo_init {
-        None => 0,
-        Some(GentooInit::Openrc) => 1,
-        Some(GentooInit::Systemd) => 2,
-    });
     put_u32(&mut output, plan.system.boot_size_mib.unwrap_or(0));
     put_u32(&mut output, plan.system.root_size_mib.unwrap_or(0));
-    put_optional_u8(&mut output, plan.system.btrfs_compression);
     output.push(match plan.system.root_filesystem {
         RootFilesystem::Xfs => 0,
         RootFilesystem::Ext4 => 1,
-        RootFilesystem::Btrfs => 2,
     });
     output.push(match plan.system.profile {
         InstallProfile::Standard => 0,
@@ -150,37 +125,24 @@ pub fn encode_plan(plan: &InstallPlan) -> Result<Vec<u8>, PlanCodecError> {
     }
     put_optional_u32(&mut output, plan.system.swap.size_mib);
     put_optional_u8(&mut output, plan.system.swap.swappiness);
-    output.push(match plan.post_install.kernel {
-        KernelChoice::Auto => 0,
-        KernelChoice::Cloud => 1,
-        KernelChoice::Generic => 2,
-        KernelChoice::Lts => 3,
-        KernelChoice::Standard => 4,
-        KernelChoice::Virt => 5,
-        KernelChoice::Cachyos => 6,
-        KernelChoice::Hardened => 7,
-        KernelChoice::Zen => 8,
-    });
     put_optional_string(&mut output, plan.post_install.hostname.as_deref())?;
     put_optional_string(&mut output, plan.post_install.timezone.as_deref())?;
-    if plan.schema_version >= 11 {
-        output.push(u8::from(plan.system.explicit_network.is_some()));
-        if let Some(net) = &plan.system.explicit_network {
-            put_string(&mut output, &net.mac)?;
-            for value in [
-                &net.ipv4_address,
-                &net.ipv4_gateway,
-                &net.ipv6_address,
-                &net.ipv6_gateway,
-            ] {
-                put_optional_string(&mut output, value.as_deref())?;
-            }
-            output.extend([
-                u8::from(net.dhcp4),
-                u8::from(net.dhcp6),
-                u8::from(net.accept_ra),
-            ]);
+    output.push(u8::from(plan.system.explicit_network.is_some()));
+    if let Some(net) = &plan.system.explicit_network {
+        put_string(&mut output, &net.mac)?;
+        for value in [
+            &net.ipv4_address,
+            &net.ipv4_gateway,
+            &net.ipv6_address,
+            &net.ipv6_gateway,
+        ] {
+            put_optional_string(&mut output, value.as_deref())?;
         }
+        output.extend([
+            u8::from(net.dhcp4),
+            u8::from(net.dhcp6),
+            u8::from(net.accept_ra),
+        ]);
     }
 
     if output.len() > MAX_PLAN_SIZE {
@@ -199,25 +161,13 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
 
     let mut reader = Reader::new(&bytes[MAGIC.len()..]);
     let schema_version = reader.read_u16()?;
-    if !matches!(schema_version, 10 | CURRENT_SCHEMA_VERSION) {
+    if schema_version != CURRENT_SCHEMA_VERSION {
         return Err(PlanCodecError::InvalidPlan(PlanError::UnsupportedSchema(
             schema_version,
         )));
     }
     let target = tag_to_target(reader.read_u8()?)?;
     let username = reader.read_optional_string()?;
-    let password = match reader.read_optional_bytes()? {
-        Some(value) => {
-            Some(SecretString::from_bytes(value).map_err(|_| PlanCodecError::InvalidUtf8)?)
-        }
-        None => None,
-    };
-    let root_password = match reader.read_optional_bytes()? {
-        Some(value) => {
-            Some(SecretString::from_bytes(value).map_err(|_| PlanCodecError::InvalidUtf8)?)
-        }
-        None => None,
-    };
 
     let key_count = reader.read_u32()? as usize;
     if key_count > MAX_SSH_KEYS {
@@ -227,11 +177,11 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
     for _ in 0..key_count {
         ssh_keys.push(reader.read_string()?);
     }
+    validate_public_keys(&ssh_keys)?;
 
     let ssh_port = reader.read_optional_u16()?;
     let frpc_config = reader.read_optional_string()?;
     let target_disk = reader.read_optional_string()?;
-    let no_cloud_kernel = reader.read_bool()?;
     let hold = reader.read_optional_u8()?;
     let force_boot_mode = match reader.read_u8()? {
         0 => None,
@@ -240,12 +190,6 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
         _ => return Err(PlanCodecError::InvalidTag),
     };
     let debug = reader.read_bool()?;
-    let gentoo_init = match reader.read_u8()? {
-        0 => None,
-        1 => Some(GentooInit::Openrc),
-        2 => Some(GentooInit::Systemd),
-        _ => return Err(PlanCodecError::InvalidTag),
-    };
     let boot_size_mib = match reader.read_u32()? {
         0 => None,
         n => Some(n),
@@ -254,11 +198,9 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
         0 => None,
         size => Some(size),
     };
-    let btrfs_compression = reader.read_optional_u8()?;
     let root_filesystem = match reader.read_u8()? {
         0 => RootFilesystem::Xfs,
         1 => RootFilesystem::Ext4,
-        2 => RootFilesystem::Btrfs,
         _ => return Err(PlanCodecError::InvalidTag),
     };
     let profile = match reader.read_u8()? {
@@ -331,10 +273,8 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
         swappiness: reader.read_optional_u8()?,
     };
     let mut system = SystemConfig {
-        gentoo_init,
         boot_size_mib,
         root_size_mib,
-        btrfs_compression,
         root_filesystem,
         profile,
         with_tools,
@@ -350,22 +290,10 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
         swap,
     };
     let post_install = PostInstallConfig {
-        kernel: match reader.read_u8()? {
-            0 => KernelChoice::Auto,
-            1 => KernelChoice::Cloud,
-            2 => KernelChoice::Generic,
-            3 => KernelChoice::Lts,
-            4 => KernelChoice::Standard,
-            5 => KernelChoice::Virt,
-            6 => KernelChoice::Cachyos,
-            7 => KernelChoice::Hardened,
-            8 => KernelChoice::Zen,
-            _ => return Err(PlanCodecError::InvalidTag),
-        },
         hostname: reader.read_optional_string()?,
         timezone: reader.read_optional_string()?,
     };
-    if schema_version >= 11 && reader.read_bool()? {
+    if reader.read_bool()? {
         system.explicit_network = Some(ExplicitNetwork {
             mac: reader.read_string()?,
             ipv4_address: reader.read_optional_string()?,
@@ -385,13 +313,10 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
         schema_version: CURRENT_SCHEMA_VERSION,
         target,
         username,
-        password,
-        root_password,
         ssh_keys,
         ssh_port,
         frpc_config,
         target_disk,
-        no_cloud_kernel,
         post_install,
         system,
         hold,
@@ -400,6 +325,19 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
     };
     plan.validate().map_err(PlanCodecError::InvalidPlan)?;
     Ok(plan)
+}
+
+fn validate_public_keys(keys: &[String]) -> Result<(), PlanCodecError> {
+    if keys.len() > MAX_SSH_KEYS {
+        return Err(PlanCodecError::TooManySshKeys);
+    }
+    if !keys
+        .iter()
+        .all(|key| crate::shared::configure::valid_public_key(key))
+    {
+        return Err(PlanCodecError::UnresolvedSshKey);
+    }
+    Ok(())
 }
 
 fn target_to_tag(target: Target) -> u8 {
@@ -463,17 +401,6 @@ fn put_optional_string(output: &mut Vec<u8>, value: Option<&str>) -> Result<(), 
         Some(value) => {
             output.push(1);
             put_string(output, value)?;
-        }
-    }
-    Ok(())
-}
-
-fn put_optional_bytes(output: &mut Vec<u8>, value: Option<&[u8]>) -> Result<(), PlanCodecError> {
-    match value {
-        None => output.push(0),
-        Some(value) => {
-            output.push(1);
-            put_bytes(output, value)?;
         }
     }
     Ok(())
@@ -561,14 +488,6 @@ impl<'a> Reader<'a> {
         match self.read_u8()? {
             0 => Ok(None),
             1 => Ok(Some(self.read_string()?)),
-            _ => Err(PlanCodecError::InvalidTag),
-        }
-    }
-
-    fn read_optional_bytes(&mut self) -> Result<Option<Vec<u8>>, PlanCodecError> {
-        match self.read_u8()? {
-            0 => Ok(None),
-            1 => Ok(Some(self.read_bytes()?.to_vec())),
             _ => Err(PlanCodecError::InvalidTag),
         }
     }

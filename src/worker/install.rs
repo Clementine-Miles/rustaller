@@ -92,7 +92,7 @@ pub fn run_from_files<R: CommandRunner>(
     plan_path: &Path,
     manifest_path: &Path,
 ) -> Result<InstallOutcome, LiveInstallError> {
-    // Validate runtime provenance before even opening the credential-bearing plan.
+    // Validate runtime provenance before opening the private installation plan.
     if effective_uid() != 0 {
         return Err(LiveInstallError::Invalid("root is required"));
     }
@@ -119,11 +119,8 @@ pub fn run_from_files<R: CommandRunner>(
     validate_live_root(filesystem.trim())?;
     let architecture = capture(runner, "uname", ["-m"], "live-verify-architecture")?;
     let memory = capture(runner, "free", ["-m"], "live-check-ram-before-prepare")?;
-    let mut plan_file = PrivatePlanFile::open(plan_path)
-        .map_err(|_| LiveInstallError::Invalid("private installation plan is not readable"))?;
-    let plan = plan_file
-        .read()
-        .map_err(|_| LiveInstallError::Invalid("private installation plan is invalid"))?;
+    let mut plan_file = PrivatePlanFile::open(plan_path).map_err(LivePreflightError::from)?;
+    let plan = plan_file.read().map_err(LivePreflightError::from)?;
     plan_file.persist();
     let manifest = read_manifest(manifest_path)?;
     let plan = validate_live_plan(
@@ -170,11 +167,7 @@ pub fn run_from_files<R: CommandRunner>(
         ));
     }
     // Rebind only after every supplied stable identity and the byte size match.
-    let mut rebound = crate::codec::decode_plan(
-        &crate::codec::encode_plan(plan.plan())
-            .map_err(|_| LiveInstallError::Invalid("cannot copy validated plan"))?,
-    )
-    .map_err(|_| LiveInstallError::Invalid("cannot copy validated plan"))?;
+    let mut rebound = plan.plan().clone();
     rebound.target_disk = Some(disk.device.clone());
     let memory = capture(runner, "free", ["-m"], "live-check-ram-before-wipe")?;
     let rebound = validate_live_plan(

@@ -1,19 +1,19 @@
 //! Authenticated host preparation and init-aware kexec handoff.
 //! All mutations require a disk-identity-bound confirmation. Tests use only mocks.
 use super::{disk, initrd, lifecycle, preflight, sources};
-use crate::codec::{decode_plan, encode_plan};
 use crate::command::{
     CommandError, CommandInput, CommandOutput, CommandRunner, CommandSpec, OutputMode,
     PipelineOutput, run_checked,
 };
 use crate::deployment::{DeploymentManifest, DiskIdentity, write_manifest};
-use crate::model::{BootMode, InstallPlan, Target};
+use crate::model::{BootMode, InstallPlan, PlanError, Target};
+use crate::shared::configure::{public_key_check, valid_public_key};
 use crate::worker::initrd_network::{ProxyEndpoint, stage_dns_seed};
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fmt;
 use std::fs::{self, DirBuilder, File, OpenOptions};
-use std::io::{self, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, OpenOptionsExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 
@@ -62,6 +62,7 @@ impl PreparedHandoff {
 #[derive(Debug)]
 pub enum HandoffError {
     Invalid(&'static str),
+    Plan(PlanError),
     Filesystem(io::Error),
     Command(CommandError),
     MissingTool(&'static str),
@@ -74,6 +75,7 @@ impl fmt::Display for HandoffError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Invalid(reason) => write!(f, "Cannot prepare installer handoff: {reason}"),
+            Self::Plan(error) => error.fmt(f),
             Self::Filesystem(error) => write!(f, "Installer staging failed: {error}"),
             Self::Command(error) => error.fmt(f),
             Self::Lifecycle(error) => error.fmt(f),
@@ -241,7 +243,7 @@ pub fn discover<R: CommandRunner>(
     let alpine =
         sources::parse_alpine_netboot(&fetch_text(runner, sources::ALPINE_RELEASES_URL)?, "x86_64")
             .map_err(|_| HandoffError::Invalid("invalid official Alpine netboot metadata"))?;
-    let debian_codename = if plan.target == Target::Debian {
+    let debian_codename = if plan.target == Target::Debian && plan.hold != Some(1) {
         match sources::parse_debian_release_metadata(&fetch_text(
             runner,
             sources::DEBIAN_RELEASE_URL,
@@ -254,18 +256,14 @@ pub fn discover<R: CommandRunner>(
     } else {
         String::new()
     };
-    let gentoo_stage3 = if plan.target == Target::Gentoo {
+    let gentoo_stage3 = if plan.target == Target::Gentoo && plan.hold != Some(1) {
         Some(
-            sources::parse_gentoo_stage3_for_init(
-                &fetch_text(
-                    runner,
-                    &sources::gentoo_stage3_index_url(plan.system.gentoo_init.unwrap_or_default()),
-                )?,
+            sources::parse_gentoo_stage3(
+                &fetch_text(runner, sources::GENTOO_STAGE3_INDEX_URL)?,
                 "x86_64",
-                plan.system.gentoo_init.unwrap_or_default(),
             )
             .map_err(|_| {
-                HandoffError::Invalid("invalid selected Gentoo no-multilib stage3 metadata")
+                HandoffError::Invalid("invalid official Gentoo nomultilib OpenRC stage3 metadata")
             })?,
         )
     } else {
@@ -412,7 +410,7 @@ pub fn prepare<R: CommandRunner>(
     worker: &[u8],
 ) -> Result<PreparedHandoff, HandoffError> {
     plan.validate_install_credentials()
-        .map_err(|_| HandoffError::Invalid("invalid installation plan"))?;
+        .map_err(HandoffError::Plan)?;
     deployment
         .manifest
         .validate()
@@ -431,15 +429,18 @@ pub fn prepare<R: CommandRunner>(
             "handoff confirmation does not match this action and device identity",
         ));
     }
-    if plan.password.is_none() && plan.ssh_keys.is_empty() {
+    if plan.ssh_keys.iter().any(|key| !valid_public_key(key)) {
         return Err(HandoffError::Invalid(
-            "configure a login password or public key before handoff",
+            "SSH public-key sources must be resolved before handoff",
         ));
     }
     if read_disk_identity(runner, &deployment.manifest.disk.device)? != deployment.manifest.disk {
         return Err(HandoffError::Invalid(
             "disk identity changed after confirmation",
         ));
+    }
+    for key in &plan.ssh_keys {
+        verify_public_key(runner, key)?;
     }
     let operation = lifecycle::Preparation::begin()?;
     let outcome = (|| {
@@ -497,10 +498,10 @@ fn prepare_with_transport<R: CommandRunner>(
     )?;
     let extracted = workspace.join("netboot");
     fs::create_dir(&extracted)?;
-    let flavor = if plan.no_cloud_kernel { "lts" } else { "virt" };
-    let kernel_member = format!("boot/vmlinuz-{flavor}");
-    let initrd_member = format!("boot/initramfs-{flavor}");
-    let modloop_member = format!("boot/modloop-{flavor}");
+    // The verified Alpine Live kernel is independent of target-specific policy.
+    let kernel_member = "boot/vmlinuz-virt";
+    let initrd_member = "boot/initramfs-virt";
+    let modloop_member = "boot/modloop-virt";
     run_checked(
         runner,
         &spec(
@@ -524,12 +525,8 @@ fn prepare_with_transport<R: CommandRunner>(
     for path in [&kernel, &original_initrd, &modloop] {
         validate_payload(path)?;
     }
-    let mut encoded = encode_plan(plan).map_err(|_| HandoffError::Invalid("cannot encode plan"))?;
-    let decoded = decode_plan(&encoded);
-    encoded.fill(0);
-    let mut resolved = decoded.map_err(|_| HandoffError::Invalid("cannot copy validated plan"))?;
+    let mut resolved = plan.clone();
     resolved.target_disk = Some(deployment.manifest.disk.device.clone());
-    resolved.ssh_keys = resolve_public_keys(runner, workspace, &plan.ssh_keys)?;
     let overlay = workspace.join("overlay");
     fs::create_dir(&overlay)?;
     for path in ["configs", "etc/apk", "etc/init.d", "etc/runlevels/default"] {
@@ -565,6 +562,9 @@ fn prepare_with_transport<R: CommandRunner>(
     // A provider's attached cidata disk must not inject tiny-cloud services or
     // configuration into the private installer environment.
     private_file(&overlay.join("etc/tiny-cloud.disabled"), b"", 0o600)?;
+    // This private RAM boot has an independent recovery shell on local
+    // consoles. Installed systems keep their native authenticated gettys.
+    private_file(&overlay.join("etc/inittab"), LIVE_INITTAB.as_bytes(), 0o644)?;
     let live_world = live_package_world(&resolved);
     private_file(&overlay.join("etc/apk/world"), live_world.as_bytes(), 0o644)?;
     let repos = format!(
@@ -674,6 +674,7 @@ fn prepare_with_transport<R: CommandRunner>(
 
 const LIVE_SERVICE: &str = "#!/sbin/openrc-run\nname=\"rustaller Live installer\"\ndescription=\"Install the identity-bound target from the private Rust plan\"\ncommand=/rustaller-worker\ncommand_args=\"live-install /configs/install.plan /configs/deployment.manifest\"\ncommand_background=yes\npidfile=/run/rustaller-installer.pid\noutput_log=/var/log/rustaller.log\nerror_log=/var/log/rustaller.log\ndepend() {\n    need modloop\n}\n";
 const LIVE_MODULE_SERVICE: &str = "#!/sbin/openrc-run\nname=\"verified rustaller Live modules\"\ndepend() {\n    before hwdrivers modules\n}\nstart() {\n    /rustaller-worker live-modules\n}\n";
+const LIVE_INITTAB: &str = "::sysinit:/sbin/openrc sysinit\n::sysinit:/sbin/openrc boot\n::wait:/sbin/openrc default\ntty1::respawn:/bin/ash -l\nttyS0::respawn:/bin/ash -l\n::ctrlaltdel:/sbin/reboot\n::shutdown:/sbin/openrc shutdown\n";
 
 fn live_package_world(plan: &InstallPlan) -> String {
     // Alpine 3.24 util-linux is an empty compatibility metapackage. The Live
@@ -690,7 +691,7 @@ fn live_package_world(plan: &InstallPlan) -> String {
     let mut world = format!(
         "{base}ca-certificates\ncurl\ngnupg\nopenssh\nfindmnt\nlsblk\nblkid\nmount\numount\nutil-linux-misc\n"
     );
-    if plan.username.as_deref().is_some_and(|name| name != "root") {
+    if plan.account_name() != "root" {
         world.push_str("sudo\n");
     }
     world
@@ -1006,95 +1007,144 @@ pub fn valid_alpine_signature(status: &str) -> bool {
     valid
 }
 
+/// Resolve and validate credentials before the CLI authorizes a handoff.
+/// Only supported public-key lines leave this function.
 pub fn resolve_public_keys<R: CommandRunner>(
     runner: &mut R,
-    workspace: &Path,
     sources: &[String],
 ) -> Result<Vec<String>, HandoffError> {
     let mut result = Vec::new();
     let mut seen = BTreeSet::new();
-    for (index, source) in sources.iter().enumerate() {
+    for source in sources {
         let text = if source.trim_start().starts_with("ssh-")
             || source.trim_start().starts_with("ecdsa-")
             || source.trim_start().starts_with("sk-")
         {
             source.clone()
         } else if let Some(user) = source.strip_prefix("github:") {
-            source_text(
-                runner,
-                workspace,
-                &format!("key-source-{index}"),
-                &account_key_url("https://github.com", user)?,
-            )?
+            fetch_public_keys(runner, &account_key_url("https://github.com", user)?)?
         } else if let Some(user) = source.strip_prefix("gitlab:") {
-            source_text(
-                runner,
-                workspace,
-                &format!("key-source-{index}"),
-                &account_key_url("https://gitlab.com", user)?,
-            )?
+            fetch_public_keys(runner, &account_key_url("https://gitlab.com", user)?)?
+        } else if source.starts_with("https://") {
+            fetch_public_keys(runner, source)?
         } else {
-            source_text(runner, workspace, &format!("key-source-{index}"), source)?
+            read_public_key_file(Path::new(source))?
         };
+        let mut found = false;
         for line in text
             .lines()
             .map(str::trim)
             .filter(|line| !line.is_empty() && !line.starts_with('#'))
         {
-            let fields: Vec<_> = line.split_whitespace().collect();
-            if line.len() > 8192
-                || line.chars().any(char::is_control)
-                || fields.len() < 2
-                || !matches!(
-                    fields[0],
-                    "ssh-ed25519"
-                        | "ssh-rsa"
-                        | "ecdsa-sha2-nistp256"
-                        | "ecdsa-sha2-nistp384"
-                        | "ecdsa-sha2-nistp521"
-                        | "sk-ssh-ed25519@openssh.com"
-                        | "sk-ecdsa-sha2-nistp256@openssh.com"
-                )
-                || !fields[1]
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || b"+/=".contains(&byte))
-            {
+            if !valid_public_key(line) {
                 return Err(HandoffError::Invalid(
-                    "SSH source did not contain a supported public key",
+                    "SSH source contains an unsupported public-key line",
                 ));
             }
+            found = true;
             if seen.insert(line.to_owned()) {
+                if result.len() == 128 {
+                    return Err(HandoffError::Invalid(
+                        "SSH sources contain more than 128 unique keys",
+                    ));
+                }
+                verify_public_key(runner, line)?;
                 result.push(line.to_owned());
             }
-            if result.len() > 128 {
-                return Err(HandoffError::Invalid(
-                    "SSH sources contain more than 128 unique keys",
-                ));
-            }
+        }
+        if !found {
+            return Err(HandoffError::Invalid("SSH source contains no public keys"));
         }
     }
-    if !sources.is_empty() && result.is_empty() {
-        return Err(HandoffError::Invalid("SSH sources returned no public keys"));
-    }
-    for (index, key) in result.iter().enumerate() {
-        let path = workspace.join(format!("resolved-public-key-{index}"));
-        private_file(&path, format!("{key}\n").as_bytes(), 0o600)?;
-        run_checked(
-            runner,
-            &spec(
-                "ssh-keygen",
-                [OsStr::new("-l"), "-f".as_ref(), path.as_os_str()],
-                "handoff-validate-public-key",
-            )
-            .stdout_mode(OutputMode::Capture)
-            .stderr_mode(OutputMode::Capture),
-        )?;
-    }
-    if !result.is_empty() {
-        let path = workspace.join("resolved-authorized-keys");
-        private_file(&path, format!("{}\n", result.join("\n")).as_bytes(), 0o600)?;
+    if result.is_empty() {
+        return Err(HandoffError::Invalid(
+            "at least one SSH public key is required",
+        ));
     }
     Ok(result)
+}
+
+fn verify_public_key<R: CommandRunner>(runner: &mut R, key: &str) -> Result<(), HandoffError> {
+    run_checked(
+        runner,
+        &public_key_check(key, "handoff-validate-public-key"),
+    )
+    .map_err(|_| HandoffError::Invalid("ssh-keygen could not validate an SSH public key"))?;
+    Ok(())
+}
+
+fn read_public_key_file(path: &Path) -> Result<String, HandoffError> {
+    let invalid = || HandoffError::Invalid("cannot read a bounded absolute SSH public-key file");
+    if !path.is_absolute()
+        || !fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.len() <= MAX_TEXT as u64)
+    {
+        return Err(invalid());
+    }
+    // The named path can change after stat. Opening with Linux O_NONBLOCK
+    // prevents a substituted FIFO from blocking before the descriptor check.
+    const O_NONBLOCK: i32 = 0o4000;
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(O_NONBLOCK)
+        .open(path)
+        .map_err(|_| invalid())?;
+    let metadata = file.metadata().map_err(|_| invalid())?;
+    if !metadata.is_file() || metadata.len() > MAX_TEXT as u64 {
+        return Err(invalid());
+    }
+    let mut source = BufReader::with_capacity(256, file.take((MAX_TEXT + 1) as u64));
+    let mut text = String::new();
+    // A PEM/OpenSSH header is recognizable before the rest of the file is read.
+    // This also rejects an accidentally supplied private key after comments.
+    let mut line = String::new();
+    while source.read_line(&mut line).map_err(|_| invalid())? > 0 {
+        if line.contains("PRIVATE KEY") || line.starts_with("openssh-key-v1") {
+            return Err(HandoffError::Invalid(
+                "private keys cannot be used as SSH public keys",
+            ));
+        }
+        text.push_str(&line);
+        line.clear();
+    }
+    if text.len() > MAX_TEXT {
+        return Err(invalid());
+    }
+    Ok(text)
+}
+
+fn fetch_public_keys<R: CommandRunner>(runner: &mut R, url: &str) -> Result<String, HandoffError> {
+    validate_https(url)?;
+    let command = spec(
+        "curl",
+        [
+            "--disable",
+            "--fail",
+            "--silent",
+            "--location",
+            "--proto",
+            "=https",
+            "--proto-redir",
+            "=https",
+            "--connect-timeout",
+            "15",
+            "--max-time",
+            "60",
+            "--max-filesize",
+            "1048576",
+            "--config",
+            "-",
+        ],
+        "handoff-fetch-public-keys",
+    )
+    .stdin(CommandInput::Bytes(curl_url_configuration(url)))
+    .stderr_mode(OutputMode::Capture);
+    let text = capture(runner, &command)?;
+    if text.len() > MAX_TEXT {
+        return Err(HandoffError::Invalid(
+            "SSH public-key response exceeds its limit",
+        ));
+    }
+    Ok(text)
 }
 
 fn account_key_url(base: &str, user: &str) -> Result<String, HandoffError> {
@@ -1358,14 +1408,10 @@ fn download<R: CommandRunner>(
     ]);
     // User-selected key/frpc URLs can carry private path/query tokens. Keep
     // them off process argv as well as redacted diagnostics.
-    let configuration = format!(
-        "url = \"{}\"\n",
-        url.replace('\\', "\\\\").replace('"', "\\\"")
-    );
     run_checked(
         runner,
         &spec("curl", args, "handoff-https-download")
-            .stdin(CommandInput::Bytes(configuration.into_bytes()))
+            .stdin(CommandInput::Bytes(curl_url_configuration(url)))
             .stderr_mode(OutputMode::Capture),
     )?;
     let metadata = fs::symlink_metadata(path)?;
@@ -1376,6 +1422,13 @@ fn download<R: CommandRunner>(
     }
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     Ok(())
+}
+fn curl_url_configuration(url: &str) -> Vec<u8> {
+    format!(
+        "url = \"{}\"\n",
+        url.replace('\\', "\\\\").replace('"', "\\\"")
+    )
+    .into_bytes()
 }
 fn validate_https(url: &str) -> Result<(), HandoffError> {
     let Some(value) = url.strip_prefix("https://") else {
@@ -1554,13 +1607,10 @@ mod tests {
         ] {
             assert!(world.lines().any(|line| line == package));
         }
-        assert!(
-            !world
-                .lines()
-                .any(|line| line == "util-linux" || line == "sudo")
-        );
-        plan.username = Some("admin".into());
-        assert!(live_package_world(&plan).lines().any(|line| line == "sudo"));
+        assert!(!world.lines().any(|line| line == "util-linux"));
+        assert!(world.lines().any(|line| line == "sudo"));
+        plan.username = Some("root".into());
+        assert!(!live_package_world(&plan).lines().any(|line| line == "sudo"));
     }
     #[test]
     fn arch_live_world_keeps_runtime_without_conflicting_alpine_setup_tools() {

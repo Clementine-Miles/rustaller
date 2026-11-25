@@ -2,7 +2,6 @@
 //! does not authenticate it; callers must verify trusted signatures and payloads
 //! before extracting or executing downloaded content.
 
-use crate::config::GentooInit;
 use crate::model::Target;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -16,13 +15,7 @@ pub const DEBIAN_SECURITY_ARCHIVE: &str = "https://security.debian.org/debian-se
 pub const ARCH_MIRROR: &str = "https://geo.mirror.pkgbuild.com";
 pub const GENTOO_ARCHIVE: &str = "https://distfiles.gentoo.org/releases/amd64/autobuilds";
 pub const GENTOO_STAGE3_INDEX_URL: &str = "https://distfiles.gentoo.org/releases/amd64/autobuilds/latest-stage3-amd64-nomultilib-openrc.txt";
-
-pub fn gentoo_stage3_index_url(init: GentooInit) -> String {
-    format!(
-        "{GENTOO_ARCHIVE}/latest-stage3-{}.txt",
-        init.stage3_variant()
-    )
-}
+pub const GENTOO_STAGE3_PREFIX: &str = "stage3-amd64-nomultilib-openrc";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SourceKind {
@@ -247,14 +240,6 @@ pub fn parse_gentoo_stage3(
     metadata: &str,
     architecture: &str,
 ) -> Result<GentooStage3, SourceError> {
-    parse_gentoo_stage3_for_init(metadata, architecture, GentooInit::Openrc)
-}
-
-pub fn parse_gentoo_stage3_for_init(
-    metadata: &str,
-    architecture: &str,
-    init: GentooInit,
-) -> Result<GentooStage3, SourceError> {
     require_x86_64(architecture)?;
     let lines: Vec<_> = clearsigned_payload(metadata)?
         .lines()
@@ -272,11 +257,11 @@ pub fn parse_gentoo_stage3_for_init(
         .split_once('/')
         .ok_or(SourceError("invalid Gentoo stage3 path"))?;
     if !valid_timestamp(timestamp)
-        || filename != format!("stage3-{}-{timestamp}.tar.xz", init.stage3_variant())
+        || filename != format!("{GENTOO_STAGE3_PREFIX}-{timestamp}.tar.xz")
         || !fields[1].bytes().all(|byte| byte.is_ascii_digit())
     {
         return Err(SourceError(
-            "Gentoo stage3 must match the selected timestamped amd64 nomultilib init variant",
+            "Gentoo stage3 must be the official timestamped amd64 nomultilib OpenRC archive",
         ));
     }
     let size = fields[1]
@@ -296,33 +281,19 @@ pub fn parse_gentoo_stage3_for_init(
 }
 
 impl GentooStage3 {
-    /// Infer only from the complete official archive identity; never guess an ABI
-    /// from the host CPU or accept a multilib/musl/x32 fallback.
-    pub fn init_system(&self) -> Result<GentooInit, SourceError> {
-        for init in [GentooInit::Openrc, GentooInit::Systemd] {
-            if valid_timestamp(&self.timestamp)
-                && self.size > 0
-                && self.filename
-                    == format!("stage3-{}-{}.tar.xz", init.stage3_variant(), self.timestamp)
-                && self.url == format!("{GENTOO_ARCHIVE}/{}/{}", self.timestamp, self.filename)
-                && self.digests_url == format!("{}.DIGESTS", self.url)
-                && self.signature_url == format!("{}.asc", self.url)
-            {
-                return Ok(init);
-            }
+    pub fn validate(&self) -> Result<(), SourceError> {
+        if valid_timestamp(&self.timestamp)
+            && self.size > 0
+            && self.filename == format!("{GENTOO_STAGE3_PREFIX}-{}.tar.xz", self.timestamp)
+            && self.url == format!("{GENTOO_ARCHIVE}/{}/{}", self.timestamp, self.filename)
+            && self.digests_url == format!("{}.DIGESTS", self.url)
+            && self.signature_url == format!("{}.asc", self.url)
+        {
+            return Ok(());
         }
         Err(SourceError(
-            "Gentoo source is not an official amd64 nomultilib stage3",
+            "Gentoo source is not the official amd64 nomultilib OpenRC stage3",
         ))
-    }
-
-    pub fn validate_for_init(&self, selected: GentooInit) -> Result<(), SourceError> {
-        if self.init_system()? != selected {
-            return Err(SourceError(
-                "Gentoo stage3 init system differs from the installation plan",
-            ));
-        }
-        Ok(())
     }
 }
 

@@ -21,6 +21,10 @@ mod preflight {
         assert!(validate_host(&base, Target::Gentoo).is_ok());
 
         let mut facts = base.clone();
+        facts.root_fs_type = "btrfs".into();
+        assert!(validate_host(&facts, Target::Gentoo).is_ok());
+
+        let mut facts = base.clone();
         facts.architecture = "aarch64".into();
         assert_eq!(
             validate_host(&facts, Target::Alpine),
@@ -282,7 +286,7 @@ mod handoff {
         read_disk_identity, resolve_public_keys, valid_alpine_signature,
     };
     use rustaller::host::sources::AlpineNetboot;
-    use rustaller::model::{BootMode, InstallPlan, SecretString, Target};
+    use rustaller::model::{BootMode, InstallPlan, Target};
     use rustaller::worker::initrd_network::AddressFamily;
     use std::fs;
     use std::path::Path;
@@ -302,7 +306,10 @@ mod handoff {
     }
     fn plan() -> InstallPlan {
         let mut plan = InstallPlan::new(Target::Debian);
-        plan.password = Some(SecretString::new("private-password-sentinel"));
+        plan.ssh_keys.push(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f"
+                .into(),
+        );
         plan
     }
     fn deployment(plan: &InstallPlan) -> HostDeployment {
@@ -510,7 +517,6 @@ mod handoff {
         let mut runner = MockRunner::new([output("fingerprint1"), output("fingerprint2")]);
         let result = resolve_public_keys(
             &mut runner,
-            &scratch.0,
             &[
                 file.to_str().unwrap().into(),
                 "ssh-ed25519 AAAA first".into(),
@@ -536,7 +542,7 @@ mod handoff {
         )
         .unwrap();
         let mut empty = MockRunner::empty();
-        let error = resolve_public_keys(&mut empty, &other.0, &[private.to_str().unwrap().into()])
+        let error = resolve_public_keys(&mut empty, &[private.to_str().unwrap().into()])
             .err()
             .unwrap()
             .to_string();
@@ -838,8 +844,8 @@ mod inspection_preview {
             network: vec![],
         };
         let mut plan = InstallPlan::new(Target::Debian);
-        plan.system.root_filesystem = rustaller::config::RootFilesystem::Btrfs;
-        plan.password = Some(rustaller::model::SecretString::new("PRIVATE-SENTINEL"));
+        plan.system.root_filesystem = rustaller::config::RootFilesystem::Ext4;
+        plan.ssh_keys.push("/private/PRIVATE-SENTINEL.pub".into());
         let mut runner = MockRunner::new(
             [
                 "glibc 2.40",
@@ -863,7 +869,8 @@ mod inspection_preview {
         assert!(
             report.target.contains("count: 3")
                 && report.target.contains("rustaller-boot")
-                && report.target.contains("@; zstd level 3")
+                && report.target.contains("Root: ext4 at /")
+                && report.target.contains("linux-image-cloud-amd64")
         );
         assert!(report.warning.contains("ERASE ALL PARTITIONS ON /dev/vda"));
         assert!(!report.blocked);
@@ -876,7 +883,7 @@ mod inspection_preview {
                 .contains("Default IPv4: via 192.0.2.1 dev eth0")
         );
         assert!(report.target.contains("MiB at /boot"));
-        assert!(report.target.contains("outside root snapshots"));
+        assert!(report.target.contains("SSH public keys only: 1 sources"));
         assert!(
             runner
                 .calls()

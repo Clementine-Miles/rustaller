@@ -112,16 +112,11 @@ mod live_storage {
     #[test]
     fn partition_failure_stops_before_formatting_or_mounting() {
         let layout = layout(Target::Debian, BootMode::Bios, 40_000_000_000, "vda");
-        let mut runner = MockRunner::new([
-            CommandOutput::new(Some(0), vec![], vec![]),
-            CommandOutput::new(Some(0), vec![], vec![]),
-            CommandOutput::new(Some(0), vec![], vec![]),
-            CommandOutput::new(Some(9), vec![], vec![]),
-        ]);
+        let mut runner = MockRunner::new([CommandOutput::new(Some(9), vec![], vec![])]);
         let error = create_partitions(&mut runner, &layout, &Default::default()).unwrap_err();
         assert!(error.to_string().contains("9"));
-        assert_eq!(runner.calls().len(), 4);
-        assert_eq!(runner.calls()[3].program, "wipefs");
+        assert_eq!(runner.calls().len(), 1);
+        assert_eq!(runner.calls()[0].program, "wipefs");
         assert!(
             !runner
                 .calls()
@@ -173,7 +168,7 @@ mod live_storage {
     #[test]
     fn ext4_selection_controls_partition_format_and_mount_without_swap_activation() {
         use rustaller::config::RootFilesystem;
-        use rustaller::shared::storage::mount_target;
+        use rustaller::shared::storage::{mount_target, render_fstab};
         for boot in [BootMode::Bios, BootMode::Efi] {
             let mut install = InstallPlan::new(Target::Debian);
             install.system.root_filesystem = RootFilesystem::Ext4;
@@ -181,6 +176,10 @@ mod live_storage {
                 validate_live_plan_with_uid(install, "x86_64", 4096, rustaller::RUNTIME_VERSION, 0)
                     .unwrap();
             let layout = DiskLayout::new(&selected, "nvme0n1", boot, 8 * 1024_u64.pow(3)).unwrap();
+            assert_eq!(
+                render_fstab(&layout, "1234-abcd", "abcd-5678").unwrap(),
+                "UUID=1234-abcd / ext4 defaults 0 1\nUUID=abcd-5678 /boot vfat fmask=0177,dmask=0077,quiet 0 2\n"
+            );
             let mut runner = MockRunner::new(successes(100));
             create_partitions(&mut runner, &layout, &Default::default()).unwrap();
             let root = std::env::temp_dir().join(format!(
@@ -207,9 +206,16 @@ mod live_storage {
             let mount = calls.iter().find(|c| c.phase == "live-mount-root").unwrap();
             assert_eq!(mount.args[1], "ext4");
             assert!(!calls.iter().any(|c| {
-                ["mkfs.xfs", "swapon", "swapoff", "mkswap"]
-                    .iter()
-                    .any(|p| c.program == *p)
+                [
+                    "apk",
+                    "mkfs.xfs",
+                    "mkfs.btrfs",
+                    "swapon",
+                    "swapoff",
+                    "mkswap",
+                ]
+                .iter()
+                .any(|p| c.program == *p)
             }));
         }
     }
@@ -275,45 +281,6 @@ mod live_storage {
         let error = refresh_partition_table(&mut runner, &layout, &Default::default()).unwrap_err();
         assert!(error.to_string().contains("23"), "{error}");
         assert_eq!(runner.calls().len(), 28);
-    }
-
-    #[test]
-    fn package_spawn_failures_follow_the_same_five_attempt_retry_contract() {
-        use rustaller::command::{CommandRunner, CommandSpec, PipelineOutput};
-        struct MissingApk {
-            calls: Vec<CommandSpec>,
-        }
-        impl CommandRunner for MissingApk {
-            fn run(&mut self, spec: &CommandSpec) -> std::io::Result<CommandOutput> {
-                self.calls.push(spec.clone());
-                if spec.program == "apk" {
-                    Err(std::io::Error::from(std::io::ErrorKind::NotFound))
-                } else {
-                    Ok(CommandOutput::new(Some(0), vec![], vec![]))
-                }
-            }
-            fn run_pipeline(&mut self, _: &[CommandSpec]) -> std::io::Result<PipelineOutput> {
-                panic!("no pipeline")
-            }
-        }
-        let mut runner = MissingApk { calls: vec![] };
-        assert!(
-            create_partitions(
-                &mut runner,
-                &layout(Target::Arch, BootMode::Bios, 8_000_000_000, "vda"),
-                &Default::default()
-            )
-            .is_err()
-        );
-        assert_eq!(runner.calls.len(), 9);
-        assert_eq!(
-            runner.calls.iter().filter(|c| c.program == "apk").count(),
-            5
-        );
-        assert_eq!(
-            runner.calls.iter().filter(|c| c.program == "sleep").count(),
-            4
-        );
     }
 }
 
@@ -566,23 +533,25 @@ mod swap {
     }
 
     #[test]
-    fn alpine_swap_enables_native_openrc_boot_service() {
-        let scratch = Scratch::with_etc("advanced_config");
-        scratch.service("swap");
-        scratch.write("etc/fstab", "UUID=root / xfs defaults 0 0\n");
-        let mut selected = InstallPlan::new(Target::Alpine);
-        selected.system.swap.size_mib = Some(64);
-        let mut runner = SwapSafeRunner::new(SwapIoRunner(MockRunner::new([
-            out(0, "xfs\n"),
-            out(0, "header\n/dev/mock 4096 512 3584 13% /os\n"),
-            out(0, ""),
-            out(0, ""),
-        ])));
-        assert!(prepare_swapfile(&mut runner, &scratch.0, &live(selected), |_, _| {}).unwrap());
-        assert_eq!(
-            fs::read_link(scratch.0.join("etc/runlevels/boot/swap")).unwrap(),
-            PathBuf::from("/etc/init.d/swap")
-        );
+    fn openrc_targets_enable_native_boot_swap_service() {
+        for target in [Target::Alpine, Target::Gentoo] {
+            let scratch = Scratch::with_etc("advanced_config");
+            scratch.service("swap");
+            scratch.write("etc/fstab", "UUID=root / xfs defaults 0 0\n");
+            let mut selected = InstallPlan::new(target);
+            selected.system.swap.size_mib = Some(64);
+            let mut runner = SwapSafeRunner::new(SwapIoRunner(MockRunner::new([
+                out(0, "xfs\n"),
+                out(0, "header\n/dev/mock 4096 512 3584 13% /os\n"),
+                out(0, ""),
+                out(0, ""),
+            ])));
+            assert!(prepare_swapfile(&mut runner, &scratch.0, &live(selected), |_, _| {}).unwrap());
+            assert_eq!(
+                fs::read_link(scratch.0.join("etc/runlevels/boot/swap")).unwrap(),
+                PathBuf::from("/etc/init.d/swap")
+            );
+        }
     }
 
     #[test]

@@ -6,9 +6,11 @@ use crate::command::{
 use crate::deployment::DeploymentManifest;
 use crate::fsutil::atomic_replace;
 use crate::host::sources::{self, GentooStage3};
-use crate::model::{Target, valid_account_name as valid_username};
+use crate::model::Target;
 use crate::shared::configure::{ConfigurationError, validate_root};
-use crate::shared::configure::{ensure_parent, validate_planned_file};
+use crate::shared::configure::{
+    ensure_parent, public_key_check, valid_public_key, validate_planned_file,
+};
 use crate::shared::storage::DiskLayout;
 use crate::worker::live::ValidatedLivePlan;
 use std::ffi::{OsStr, OsString};
@@ -184,26 +186,18 @@ pub fn prepare<R: CommandRunner>(
         [filesystem],
         "live-root-filesystem-support",
     )?;
-    if plan.plan().post_install.kernel == crate::postinstall::KernelChoice::Cachyos {
+    if plan.plan().target == Target::Arch && plan.plan().hold != Some(1) {
         super::cachyos::prepare_assets(runner, work)?;
     }
     if plan.plan().hold != Some(1) {
         super::boot::prepare(manifest.boot_mode, work).map_err(InstallError::Boot)?;
     }
     let stage3 = match &manifest.gentoo_stage3 {
+        _ if plan.plan().hold == Some(1) => None,
         Some(stage) if plan.plan().target == Target::Gentoo => {
-            stage
-                .validate_for_init(
-                    plan.plan()
-                        .system
-                        .gentoo_init
-                        .ok_or(InstallError::Invalid("Gentoo init system is missing"))?,
-                )
-                .map_err(|_| {
-                    InstallError::Invalid(
-                        "Gentoo stage3 differs from selected no-multilib init variant",
-                    )
-                })?;
+            stage.validate().map_err(|_| {
+                InstallError::Invalid("Gentoo stage3 must be official amd64 nomultilib OpenRC")
+            })?;
             Some(verify_gentoo_stage3(runner, stage, work)?)
         }
         None if plan.plan().target == Target::Gentoo => {
@@ -236,11 +230,8 @@ fn live_packages(plan: &crate::model::InstallPlan) -> Result<Vec<&'static str>, 
         "umount",
         "util-linux-misc",
         "parted",
-        match plan.system.root_filesystem {
-            crate::config::RootFilesystem::Xfs => "xfsprogs",
-            crate::config::RootFilesystem::Ext4 => "e2fsprogs",
-            crate::config::RootFilesystem::Btrfs => "btrfs-progs",
-        },
+        "wipefs",
+        plan.system.root_filesystem.maintenance_package(),
         "coreutils",
         "dosfstools",
         "tar",
@@ -265,7 +256,6 @@ pub fn validate_install_options(
     manifest: &DeploymentManifest,
 ) -> Result<(), InstallError> {
     let plan = plan.plan();
-    plan.validate()?;
     plan.validate_install_credentials()?;
     manifest
         .validate()
@@ -273,40 +263,27 @@ pub fn validate_install_options(
     if !plan.target.is_automatic() {
         return Err(InstallError::Invalid("automatic target required"));
     }
-    let username = plan.username.as_deref().unwrap_or("root");
-    if !valid_username(username) {
-        return Err(InstallError::Invalid("invalid target account name"));
-    }
-    if plan.password.is_none() && plan.ssh_keys.is_empty() {
-        return Err(InstallError::Invalid(
-            "set a password or resolved public keys before installation",
-        ));
-    }
-    if plan.ssh_keys.iter().any(|key| !literal_public_key(key)) {
+    if plan.ssh_keys.iter().any(|key| !valid_public_key(key)) {
         return Err(InstallError::Invalid(
             "public-key sources must be resolved on the original host before handoff",
         ));
     }
-    if plan.target == Target::Debian {
+    if plan.target == Target::Debian && plan.hold != Some(1) {
         super::debian::validate_codename(&manifest.debian_codename)?;
     }
-    if plan.target == Target::Gentoo {
+    if plan.target == Target::Gentoo && plan.hold != Some(1) {
         manifest
             .gentoo_stage3
             .as_ref()
             .ok_or(InstallError::Invalid("Gentoo release metadata is missing"))?
-            .validate_for_init(
-                plan.system
-                    .gentoo_init
-                    .ok_or(InstallError::Invalid("Gentoo init system is missing"))?,
-            )
+            .validate()
             .map_err(|_| {
-                InstallError::Invalid(
-                    "Gentoo stage3 differs from selected no-multilib init variant",
-                )
+                InstallError::Invalid("Gentoo stage3 must be official amd64 nomultilib OpenRC")
             })?;
     }
-    crate::shared::network::validate_network_policy(plan, manifest)?;
+    if plan.hold != Some(1) {
+        crate::shared::network::validate_network_policy(plan, manifest)?;
+    }
     if let Some(path) = &plan.frpc_config {
         if path != "/configs/frpc.toml" {
             return Err(InstallError::Invalid(
@@ -360,8 +337,7 @@ pub fn bootstrap<R: CommandRunner>(
                 args.push("--no-cache".into());
             }
             args.push("add".into());
-            let profile =
-                super::packages::package_plan(plan.plan(), layout.boot_mode(), true, &[])?;
+            let profile = super::packages::package_plan(plan.plan(), layout.boot_mode(), &[])?;
             args.extend(profile.bootstrap_packages.into_iter().map(Into::into));
             checked(runner, "apk", args, "alpine-bootstrap-rootfs")?;
         }
@@ -400,9 +376,7 @@ pub fn bootstrap<R: CommandRunner>(
             runner,
             root,
             plan,
-            layout.boot_mode(),
             &[],
-            &manifest.alpine_branch,
             &assets.work.join("pacman.conf"),
         )?,
         Target::Gentoo => rolling::extract_gentoo(
@@ -446,8 +420,7 @@ pub fn configure<R: CommandRunner>(
     let result = (|| {
         match plan.plan().target {
             Target::Alpine => {
-                let packages =
-                    super::packages::package_plan(plan.plan(), layout.boot_mode(), true, &[])?;
+                let packages = super::packages::package_plan(plan.plan(), layout.boot_mode(), &[])?;
                 super::packages::verify_kernel_available(runner, root, plan.plan()).map_err(
                     |_| {
                         InstallError::Invalid("selected kernel package or dependencies unavailable")
@@ -488,8 +461,7 @@ pub fn configure<R: CommandRunner>(
             }
             Target::Debian => {
                 super::debian::write_apt_sources(root, &manifest.debian_codename, None)?;
-                let packages =
-                    super::debian::apt_package_list_for_plan(plan.plan(), layout.boot_mode(), &[])?;
+                let packages = super::debian::apt_package_list_for_plan(plan.plan(), &[])?;
                 super::debian::install_apt_packages(runner, root, &packages)?;
                 write_target(
                     root,
@@ -497,9 +469,6 @@ pub fn configure<R: CommandRunner>(
                     b"MODULES=most\n",
                     0o644,
                 )?;
-                if layout.root_filesystem() == crate::config::RootFilesystem::Btrfs {
-                    write_target(root, "etc/initramfs-tools/modules", b"btrfs\n", 0o644)?;
-                }
                 chroot_checked(
                     runner,
                     root,
@@ -508,14 +477,10 @@ pub fn configure<R: CommandRunner>(
                 )?;
             }
             Target::Arch => {
-                if plan.plan().post_install.kernel == crate::postinstall::KernelChoice::Cachyos {
-                    super::cachyos::configure_repositories(runner, root, &assets.work)?;
-                }
+                super::cachyos::configure_repositories(runner, root, &assets.work)?;
                 rolling::configure_arch(runner, root, plan)?;
             }
-            Target::Gentoo => {
-                rolling::configure_gentoo(runner, root, plan, layout.boot_mode(), &[], root_uuid)?
-            }
+            Target::Gentoo => rolling::configure_gentoo(runner, root, plan, &[], root_uuid)?,
             _ => return Err(InstallError::Invalid("automatic target required")),
         }
         super::packages::verify_boot_driver_support(
@@ -539,7 +504,7 @@ pub fn configure<R: CommandRunner>(
                 0o644,
             )?;
         }
-        crate::shared::configure::apply_basic_configuration(root, plan, true)?;
+        crate::shared::configure::apply_basic_configuration(root, plan)?;
         write_target_hosts(root, &hostname)?;
         let needs_kernel_config =
             crate::shared::network::needs_kernel_config(&plan.plan().system.network);
@@ -560,10 +525,9 @@ pub fn configure<R: CommandRunner>(
         if let Some(frp) = &assets.frp {
             install_frpc(root, plan.plan(), frp)?;
         }
-        let selected_kernel =
-            super::packages::configuration_for_plan(plan.plan(), plan.plan().target, true)?;
-        super::boot::record_kernel_family(root, selected_kernel.kernel.package)
-            .map_err(InstallError::Boot)?;
+        let selected_kernel = crate::postinstall::required_kernel(plan.plan().target)
+            .ok_or(InstallError::Invalid("automatic target required"))?;
+        super::boot::record_kernel_family(root, selected_kernel).map_err(InstallError::Boot)?;
         super::boot::install(runner, root, layout, &assets.work, root_uuid, efi_uuid)
             .map_err(InstallError::Boot)?;
         if plan.plan().target == Target::Alpine {
@@ -572,7 +536,7 @@ pub fn configure<R: CommandRunner>(
         }
         cleanup_cache(runner, root, plan)?;
         crate::shared::network::apply_network_configuration(root, plan, manifest, &kernel_config)?;
-        verify_installed_target(runner, root)?;
+        verify_installed_target(runner, root, plan.plan())?;
         if plan.plan().target == Target::Arch {
             rolling::stop_arch_keyring_daemons(runner, root, plan)?;
         }
@@ -614,135 +578,254 @@ fn configure_accounts<R: CommandRunner>(
     root: &Path,
     plan: &ValidatedLivePlan,
 ) -> Result<(), InstallError> {
-    let plan = plan.plan();
-    let username = plan.username.as_deref().unwrap_or("root");
-    let root_password = if username != "root" {
-        Some(plan.root_password.as_ref().ok_or(InstallError::Invalid(
-            "a separate root password is required for a non-root installation account",
-        ))?)
+    configure_key_only_ssh(
+        runner,
+        root,
+        plan.plan(),
+        plan.plan().target == Target::Alpine,
+    )
+}
+
+fn configure_key_only_ssh<R: CommandRunner>(
+    runner: &mut R,
+    root: &Path,
+    plan: &crate::model::InstallPlan,
+    busybox_accounts: bool,
+) -> Result<(), InstallError> {
+    plan.validate_install_credentials()?;
+    if plan.ssh_keys.iter().any(|key| !valid_public_key(key)) {
+        return Err(InstallError::Invalid("invalid resolved SSH public key"));
+    }
+    let username = plan.account_name();
+    let home = if username == "root" {
+        "/root".into()
     } else {
-        None
+        format!("/home/{username}")
     };
-    if username != "root" {
-        match plan.target {
-            Target::Alpine => chroot_checked(
+    let live = root == Path::new("/");
+    if live {
+        for key in &plan.ssh_keys {
+            run_checked(
                 runner,
-                root,
-                ["adduser", "-D", "-s", "/bin/ash", username],
-                "target-create-account",
-            )?,
-            _ => chroot_checked(
-                runner,
-                root,
-                ["useradd", "--create-home", "--shell", "/bin/bash", username],
-                "target-create-account",
-            )?,
+                &public_key_check(key, "live-verify-resolved-public-key"),
+            )
+            .map_err(|_| InstallError::Invalid("Live ssh-keygen rejected a resolved public key"))?;
         }
+    }
+    if username != "root" {
+        let args = if busybox_accounts {
+            ["adduser", "-D", "-h", &home, "-s", "/bin/ash", username]
+        } else {
+            ["useradd", "-m", "-d", &home, "-s", "/bin/bash", username]
+        };
+        run_checked(
+            runner,
+            &account_command(root, &args, "ssh-create-admin-account"),
+        )?;
         write_target(
             root,
             "etc/sudoers.d/90-rustaller",
-            format!(
-                "{username} ALL=(ALL:ALL) {}ALL\n",
-                if plan.password.is_none() {
-                    "NOPASSWD: "
-                } else {
-                    ""
-                }
-            )
-            .as_bytes(),
+            format!("{username} ALL=(ALL:ALL) NOPASSWD: ALL\n").as_bytes(),
             0o440,
         )?;
-        let root_password =
-            root_password.expect("non-root credentials checked before account creation");
-        let spec = chroot_command(root, ["chpasswd"], "target-set-root-password")
-            .stdin(CommandInput::Bytes(
-                format!("root:{}\n", root_password.expose()).into_bytes(),
-            ))
-            .stdout_mode(OutputMode::Discard)
-            .stderr_mode(OutputMode::Capture);
-        run_checked(runner, &spec)?;
+        run_checked(
+            runner,
+            &account_command(root, &["visudo", "-c"], "ssh-verify-sudoers"),
+        )?;
     }
-    if let Some(password) = &plan.password {
-        let spec = chroot_command(root, ["chpasswd"], "target-set-account-password")
-            .stdin(CommandInput::Bytes(
-                format!("{username}:{}\n", password.expose()).into_bytes(),
-            ))
-            .stdout_mode(OutputMode::Discard)
-            .stderr_mode(OutputMode::Capture);
-        run_checked(runner, &spec)?;
+    // NP is deliberately not a usable crypt(3) hash. Non-PAM OpenSSH treats
+    // native shadow lock markers such as '!' as disabling public-key login as
+    // well. A nonempty invalid hash keeps the account usable without a password.
+    let shadow = if username == "root" {
+        "root:NP\n".into()
     } else {
-        let home = if username == "root" {
-            "root".into()
-        } else {
-            format!("home/{username}")
-        };
-        let path = root.join(&home).join(".ssh/authorized_keys");
-        validate_planned_file(&path)?;
-        ensure_parent(&path)?;
-        fs::set_permissions(
-            path.parent().expect("SSH parent"),
-            fs::Permissions::from_mode(0o700),
-        )?;
-        atomic_replace(
-            &path,
-            format!("{}\n", plan.ssh_keys.join("\n")).as_bytes(),
-            0o600,
-        )?;
-        chroot_checked(
+        format!("root:NP\n{username}:NP\n")
+    };
+    run_checked(
+        runner,
+        &account_command(root, &["chpasswd", "-e"], "ssh-disable-account-passwords")
+            .stdin(CommandInput::Bytes(shadow.into_bytes()))
+            .stdout_mode(OutputMode::Discard)
+            .stderr_mode(OutputMode::Capture),
+    )?;
+
+    if username != "root" {
+        let administrator = capture(
             runner,
-            root,
-            ["passwd", "-d", username],
-            "target-unlock-public-key-account",
+            &account_command(
+                root,
+                &[
+                    "sudo", "-n", "-u", username, "--", "sudo", "-n", "-u", "root", "--", "id",
+                    "-u",
+                ],
+                "ssh-verify-sudo-account",
+            ),
         )?;
-        let owner = format!("{username}:{username}");
-        let inside = format!("/{home}/.ssh");
-        chroot_checked(
-            runner,
-            root,
-            ["chown", "-R", &owner, &inside],
-            "target-ssh-key-owner",
-        )?;
+        if administrator.trim() != "0" {
+            return Err(InstallError::Invalid(
+                "selected SSH account has no effective passwordless sudo",
+            ));
+        }
     }
-    let config = format!(
-        "# rustaller target SSH\nPort {}\nPermitRootLogin {}\nPubkeyAuthentication yes\nPasswordAuthentication {}\nKbdInteractiveAuthentication no\nPermitEmptyPasswords no\n",
-        plan.ssh_port.unwrap_or(22),
-        if username == "root" {
-            if plan.password.is_some() {
-                "yes"
-            } else {
-                "prohibit-password"
-            }
-        } else {
-            "no"
-        },
-        if plan.password.is_some() { "yes" } else { "no" }
-    );
-    let sshd = root.join("etc/ssh/sshd_config");
-    validate_planned_file(&sshd)?;
-    let original = crate::shared::configure::read_config(&sshd)?;
-    // OpenSSH uses first-obtained values; prepend managed settings before Include/Match.
-    let text = crate::shared::configure::replace_managed_block(
-        &original,
-        &config,
-        "# BEGIN rustaller SSH",
-        "# END rustaller SSH",
-        true,
+
+    let directory = format!("{home}/.ssh");
+    let authorized = format!("{directory}/authorized_keys");
+    let path = root.join(authorized.trim_start_matches('/'));
+    let home_path = root.join(home.trim_start_matches('/'));
+    crate::shared::configure::validate_directory_tree(&home_path)?;
+    validate_planned_file(&path)?;
+    ensure_parent(&path)?;
+    fs::set_permissions(&home_path, fs::Permissions::from_mode(0o700))?;
+    fs::set_permissions(
+        path.parent().expect("SSH parent"),
+        fs::Permissions::from_mode(0o700),
     )?;
-    write_target(root, "etc/ssh/sshd_config", text.as_bytes(), 0o600)?;
-    chroot_checked(
+    atomic_replace(
+        &path,
+        format!("{}\n", plan.ssh_keys.join("\n")).as_bytes(),
+        0o600,
+    )?;
+    run_checked(
         runner,
-        root,
-        ["ssh-keygen", "-A"],
-        "target-generate-server-host-keys",
+        &account_command(
+            root,
+            &[
+                "chown",
+                "-h",
+                "--",
+                &format!("{username}:"),
+                &home,
+                &directory,
+                &authorized,
+            ],
+            "ssh-set-account-file-owners",
+        ),
     )?;
-    fs::create_dir_all(root.join("run/sshd"))?;
-    chroot_checked(
+    run_checked(
         runner,
-        root,
-        ["/usr/sbin/sshd", "-t"],
-        "target-verify-ssh-configuration",
+        &account_command(root, &["ssh-keygen", "-A"], "ssh-generate-server-host-keys"),
     )?;
+    ensure_parent(&root.join("run/sshd/.privsep"))?;
+    let native = capture(
+        runner,
+        &account_command(root, &["/usr/sbin/sshd", "-T"], "ssh-read-native-defaults"),
+    )?;
+    let config = key_only_ssh_config(plan, &native, live);
+    write_target(root, "etc/ssh/sshd_config", config.as_bytes(), 0o600)?;
+    verify_key_only_ssh(runner, root, plan)?;
     Ok(())
+}
+
+fn account_command(root: &Path, args: &[&str], phase: &str) -> CommandSpec {
+    let (program, rest) = args.split_first().expect("native account command");
+    if root == Path::new("/") {
+        command(program, rest, phase)
+    } else {
+        chroot_command(root, args, phase)
+    }
+}
+
+const NATIVE_SSH_SETTINGS: &[&str] = &[
+    "usepam",
+    "disableforwarding",
+    "allowtcpforwarding",
+    "allowagentforwarding",
+    "allowstreamlocalforwarding",
+    "x11forwarding",
+    "x11uselocalhost",
+    "x11displayoffset",
+    "gatewayports",
+    "permittunnel",
+    "permitopen",
+    "permitlisten",
+    "subsystem",
+];
+
+fn key_only_ssh_config(plan: &crate::model::InstallPlan, native: &str, live: bool) -> String {
+    let username = plan.account_name();
+    let root_login = if username == "root" {
+        "prohibit-password"
+    } else {
+        "no"
+    };
+    let port = plan.ssh_port.unwrap_or(22);
+    let mut config = format!(
+        "# rustaller SSH configuration\nPort {port}\n\
+         AllowUsers {username}\nPermitRootLogin {root_login}\n\
+         PubkeyAuthentication yes\nPasswordAuthentication no\n\
+         KbdInteractiveAuthentication no\nPermitEmptyPasswords no\n\
+         AuthenticationMethods publickey\nAuthorizedKeysFile .ssh/authorized_keys\n\
+         StrictModes yes\n"
+    );
+    // A single authoritative file excludes native Include and Match rules,
+    // whose per-connection semantics can override a prepended global policy.
+    // Carry forward the native PAM choice, subsystems and forwarding behavior.
+    for line in native.lines() {
+        if let Some((key, value)) = line.split_once(' ')
+            && NATIVE_SSH_SETTINGS.contains(&key)
+            && !value.is_empty()
+            && !value.chars().any(char::is_control)
+            && (key != "usepam" || value == "yes")
+            // Recovery formerly used only the packaged SSH defaults.
+            && (!live || key != "subsystem")
+        {
+            config.push_str(line);
+            config.push('\n');
+        }
+    }
+    config
+}
+
+fn verify_key_only_ssh<R: CommandRunner>(
+    runner: &mut R,
+    root: &Path,
+    plan: &crate::model::InstallPlan,
+) -> Result<(), InstallError> {
+    run_checked(
+        runner,
+        &account_command(root, &["/usr/sbin/sshd", "-t"], "ssh-verify-syntax"),
+    )?;
+    let facts = capture(
+        runner,
+        &account_command(
+            root,
+            &["/usr/sbin/sshd", "-T"],
+            "ssh-verify-effective-policy",
+        ),
+    )?;
+    if !valid_effective_ssh_policy(plan, &facts) {
+        return Err(InstallError::Invalid(
+            "OpenSSH effective key-only policy differs from the plan",
+        ));
+    }
+    Ok(())
+}
+
+fn valid_effective_ssh_policy(plan: &crate::model::InstallPlan, facts: &str) -> bool {
+    let setting = |key| {
+        let mut values = facts.lines().filter_map(|line| {
+            let (name, value) = line.split_once(' ')?;
+            (key == name).then_some(value)
+        });
+        let first = values.next()?;
+        values.next().is_none().then_some(first)
+    };
+    let username = plan.account_name();
+    let root_logins = setting("permitrootlogin");
+    setting("port").and_then(|port| port.parse().ok()) == Some(plan.ssh_port.unwrap_or(22))
+        && setting("allowusers") == Some(username)
+        && (if username == "root" {
+            matches!(root_logins, Some("prohibit-password" | "without-password"))
+        } else {
+            root_logins == Some("no")
+        })
+        && setting("pubkeyauthentication") == Some("yes")
+        && setting("passwordauthentication") == Some("no")
+        && setting("kbdinteractiveauthentication") == Some("no")
+        && setting("permitemptypasswords") == Some("no")
+        && setting("authenticationmethods") == Some("publickey")
+        && setting("authorizedkeysfile") == Some(".ssh/authorized_keys")
+        && setting("strictmodes") == Some("yes")
 }
 
 fn enable_services<R: CommandRunner>(
@@ -774,9 +857,7 @@ fn enable_services<R: CommandRunner>(
                 "alpine-enable-native-services",
             )?;
         }
-    } else if target == Target::Gentoo
-        && plan.system.gentoo_init == Some(crate::config::GentooInit::Openrc)
-    {
+    } else if target == Target::Gentoo {
         let hostname = target_hostname(plan);
         write_target(
             root,
@@ -1174,6 +1255,7 @@ fn cleanup_cache<R: CommandRunner>(
 fn verify_installed_target<R: CommandRunner>(
     runner: &mut R,
     root: &Path,
+    plan: &crate::model::InstallPlan,
 ) -> Result<(), InstallError> {
     for path in ["etc/os-release", "etc/fstab"] {
         let path = root.join(path);
@@ -1200,13 +1282,7 @@ fn verify_installed_target<R: CommandRunner>(
     }
     super::boot::verify(root).map_err(InstallError::Boot)?;
 
-    chroot_checked(
-        runner,
-        root,
-        ["/usr/sbin/sshd", "-t"],
-        "target-final-ssh-check",
-    )?;
-    Ok(())
+    verify_key_only_ssh(runner, root, plan)
 }
 
 // An existing filename is not sufficient: reject empty/truncated, IA32 and
@@ -1282,10 +1358,7 @@ fn install_frpc(
         write_target(root, "opt/rustaller/frp/ld-musl-x86_64.so.1", loader, 0o755)?;
     }
     write_target(root, "etc/frp/frpc.toml", &frp.configuration, 0o600)?;
-    if plan.target == Target::Alpine
-        || (plan.target == Target::Gentoo
-            && plan.system.gentoo_init == Some(crate::config::GentooInit::Openrc))
-    {
+    if plan.target.uses_openrc() {
         let mut arguments = frp.launch.arguments();
         arguments.extend(["-c", "/etc/frp/frpc.toml"]);
         let service = format!(
@@ -1440,81 +1513,9 @@ pub(crate) fn start_recovery_ssh<R: CommandRunner>(
     runner: &mut R,
     plan: &ValidatedLivePlan,
 ) -> Result<(), InstallError> {
-    // Rescue/recovery login remains available if a later install stage fails.
-    let plan = plan.plan();
-    let name = plan.username.as_deref().unwrap_or("root");
-    if name != "root" {
-        checked(
-            runner,
-            "adduser",
-            ["-D", "-s", "/bin/ash", name],
-            "live-create-recovery-account",
-        )?;
-        fs::create_dir_all("/etc/sudoers.d")?;
-        atomic_replace(
-            Path::new("/etc/sudoers.d/90-rustaller"),
-            format!(
-                "{name} ALL=(ALL:ALL) {}ALL\n",
-                if plan.password.is_none() {
-                    "NOPASSWD: "
-                } else {
-                    ""
-                }
-            )
-            .as_bytes(),
-            0o440,
-        )?;
-        checked(
-            runner,
-            "visudo",
-            ["-cf", "/etc/sudoers.d/90-rustaller"],
-            "live-verify-recovery-sudo",
-        )?;
-    }
-    if let Some(password) = &plan.password {
-        run_checked(
-            runner,
-            &command("chpasswd", [] as [&str; 0], "live-set-recovery-password")
-                .stdin(CommandInput::Bytes(
-                    format!("{name}:{}\n", password.expose()).into_bytes(),
-                ))
-                .stdout_mode(OutputMode::Discard)
-                .stderr_mode(OutputMode::Capture),
-        )?;
-    } else {
-        let home = if name == "root" {
-            PathBuf::from("/root")
-        } else {
-            PathBuf::from(format!("/home/{name}"))
-        };
-        fs::create_dir_all(home.join(".ssh"))?;
-        fs::set_permissions(home.join(".ssh"), fs::Permissions::from_mode(0o700))?;
-        atomic_replace(
-            &home.join(".ssh/authorized_keys"),
-            format!("{}\n", plan.ssh_keys.join("\n")).as_bytes(),
-            0o600,
-        )?;
-        checked(
-            runner,
-            "passwd",
-            ["-d", name],
-            "live-unlock-public-key-account",
-        )?;
-        checked(
-            runner,
-            "chown",
-            ["-R", &format!("{name}:{name}"), &home.to_string_lossy()],
-            "live-recovery-key-owner",
-        )?;
-    }
-    let config = format!(
-        "Port {}\nPermitRootLogin {}\nPasswordAuthentication {}\nPermitEmptyPasswords no\nPubkeyAuthentication yes\n",
-        plan.ssh_port.unwrap_or(22),
-        if name == "root" { "yes" } else { "no" },
-        if plan.password.is_some() { "yes" } else { "no" }
-    );
-    atomic_replace(Path::new("/etc/ssh/sshd_config"), config.as_bytes(), 0o600)?;
-    checked(runner, "ssh-keygen", ["-A"], "live-recovery-host-keys")?;
+    // Recovery becomes reachable only after the native daemon verifies the
+    // effective policy and the selected account's SSH keys.
+    configure_key_only_ssh(runner, Path::new("/"), plan.plan(), true)?;
     checked(
         runner,
         "rc-service",
@@ -1529,7 +1530,7 @@ pub fn verify_gentoo_stage3<R: CommandRunner>(
     work: &Path,
 ) -> Result<VerifiedStage3, InstallError> {
     source
-        .init_system()
+        .validate()
         .map_err(|_| InstallError::Invalid("invalid Gentoo no-multilib source identity"))?;
     let gpg = work.join("gpg");
     fs::create_dir(&gpg)?;
@@ -1567,67 +1568,75 @@ pub fn verify_gentoo_stage3<R: CommandRunner>(
     if key_meta.len() == 0 || key_meta.len() > 2 * 1024 * 1024 {
         return Err(InstallError::Invalid("pinned Gentoo release key is absent"));
     }
-    let signature = work.join("gentoo-stage3.asc");
+    let verify = |runner: &mut R, inputs: &[&Path], phase, failure| {
+        let spec = command(
+            "gpg",
+            [
+                OsStr::new("--batch"),
+                "--homedir".as_ref(),
+                gpg.as_os_str(),
+                "--no-default-keyring".as_ref(),
+                "--keyring".as_ref(),
+                keyring.as_os_str(),
+                "--status-fd=1".as_ref(),
+                "--verify".as_ref(),
+            ]
+            .into_iter()
+            .chain(inputs.iter().map(|path| path.as_os_str())),
+            phase,
+        )
+        .stdout_mode(OutputMode::Capture)
+        .stderr_mode(OutputMode::Capture);
+        if !valid_gentoo_signature(&capture(runner, &spec)?) {
+            return Err(InstallError::Invalid(failure));
+        }
+        Ok(())
+    };
+
+    // The host previews the release identity. Confirm the exact same archive
+    // against the release key before fetching it or changing the disk.
+    let index = work.join("gentoo-stage3-index.txt");
+    download(runner, sources::GENTOO_STAGE3_INDEX_URL, &index, 64 * 1024)?;
+    verify(
+        runner,
+        &[&index],
+        "gentoo-verify-signed-index",
+        "Gentoo release index is not signed by the pinned release key",
+    )?;
+    let published = sources::parse_gentoo_stage3(&fs::read_to_string(&index)?, "x86_64")
+        .map_err(|_| InstallError::Invalid("invalid signed Gentoo OpenRC release index"))?;
+    if &published != source {
+        return Err(InstallError::Invalid(
+            "Gentoo release index changed since preparation; regenerate the installation plan",
+        ));
+    }
+
     let digests = work.join("gentoo-stage3.DIGESTS");
+    download(runner, &source.digests_url, &digests, 1024 * 1024)?;
+    verify(
+        runner,
+        &[&digests],
+        "gentoo-verify-signed-digests",
+        "Gentoo digest signature is not bound to the pinned release primary key",
+    )?;
+    let hash = sources::parse_gentoo_sha512(source, &fs::read_to_string(&digests)?)
+        .map_err(|_| InstallError::Invalid("invalid signed Gentoo stage3 digest metadata"))?;
+
+    let signature = work.join("gentoo-stage3.asc");
     let archive = work.join(&source.filename);
     download(runner, &source.signature_url, &signature, 64 * 1024)?;
-    download(runner, &source.digests_url, &digests, 1024 * 1024)?;
     download(runner, &source.url, &archive, source.size)?;
     if fs::metadata(&archive)?.len() != source.size {
         return Err(InstallError::Invalid(
             "Gentoo stage3 size differs from selected release",
         ));
     }
-    let verify = command(
-        "gpg",
-        [
-            OsStr::new("--batch"),
-            "--homedir".as_ref(),
-            gpg.as_os_str(),
-            "--no-default-keyring".as_ref(),
-            "--keyring".as_ref(),
-            keyring.as_os_str(),
-            "--status-fd=1".as_ref(),
-            "--verify".as_ref(),
-            signature.as_os_str(),
-            archive.as_os_str(),
-        ],
+    verify(
+        runner,
+        &[&signature, &archive],
         "gentoo-verify-stage3-signature",
-    )
-    .stdout_mode(OutputMode::Capture)
-    .stderr_mode(OutputMode::Capture);
-    let status = capture(runner, &verify)?;
-    if !valid_gentoo_signature(&status) {
-        return Err(InstallError::Invalid(
-            "Gentoo archive signature is not bound to the pinned release primary key",
-        ));
-    }
-    // Authenticate the signed metadata as well as the archive signature. Parsing
-    // OpenPGP armor alone provides no authenticity for its SHA-512 value.
-    let digest_verify = command(
-        "gpg",
-        [
-            OsStr::new("--batch"),
-            "--homedir".as_ref(),
-            gpg.as_os_str(),
-            "--no-default-keyring".as_ref(),
-            "--keyring".as_ref(),
-            keyring.as_os_str(),
-            "--status-fd=1".as_ref(),
-            "--verify".as_ref(),
-            digests.as_os_str(),
-        ],
-        "gentoo-verify-signed-digests",
-    )
-    .stdout_mode(OutputMode::Capture)
-    .stderr_mode(OutputMode::Capture);
-    if !valid_gentoo_signature(&capture(runner, &digest_verify)?) {
-        return Err(InstallError::Invalid(
-            "Gentoo digest signature is not bound to the pinned release primary key",
-        ));
-    }
-    let digest_text = fs::read_to_string(&digests)?;
-    let hash = gentoo_sha512(source, &digest_text)?;
+        "Gentoo archive signature is not bound to the pinned release primary key",
+    )?;
     let checksum = command(
         "sha512sum",
         ["--check", "--status"],
@@ -1676,45 +1685,6 @@ pub fn valid_gentoo_signature(status: &str) -> bool {
         .collect::<Vec<_>>();
     signatures.len() == 1 && signatures[0].split_whitespace().last() == Some(GENTOO_RELEASE_PRIMARY)
 }
-pub fn gentoo_sha512(source: &GentooStage3, metadata: &str) -> Result<String, InstallError> {
-    let body = if metadata.starts_with("-----BEGIN PGP SIGNED MESSAGE-----") {
-        sources::clearsigned_payload(metadata)
-            .map_err(|_| InstallError::Invalid("invalid Gentoo digest metadata"))?
-    } else {
-        metadata
-    };
-    let mut sha = false;
-    let mut result = None;
-    for line in body.lines().map(str::trim) {
-        if line.is_empty() {
-            continue;
-        }
-        if line.starts_with('#') {
-            sha = line == "# SHA512 HASH";
-            continue;
-        }
-        if !sha {
-            continue;
-        }
-        let fields = line.split_whitespace().collect::<Vec<_>>();
-        if fields.len() != 2 {
-            return Err(InstallError::Invalid("invalid SHA512 digest entry"));
-        }
-        if fields[1] == source.filename
-            && (fields[0].len() != 128
-                || !fields[0].bytes().all(|b| b.is_ascii_hexdigit())
-                || result.replace(fields[0].to_owned()).is_some())
-        {
-            return Err(InstallError::Invalid(
-                "invalid or duplicate Gentoo stage3 digest",
-            ));
-        }
-    }
-    result.ok_or(InstallError::Invalid(
-        "selected Gentoo stage3 digest is missing",
-    ))
-}
-
 fn installed_module_versions(root: &Path) -> Result<Vec<String>, InstallError> {
     let directory = fs::canonicalize(root.join("lib/modules"))?;
     if !directory.starts_with(root) {
@@ -1872,12 +1842,13 @@ fn clean_target_tree(
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error.into()),
     };
-    // Portage downloads as its unprivileged user into a root-owned cache
-    // with group write enabled. Only this exact cache leaf may have that mode.
+    // Portage uses a root-owned cache with group write enabled. The stage3
+    // can ship it with group root, and Portage can assign its own group later.
+    // Admit these modes only on this exact cache leaf.
     let portage_cache = relative == "var/cache/distfiles"
         && metadata.is_dir()
         && metadata.uid() == 0
-        && metadata.gid() == 250
+        && matches!(metadata.gid(), 0 | 250)
         && metadata.mode() & 0o002 == 0;
     if portage_cache {
         crate::shared::configure::validate_planned_parent(&directory)?;
@@ -1963,26 +1934,6 @@ fn copy_live_resolver(root: &Path) -> Result<(), InstallError> {
     ensure_parent(&path)?;
     atomic_replace(&path, &bytes, 0o644)?;
     Ok(())
-}
-fn literal_public_key(key: &str) -> bool {
-    let mut fields = key.split_whitespace();
-    matches!(
-        fields.next(),
-        Some(
-            "ssh-ed25519"
-                | "ssh-rsa"
-                | "ecdsa-sha2-nistp256"
-                | "ecdsa-sha2-nistp384"
-                | "ecdsa-sha2-nistp521"
-                | "sk-ssh-ed25519@openssh.com"
-                | "sk-ecdsa-sha2-nistp256@openssh.com"
-        )
-    ) && fields.next().is_some_and(|value| {
-        value.len() >= 4
-            && value
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b))
-    }) && !key.chars().any(char::is_control)
 }
 fn target_hostname(plan: &crate::model::InstallPlan) -> String {
     plan.post_install
@@ -2126,75 +2077,112 @@ mod runtime_tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
 
+    fn ssh_policy_facts(plan: &crate::model::InstallPlan) -> String {
+        let native = key_only_ssh_config(plan, "", false);
+        native
+            .lines()
+            .filter_map(|line| {
+                let (key, value) = line.split_once(' ')?;
+                (!key.starts_with('#')).then(|| format!("{} {value}\n", key.to_ascii_lowercase()))
+            })
+            .collect()
+    }
+
     #[test]
-    fn non_root_accounts_set_root_password_privately_without_enabling_root_ssh() {
-        for key_auth in [false, true] {
-            let root = Scratch::new();
-            root.write("etc/ssh/sshd_config", b"# base\n");
-            let mut install = crate::model::InstallPlan::new(Target::Debian);
-            install.username = Some("alice".into());
-            install.root_password = Some(crate::model::SecretString::new("PRIVATE-ROOT-SENTINEL"));
-            if key_auth {
-                install
-                    .ssh_keys
-                    .push("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestfixture alice".into());
-            } else {
-                install.password = Some(crate::model::SecretString::new("PRIVATE-USER-SENTINEL"));
+    fn key_only_ssh_keeps_native_pam_and_forwarding_policy_but_ignores_dropins() {
+        for (username, root_login) in [("root", "prohibit-password"), ("alice", "no")] {
+            let mut plan = crate::model::InstallPlan::new(Target::Debian);
+            plan.username = Some(username.into());
+            plan.ssh_port = Some(2222);
+            let config = key_only_ssh_config(
+                &plan,
+                "passwordauthentication yes\nusepam yes\nallowtcpforwarding no\n\
+                 disableforwarding yes\ninclude sshd_config.d/test.conf\nmatch all\n\
+                 subsystem sftp /usr/lib/openssh/sftp-server\n",
+                false,
+            );
+            assert!(config.contains("Port 2222\n"));
+            assert!(config.contains(&format!("AllowUsers {username}\n")));
+            assert!(config.contains(&format!("PermitRootLogin {root_login}\n")));
+            assert!(config.contains("PasswordAuthentication no\n"));
+            assert!(config.contains("AuthenticationMethods publickey\n"));
+            assert!(config.contains("usepam yes\n"));
+            assert!(config.contains("allowtcpforwarding no\n"));
+            assert!(config.contains("disableforwarding yes\n"));
+            assert!(config.contains("subsystem sftp /usr/lib/openssh/sftp-server\n"));
+            assert!(!config.contains("sshd_config.d"));
+            assert!(!config.contains("match all"));
+            let facts = ssh_policy_facts(&plan);
+            assert!(valid_effective_ssh_policy(&plan, &facts));
+            for (previous, altered) in [
+                ("passwordauthentication no", "passwordauthentication yes"),
+                (
+                    "kbdinteractiveauthentication no",
+                    "kbdinteractiveauthentication yes",
+                ),
+                (
+                    "authenticationmethods publickey",
+                    "authenticationmethods any",
+                ),
+                ("port 2222", "port 2222\nport 22"),
+            ] {
+                assert!(!valid_effective_ssh_policy(
+                    &plan,
+                    &facts.replace(previous, altered)
+                ));
             }
-            let plan = crate::worker::live::validate_live_plan_with_uid(
-                install,
-                "x86_64",
-                4096,
-                crate::RUNTIME_VERSION,
-                0,
-            )
-            .unwrap();
-            let mut runner =
-                MockRunner::new((0..20).map(|_| CommandOutput::new(Some(0), vec![], vec![])));
-            configure_accounts(&mut runner, &root.0, &plan).unwrap();
-            let call = runner
-                .calls()
-                .iter()
-                .find(|c| c.phase == "target-set-root-password")
-                .unwrap();
-            assert_eq!(
-                call.stdin,
-                CommandInput::Bytes(b"root:PRIVATE-ROOT-SENTINEL\n".to_vec())
-            );
-            assert_eq!(call.stdout_mode, OutputMode::Discard);
-            assert_eq!(call.stderr_mode, OutputMode::Capture);
-            assert!(!format!("{call:?}").contains("PRIVATE-ROOT-SENTINEL"));
-            assert!(
-                !call
-                    .args
-                    .iter()
-                    .any(|arg| arg.to_string_lossy().contains("PRIVATE-ROOT-SENTINEL"))
-            );
-            let config = fs::read_to_string(root.0.join("etc/ssh/sshd_config")).unwrap();
-            assert!(config.contains("PermitRootLogin no\n"));
-            assert!(config.contains(if key_auth {
-                "PasswordAuthentication no\n"
-            } else {
-                "PasswordAuthentication yes\n"
-            }));
         }
     }
+
     #[test]
-    fn missing_root_password_stops_before_creating_non_root_account() {
+    fn non_root_provisioning_disables_passwords_and_verifies_effective_sudo() {
         let root = Scratch::new();
-        let mut install = crate::model::InstallPlan::new(Target::Debian);
-        install.username = Some("alice".into());
-        install.password = Some(crate::model::SecretString::new("PRIVATE-USER-SENTINEL"));
-        let plan = crate::worker::live::validate_live_plan_with_uid(
-            install,
-            "x86_64",
-            4096,
-            crate::RUNTIME_VERSION,
-            0,
-        )
-        .unwrap();
+        fs::create_dir_all(root.0.join("home/alice")).unwrap();
+        let mut plan = crate::model::InstallPlan::new(Target::Debian);
+        plan.username = Some("alice".into());
+        plan.ssh_keys.push(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f alice".into(),
+        );
+        let effective = ssh_policy_facts(&plan);
+        let mut runner = MockRunner::new(
+            ["", "", "", "0\n", "", "", "usepam yes\n", "", &effective]
+                .map(|stdout| CommandOutput::new(Some(0), stdout.as_bytes().to_vec(), vec![])),
+        );
+        configure_key_only_ssh(&mut runner, &root.0, &plan, false).unwrap();
+        let calls = runner.calls();
+        assert_eq!(calls[2].phase, "ssh-disable-account-passwords");
+        assert_eq!(
+            calls[2].stdin,
+            CommandInput::Bytes(b"root:NP\nalice:NP\n".to_vec())
+        );
+        assert_eq!(calls[3].phase, "ssh-verify-sudo-account");
+        for (path, mode) in [
+            ("home/alice", 0o700),
+            ("home/alice/.ssh", 0o700),
+            ("home/alice/.ssh/authorized_keys", 0o600),
+            ("etc/sudoers.d/90-rustaller", 0o440),
+            ("etc/ssh/sshd_config", 0o600),
+        ] {
+            assert_eq!(
+                fs::metadata(root.0.join(path)).unwrap().mode() & 0o777,
+                mode
+            );
+        }
+        assert_eq!(
+            fs::read_to_string(root.0.join("etc/sudoers.d/90-rustaller")).unwrap(),
+            "alice ALL=(ALL:ALL) NOPASSWD: ALL\n",
+        );
+    }
+
+    #[test]
+    fn missing_and_unresolved_keys_stop_before_account_mutations() {
+        let root = Scratch::new();
+        let mut plan = crate::model::InstallPlan::new(Target::Debian);
+        plan.username = Some("alice".into());
         let mut runner = MockRunner::empty();
-        assert!(configure_accounts(&mut runner, &root.0, &plan).is_err());
+        assert!(configure_key_only_ssh(&mut runner, &root.0, &plan, false).is_err());
+        plan.ssh_keys.push("/client.pub".into());
+        assert!(configure_key_only_ssh(&mut runner, &root.0, &plan, false).is_err());
         assert!(runner.calls().is_empty());
         assert!(!root.0.join("etc/sudoers.d/90-rustaller").exists());
     }
@@ -2412,7 +2400,7 @@ mod runtime_tests {
         }
     }
     #[test]
-    fn gentoo_services_follow_selected_init_without_cross_init_commands() {
+    fn gentoo_enables_native_openrc_services() {
         let manifest = DeploymentManifest {
             disk: crate::deployment::DiskIdentity {
                 device: "/dev/vda".into(),
@@ -2437,57 +2425,40 @@ mod runtime_tests {
                 accept_ra: false,
             }],
         };
-        for init in [
-            crate::config::GentooInit::Openrc,
-            crate::config::GentooInit::Systemd,
-        ] {
-            let scratch = Scratch::new();
-            scratch.write("etc/init.d/net.lo", b"#!/sbin/openrc-run\n");
-            fs::set_permissions(
-                scratch.0.join("etc/init.d/net.lo"),
-                fs::Permissions::from_mode(0o755),
-            )
-            .unwrap();
-            let mut plan = crate::model::InstallPlan::new(Target::Gentoo);
-            plan.system.gentoo_init = Some(init);
-            let mut runner = crate::command::MockRunner::new(
-                (0..16).map(|_| crate::command::CommandOutput::new(Some(0), vec![], vec![])),
-            );
-            enable_services(&mut runner, &scratch.0, &plan, &manifest).unwrap();
-            let openrc = init == crate::config::GentooInit::Openrc;
-            assert_eq!(
-                runner
-                    .calls()
-                    .iter()
-                    .any(|call| call.args.iter().any(|arg| arg == "rc-update")),
-                openrc
-            );
-            assert_eq!(
-                runner
-                    .calls()
-                    .iter()
-                    .any(|call| call.args.iter().any(|arg| arg == "systemctl")),
-                !openrc
-            );
-            if openrc {
-                assert_eq!(
-                    fs::read_link(scratch.0.join("etc/init.d/net.ens3")).unwrap(),
-                    Path::new("net.lo")
-                );
-                assert!(
-                    runner
-                        .calls()
-                        .iter()
-                        .any(|call| call.args.iter().any(|arg| arg == "sshd"))
-                );
-                assert!(
-                    fs::read_to_string(scratch.0.join("etc/conf.d/hostname"))
-                        .unwrap()
-                        .contains("hostname=\"gentoo\"")
-                );
-            }
-        }
+        let scratch = Scratch::new();
+        scratch.write("etc/init.d/net.lo", b"#!/sbin/openrc-run\n");
+        fs::set_permissions(
+            scratch.0.join("etc/init.d/net.lo"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        let plan = crate::model::InstallPlan::new(Target::Gentoo);
+        let mut runner = crate::command::MockRunner::new(
+            (0..16).map(|_| crate::command::CommandOutput::new(Some(0), vec![], vec![])),
+        );
+        enable_services(&mut runner, &scratch.0, &plan, &manifest).unwrap();
+        assert!(
+            runner
+                .calls()
+                .iter()
+                .all(|call| call.args.iter().any(|arg| arg == "rc-update"))
+        );
+        assert_eq!(
+            fs::read_link(scratch.0.join("etc/init.d/net.ens3")).unwrap(),
+            Path::new("net.lo")
+        );
+        assert!(
+            runner
+                .calls()
+                .iter()
+                .any(|call| call.args.iter().any(|arg| arg == "sshd"))
+        );
+        assert_eq!(
+            fs::read_to_string(scratch.0.join("etc/conf.d/hostname")).unwrap(),
+            "hostname=\"gentoo\"\n"
+        );
     }
+
     #[test]
     fn arch_module_inventory_uses_exact_builtins_and_compressed_modules_and_deduplicates_usrmerge()
     {

@@ -1,5 +1,6 @@
 use crate::bundle::BundleArtifacts;
 use crate::{contains_bytes, verify_x86_64_elf};
+use rustaller::{config::RootFilesystem, model::Target, postinstall::required_kernel};
 use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -107,9 +108,39 @@ pub fn package(
         worker.len(),
         sha256(&worker),
     );
+    let targets = [Target::Alpine, Target::Debian, Target::Arch, Target::Gentoo]
+        .into_iter()
+        .filter_map(|target| {
+            let kernel = required_kernel(target)?;
+            let init = target.init_system()?;
+            Some(format!("  - {target}: `{kernel}` with {init}.\n"))
+        })
+        .collect::<String>();
+    let filesystems = RootFilesystem::ALL
+        .iter()
+        .map(|filesystem| filesystem.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
     let notes = format!(
-        "# {tag} — development preview\n\nThis build contains kexec handoff and disk-erasing installation actions. Full four-target BIOS/UEFI acceptance is pending. Use disposable test machines with console access.\n\n- Linux x86_64 static musl entry binary with matching worker embedded.\n- TUI enabled: {}.\n- Automatic targets are Alpine, Debian, Arch and Gentoo through Alpine Live. Minimal is the default footprint. Source PID 1 must be systemd or openrc-init. Use a verified Ethernet policy or explicit MAC-bound addressing.\n- `--inspect` is read-only. An installation requires exact identity-bound confirmation.\n- `rustaller reset` cancels held preparation before handoff.\n- `rustaller-boot` uses FAT32 at /boot and supports XFS, ext4 and Btrfs roots. See the testing documentation for firmware coverage.\n- Source commit `{}`, uncommitted changes {}.\n- Runtime compatibility `{}`.\n\nDownload `{ENTRY_NAME}` and verify it against `SHA256SUMS`. Source and the GPL-3.0 license are provided by this repository.\n",
+        r#"# {tag} — development preview
+
+This build contains kexec handoff and disk-erasing installation actions. Full four-target BIOS/UEFI acceptance is pending. Use disposable test machines with console access.
+
+- Linux x86_64 static musl entry binary with matching worker embedded.
+- TUI enabled: {}.
+- Automatic installation runs through Alpine Live with these fixed target policies.
+{targets}- Minimal is the default footprint. Source PID 1 must be systemd or openrc-init. Use a verified Ethernet policy or explicit MAC-bound addressing.
+- Installation and Live rescue require SSH public keys. The default login is `{}` with sudo access. Set `--username root` for explicit root SSH access.
+- `--inspect` is read-only. An installation requires exact identity-bound confirmation.
+- `rustaller reset` cancels held preparation before handoff.
+- `rustaller-boot` uses FAT32 at `/boot`. New target roots support {filesystems}. See the testing documentation for firmware coverage.
+- Source commit `{}`, uncommitted changes {}.
+- Runtime compatibility `{}`.
+
+Download `{ENTRY_NAME}` and verify it against `SHA256SUMS`. Source and the GPL-3.0 license are provided by this repository.
+"#,
         artifacts.tui,
+        rustaller::model::DEFAULT_ACCOUNT,
         source.commit,
         source.dirty,
         rustaller::RUNTIME_VERSION
@@ -263,6 +294,10 @@ mod tests {
         assert!(metadata.contains("\"installer_complete\": false"));
         assert!(metadata.contains("\"tui\": true"));
         assert!(metadata.contains("\"default_install_profile\": \"minimal\""));
+        let notes = fs::read_to_string(output.join("RELEASE-NOTES.md")).unwrap();
+        assert!(notes.contains("linux-cachyos-server"));
+        assert!(notes.contains("SSH public keys"));
+        assert!(notes.contains("New target roots support xfs, ext4"));
         let sums = fs::read_to_string(output.join("SHA256SUMS")).unwrap();
         assert_eq!(sums.lines().count(), 3);
         for line in sums.lines() {

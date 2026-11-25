@@ -166,9 +166,7 @@ mod live_install {
     };
     use rustaller::host::sources::{GENTOO_ARCHIVE, GentooStage3};
     use rustaller::model::{BootMode, InstallPlan, Target};
-    use rustaller::targets::install::{
-        gentoo_sha512, valid_gentoo_signature, validate_install_options,
-    };
+    use rustaller::targets::install::{valid_gentoo_signature, validate_install_options};
     use rustaller::worker::install::{
         parse_unmounted_descendants, reject_target_swaps, same_physical_disk, validate_live_root,
     };
@@ -216,7 +214,7 @@ mod live_install {
     fn plan(target: Target) -> InstallPlan {
         let mut plan = InstallPlan::new(target);
         plan.username = Some("root".into());
-        plan.ssh_keys = vec!["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA test".into()];
+        plan.ssh_keys = vec![crate::support::PUBLIC_KEY.into()];
         plan
     }
 
@@ -325,17 +323,36 @@ mod live_install {
     }
 
     #[test]
-    fn gentoo_source_init_mismatch_fails_before_installation_authorization() {
-        let mut metadata = manifest();
-        metadata.gentoo_stage3 = Some(stage());
-        let mut p = plan(Target::Gentoo);
-        p.system.gentoo_init = Some(rustaller::config::GentooInit::Systemd);
-        let p =
-            validate_live_plan_with_uid(p, "x86_64", 4096, rustaller::RUNTIME_VERSION, 0).unwrap();
-        assert!(validate_install_options(&p, &metadata).is_err());
-        let stage = metadata.gentoo_stage3.as_mut().unwrap();
-        stage.filename = stage.filename.replace("nomultilib-openrc", "systemd");
-        assert!(metadata.validate().is_err());
+    fn live_rescue_requires_keys_but_no_target_installation_metadata() {
+        let mut selection = plan(Target::Gentoo);
+        selection.hold = Some(1);
+        let validate = |plan| {
+            validate_live_plan_with_uid(plan, "x86_64", 4096, rustaller::RUNTIME_VERSION, 0)
+                .unwrap()
+        };
+        assert!(validate_install_options(&validate(selection.clone()), &manifest()).is_ok());
+        selection.ssh_keys.clear();
+        assert!(validate_install_options(&validate(selection), &manifest()).is_err());
+    }
+
+    #[test]
+    fn gentoo_rejects_a_non_openrc_or_multilib_source_before_authorization() {
+        let p = validate_live_plan_with_uid(
+            plan(Target::Gentoo),
+            "x86_64",
+            4096,
+            rustaller::RUNTIME_VERSION,
+            0,
+        )
+        .unwrap();
+        for variant in ["nomultilib-systemd", "openrc", "musl-openrc"] {
+            let mut invalid = stage();
+            invalid.filename = invalid.filename.replace("nomultilib-openrc", variant);
+            let mut metadata = manifest();
+            metadata.gentoo_stage3 = Some(invalid);
+            assert!(metadata.validate().is_err());
+            assert!(validate_install_options(&p, &metadata).is_err());
+        }
     }
 
     #[test]
@@ -351,13 +368,5 @@ mod live_install {
         assert!(!valid_gentoo_signature(&format!(
             "{good}[GNUPG:] EXPKEYSIG 2C44695DB9F6043D Gentoo\n"
         )));
-        let selected = stage();
-        let digest = "a".repeat(128);
-        let body = format!("# SHA512 HASH\n{digest}  {}\n", selected.filename);
-        assert_eq!(gentoo_sha512(&selected, &body).unwrap(), digest);
-        assert!(gentoo_sha512(&selected, &format!("{body}{body}")).is_err());
-        assert!(
-            gentoo_sha512(&selected, &body.replace(&selected.filename, "other.tar.xz")).is_err()
-        );
     }
 }

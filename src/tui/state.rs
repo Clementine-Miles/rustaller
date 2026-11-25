@@ -6,7 +6,6 @@ use rustaller::config::DnsMode;
 use rustaller::config::{CongestionControl, QueueDiscipline};
 use rustaller::host::ssh_keygen::{self, GeneratedKey, KeygenOptions};
 use rustaller::model::{BootMode, InstallPlan, Target};
-use rustaller::postinstall::KernelChoice;
 
 pub(super) const CHOICES: [(&str, &str, Route); 5] = [
     ("Alpine Linux", "alpine", Route::Automatic(Target::Alpine)),
@@ -31,11 +30,8 @@ impl Route {
     pub fn automatic(self) -> bool {
         matches!(self, Self::Automatic(_))
     }
-    pub fn has_account(self) -> bool {
-        self.automatic() || self == Self::Rescue
-    }
 }
-pub(super) use super::draft::{Authentication, DnsProvider, Draft};
+pub(super) use super::draft::{DnsProvider, Draft};
 use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,9 +40,6 @@ pub(super) enum Page {
     Targets,
     Overview,
     Account,
-    Auth,
-    Passwords,
-    RootPasswords,
     Keys,
     KeyActions(usize),
     Host,
@@ -69,9 +62,6 @@ impl Page {
             Self::Targets => "Choose a system",
             Self::Overview => "Installation and boot",
             Self::Account => "Account and SSH",
-            Self::Auth => "Authentication",
-            Self::Passwords => "Password settings",
-            Self::RootPasswords => "Root account password",
             Self::Keys => "SSH public keys",
             Self::KeyActions(_) => "Public key actions",
             Self::Host => "Host settings",
@@ -118,16 +108,13 @@ impl EditSlot {
         match self {
             Self::Field(field) => field.hint(),
             _ => {
-                "Public keys only: inline key, public-key file, HTTP(S) URL, github:USER or gitlab:USER. Never enter a private key."
+                "Public keys only: inline key, absolute public-key file, HTTPS URL, github:USER or gitlab:USER."
             }
         }
     }
 }
 #[derive(Clone, Copy)]
 pub(super) enum Setting {
-    Authentication,
-    Kernel,
-    GentooInit,
     Boot,
     Hold,
     Profile,
@@ -187,7 +174,6 @@ pub(super) enum Action {
     Select(Setting),
     ReuseSizes,
     ToggleDebug,
-    ToggleGeneric,
     ToggleTools,
     ToggleKeepDocs,
     ToggleKeepCache,
@@ -286,25 +272,8 @@ impl Wizard {
     pub fn is_automatic(&self) -> bool {
         self.route().automatic()
     }
-    pub fn selected_target(&self) -> Option<Target> {
-        self.route().has_account().then(|| self.route().target())
-    }
     pub fn context_label(&self) -> String {
         CHOICES[self.choice].0.into()
-    }
-    pub fn has_account(&self) -> bool {
-        self.route().has_account()
-    }
-    pub fn kernel_label(&self) -> &'static str {
-        if matches!(
-            self.route(),
-            Route::Automatic(Target::Alpine | Target::Debian | Target::Arch)
-        ) && self.draft().kernel == KernelChoice::Auto
-        {
-            "standard"
-        } else {
-            self.draft().kernel.as_str()
-        }
     }
     fn open(&mut self, page: Page) {
         self.frames.push(MenuFrame {
@@ -424,7 +393,6 @@ impl Wizard {
                 Ok(options) => return Progress::GenerateKey(options),
                 Err(error) => self.error = error,
             },
-            Action::ToggleGeneric => self.draft_mut().generic_kernel = !self.draft().generic_kernel,
             Action::Target(index) => {
                 self.choice = index;
                 self.frames.truncate(2);
@@ -483,13 +451,6 @@ impl Wizard {
             EditSlot::Key(index) => self.draft_mut().keys[index].replace(value.trim().into()),
             EditSlot::NewKey => self.draft_mut().keys.push(TextValue::new(value.trim())),
         }
-        if matches!(slot, EditSlot::Field(Field::Username))
-            && self.is_automatic()
-            && self.draft().get(Field::Username).trim() != "root"
-            && self.draft().get(Field::RootPassword).is_empty()
-        {
-            self.open(Page::RootPasswords);
-        }
         Ok(())
     }
     fn review(&mut self) {
@@ -506,7 +467,6 @@ impl Wizard {
                         Field::Mtu => Page::Mtu,
                         Field::SwapSize | Field::Swappiness => Page::Swap,
                         Field::Disk | Field::BootSize | Field::RootSize => Page::Boot,
-                        Field::Compression => Page::Installation,
                         Field::SshPort | Field::Username => Page::Account,
                         _ => Page::Tcp,
                     };
@@ -655,7 +615,7 @@ impl Wizard {
                 mut scroll,
             } => match key.code {
                 KeyCode::Esc | KeyCode::Left => {}
-                KeyCode::Enter if success => match self.build_plan() {
+                KeyCode::Enter if success => match self.authorization_plan() {
                     Ok(plan) => return Progress::Ready(plan),
                     Err(error) => {
                         self.error = error;
@@ -764,16 +724,8 @@ impl Wizard {
     fn redact(&self, mut message: String) -> String {
         let mut secrets = Vec::new();
         for draft in &self.drafts {
-            for field in [
-                Field::Password,
-                Field::Confirm,
-                Field::RootPassword,
-                Field::RootConfirm,
-                Field::Frpc,
-            ] {
-                let value = draft.get(field);
-                secrets.extend([value, value.trim()]);
-            }
+            let frpc = draft.get(Field::Frpc);
+            secrets.extend([frpc, frpc.trim()]);
             for key in &draft.keys {
                 secrets.extend([key.0.as_str(), key.0.trim()]);
             }

@@ -2,6 +2,9 @@
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{fs, path::PathBuf};
+#[allow(dead_code)]
+pub const PUBLIC_KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIE2kmWV2TOsArVwWboLjrmQX8eZ7Dw6P/7uF6m2L9TM+ rustaller-test";
+
 static NEXT: AtomicU64 = AtomicU64::new(0);
 pub struct Scratch(pub PathBuf);
 // Each integration crate compiles this module independently.

@@ -33,7 +33,7 @@ fn alpine_live_cmdline_keeps_strict_url_and_path_validation() {
     }
 }
 #[test]
-fn all_24_target_firmware_filesystem_plans_have_bootable_loader_paths() {
+fn all_16_target_firmware_filesystem_plans_have_bootable_loader_paths() {
     for target in [Target::Alpine, Target::Debian, Target::Arch, Target::Gentoo] {
         for boot in [BootMode::Bios, BootMode::Efi] {
             for filesystem in RootFilesystem::ALL {
@@ -57,10 +57,8 @@ fn all_24_target_firmware_filesystem_plans_have_bootable_loader_paths() {
                 let cfg = rustaller_boot_core::Config::parse(&config).unwrap();
                 let cmd = cfg.cmdline().unwrap();
                 assert!(cmd.contains("console=ttyS0"));
-                assert_eq!(
-                    cmd.contains("rootflags=subvol=@"),
-                    *filesystem == RootFilesystem::Btrfs
-                );
+                assert!(cmd.contains(&format!("rootfstype={}", filesystem.as_str())));
+                assert!(!cmd.contains("rootflags="));
                 assert_eq!(
                     layout.table(),
                     if boot == BootMode::Bios {
@@ -91,11 +89,7 @@ fn large_bios_disks_reserve_a_dedicated_gpt_stage2_partition_and_reject_firmware
     assert!(DiskLayout::new(&plan, "vda", BootMode::Bios, 8 * 1024_u64.pow(3)).is_err());
 }
 #[test]
-fn btrfs_swap_and_unsafe_configurations_fail_before_mutation() {
-    let mut plan = InstallPlan::new(Target::Arch);
-    plan.system.root_filesystem = RootFilesystem::Btrfs;
-    plan.system.swap.size_mib = Some(1024);
-    assert!(plan.validate().is_err());
+fn unsafe_boot_configurations_fail_before_mutation() {
     assert!(rustaller_boot_core::create("UUID=x;bad", "ext4", &[entry()]).is_err());
     let mut e = entry();
     e.kernel = "/../vmlinuz".into();
@@ -112,21 +106,13 @@ fn target_fstab_centralizes_uuid_paths_and_fsck_policy() {
             .unwrap();
         let layout = DiskLayout::new(&plan, "vda", BootMode::Bios, 8 * 1024_u64.pow(3)).unwrap();
         let fstab = render_fstab(&layout, "abcd-1234", "1234-abcd").unwrap();
-        assert!(fstab.contains("/boot vfat fmask=0177,dmask=0077,quiet 0 2"));
+        let root_pass = u8::from(*filesystem == RootFilesystem::Ext4);
         assert_eq!(
-            fstab.contains("subvol=@,compress=zstd:3"),
-            *filesystem == RootFilesystem::Btrfs
-        );
-        assert!(
-            fstab
-                .lines()
-                .next()
-                .unwrap()
-                .ends_with(if *filesystem == RootFilesystem::Ext4 {
-                    "0 1"
-                } else {
-                    "0 0"
-                })
+            fstab,
+            format!(
+                "UUID=abcd-1234 / {} defaults 0 {root_pass}\nUUID=1234-abcd /boot vfat fmask=0177,dmask=0077,quiet 0 2\n",
+                filesystem.as_str()
+            )
         );
         assert!(render_fstab(&layout, "bad/uuid", "abcd").is_err());
     }
@@ -567,18 +553,12 @@ mod generations {
 }
 
 #[test]
-fn btrfs_options_roundtrip_and_invalid_boot_geometry_fail_closed() {
+fn xfs_and_ext4_options_roundtrip_and_invalid_boot_geometry_fail_closed() {
     use rustaller::host::args::{CliOutcome, parse_args};
-    for level in [0, 3, 15] {
-        let level = level.to_string();
-        let CliOutcome::Plan(plan) = parse_args([
-            "debian",
-            "--filesystem=btrfs",
-            "--boot-size-mib=1024",
-            "--btrfs-compression",
-            &level,
-        ])
-        .unwrap() else {
+    for filesystem in ["xfs", "ext4"] {
+        let CliOutcome::Plan(plan) =
+            parse_args(["debian", "--filesystem", filesystem, "--boot-size-mib=1024"]).unwrap()
+        else {
             panic!("plan")
         };
         let bytes = rustaller::codec::encode_plan(&plan).unwrap();
@@ -592,9 +572,8 @@ fn btrfs_options_roundtrip_and_invalid_boot_geometry_fail_closed() {
     for args in [
         vec!["debian", "--boot-size-mib=511"],
         vec!["arch", "--boot-size-mib=4097"],
-        vec!["gentoo", "--filesystem=btrfs", "--btrfs-compression=16"],
+        vec!["gentoo", "--filesystem=btrfs"],
         vec!["alpine", "--filesystem=xfs", "--btrfs-compression=3"],
-        vec!["debian", "--filesystem=btrfs", "--swapfile-mib=64"],
     ] {
         assert!(parse_args(args).is_err());
     }
@@ -602,40 +581,4 @@ fn btrfs_options_roundtrip_and_invalid_boot_geometry_fail_closed() {
         rustaller::shared::storage::planned_partitions(BootMode::Bios, 1024 * 1024 * 1024, 512)
             .is_err()
     );
-}
-#[test]
-fn btrfs_format_and_mount_create_at_root_and_unmount_top_on_failure() {
-    use rustaller::command::{CommandOutput, MockRunner};
-    use rustaller::shared::storage::{btrfs_options, create_partitions, mount_target};
-    for level in [0, 3] {
-        let mut p = InstallPlan::new(Target::Alpine);
-        p.system.root_filesystem = RootFilesystem::Btrfs;
-        p.system.btrfs_compression = Some(level);
-        let p =
-            validate_live_plan_with_uid(p, "x86_64", 4096, rustaller::RUNTIME_VERSION, 0).unwrap();
-        let l = DiskLayout::new(&p, "vda", BootMode::Bios, 8 * 1024_u64.pow(3)).unwrap();
-        let d = support::Scratch::new("btrfs-mount");
-        let mut r = MockRunner::new((0..100).map(|_| CommandOutput::new(Some(0), vec![], vec![])));
-        create_partitions(&mut r, &l, &Default::default()).unwrap();
-        assert!(
-            r.calls()
-                .iter()
-                .any(|c| c.program == "mkfs.btrfs" && c.args == ["-f", "-K", "/dev/vda2"])
-        );
-        mount_target(&mut r, &l, &d.0).unwrap();
-        assert!(
-            r.calls()
-                .iter()
-                .any(|c| c.program == "btrfs" && c.args[..2] == ["subvolume", "create"])
-        );
-        assert!(r.calls().iter().any(|c| c.phase == "mount-btrfs-root"
-            && c.args.iter().any(|v| v == btrfs_options(level).as_str())));
-        assert!(r.calls().iter().any(|c| c.phase == "live-mount-boot"
-            && c.args.iter().any(|v| v == d.0.join("boot").as_os_str())));
-        let mut r =
-            MockRunner::new([0, 1, 0].map(|code| CommandOutput::new(Some(code), vec![], vec![])));
-        assert!(mount_target(&mut r, &l, &d.0).is_err());
-        assert_eq!(r.calls().last().unwrap().program, "umount");
-        assert!(!r.calls().iter().any(|c| c.phase == "live-mount-boot"));
-    }
 }

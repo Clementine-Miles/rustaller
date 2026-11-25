@@ -3,7 +3,8 @@ use crate::command::{
 };
 use crate::fsutil::replace_config as atomic_replace;
 use crate::host::sources::{DEBIAN_ARCHIVE as DEFAULT_ARCHIVE, DEBIAN_SECURITY_ARCHIVE};
-use crate::model::{BootMode, InstallPlan, PlanError, Target};
+use crate::model::{InstallPlan, PlanError, Target};
+use crate::postinstall::required_kernel;
 use std::fmt;
 use std::fs;
 use std::io;
@@ -31,14 +32,6 @@ impl fmt::Display for DebianError {
 }
 
 impl std::error::Error for DebianError {}
-
-pub fn debian_kernel_package(no_cloud_kernel: bool) -> &'static str {
-    if no_cloud_kernel {
-        "linux-image-amd64"
-    } else {
-        "linux-image-cloud-amd64"
-    }
-}
 
 pub fn validate_codename(codename: &str) -> Result<(), DebianError> {
     if !codename.is_empty() && codename.bytes().all(|byte| byte.is_ascii_lowercase()) {
@@ -83,72 +76,28 @@ pub fn write_apt_sources(
     remove_if_exists(&apt.join("sources.list.d/debian.sources")).map_err(DebianError::Filesystem)
 }
 
-pub fn apt_package_list(
-    no_cloud_kernel: bool,
-    boot_mode: BootMode,
-    username: &str,
-    firmware_packages: &[String],
-) -> Vec<String> {
-    apt_package_list_with_kernel(
-        debian_kernel_package(no_cloud_kernel),
-        boot_mode,
-        username,
-        firmware_packages,
-    )
-}
-
 pub fn apt_package_list_for_plan(
     plan: &InstallPlan,
-    boot_mode: BootMode,
     firmware_packages: &[String],
 ) -> Result<Vec<String>, PlanError> {
-    let configuration = super::packages::configuration_for_plan(plan, Target::Debian, false)?;
-    let mut packages = apt_package_list_with_kernel(
-        configuration.kernel.package,
-        boot_mode,
-        plan.username.as_deref().unwrap_or("root"),
-        firmware_packages,
-    );
-    if plan.system.profile == crate::config::InstallProfile::Minimal {
-        // debootstrap's minbase and native package dependencies remain intact.
-        // Avoid explicitly adding tools for unrelated root filesystems; never
-        // purge native required packages merely to shrink their installed size.
-        packages.retain(|package| match package.as_str() {
-            "xfsprogs" => plan.system.root_filesystem == crate::config::RootFilesystem::Xfs,
-            "e2fsprogs" => plan.system.root_filesystem == crate::config::RootFilesystem::Ext4,
-            _ => true,
-        });
-    }
-    if plan.system.root_filesystem.as_str() == "btrfs" {
-        packages.push("btrfs-progs".into());
-    }
-    packages.extend(configuration.extra_packages.into_iter().map(str::to_owned));
-    Ok(packages)
-}
-
-fn apt_package_list_with_kernel(
-    kernel_package: &str,
-    _boot_mode: BootMode,
-    username: &str,
-    firmware_packages: &[String],
-) -> Vec<String> {
+    let configuration = super::packages::configuration_for_plan(plan, Target::Debian)?;
     let mut packages = vec![
         "ca-certificates".to_owned(),
         "systemd-sysv".to_owned(),
         "systemd-resolved".to_owned(),
         "openssh-server".to_owned(),
-        "xfsprogs".to_owned(),
-        kernel_package.to_owned(),
+        plan.system.root_filesystem.maintenance_package().to_owned(),
+        configuration.kernel.to_owned(),
         "dosfstools".to_owned(),
         "initramfs-tools".to_owned(),
         "iproute2".to_owned(),
-        "e2fsprogs".to_owned(),
     ];
-    if username != "root" {
+    if plan.account_name() != "root" {
         packages.push("sudo".to_owned());
     }
     packages.extend(firmware_packages.iter().cloned());
-    packages
+    packages.extend(configuration.extra_packages.into_iter().map(str::to_owned));
+    Ok(packages)
 }
 
 /// Configure native Debian kernel and initramfs scripts for regular files on
@@ -206,16 +155,16 @@ pub fn install_apt_packages<R: CommandRunner>(
     // FAT32 /boot cannot represent them; versioned regular files remain the
     // authoritative package-owned inputs to Rustaller's immutable generations.
     configure_fat32_boot(root)?;
-    let selected = packages
+    let kernel = required_kernel(Target::Debian).unwrap();
+    if packages
         .iter()
-        .filter(|name| {
-            matches!(
-                name.as_str(),
-                "linux-image-amd64" | "linux-image-cloud-amd64"
-            )
-        })
-        .collect::<Vec<_>>();
-    if selected.len() != 1 {
+        .filter(|name| name.as_str() == kernel)
+        .count()
+        != 1
+        || packages
+            .iter()
+            .any(|name| name != kernel && name.starts_with("linux-image-"))
+    {
         return Err(DebianError::UnavailableKernel);
     }
     run_checked(
@@ -228,7 +177,7 @@ pub fn install_apt_packages<R: CommandRunner>(
                 std::ffi::OsStr::new("--simulate"),
                 std::ffi::OsStr::new("install"),
                 std::ffi::OsStr::new("--no-install-recommends"),
-                std::ffi::OsStr::new(selected[0]),
+                std::ffi::OsStr::new(kernel),
                 std::ffi::OsStr::new("initramfs-tools"),
             ],
         )

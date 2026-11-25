@@ -14,7 +14,10 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const HELP: &str = "Usage: cargo xtask vm-acceptance ACTION [OPTIONS]\n\nActions:\n  smoke           BIOS/UEFI Alpine Live boot smoke, not an installation test\n  prepare-source  Provision a disposable Debian Cloud source for kexec tests\n  install         Reinstall disposable source overlays and verify target boots\n\nCommon options:\n  --tools PATH       Extracted Debian QEMU/OVMF/xorriso root\n  --accel MODE       tcg|kvm (default tcg; no automatic fallback)\n  --memory-mib N     Guest RAM in MiB (512-65536; default 3072)\n  --output PATH      New private result directory (must not exist)\n  --firmware MODE    bios|efi|both (default both)\n  --timeout SECONDS  Per-case deadline (default 1800)\n\nSmoke: --iso FILE --sha256 HEX\nSource/install: --base FILE --sha512 HEX --key FILE --public-key FILE\n  --disk-bus BUS     virtio-blk|virtio-scsi|sata|nvme|pvscsi (default virtio-blk)\nInstall: --installer STATIC_ELF --target alpine|debian|arch|gentoo|all\n  --filesystem FS   xfs|ext4|btrfs|all (default xfs)\n  --kernel CHOICE    Target kernel choice or all official families\n  --gentoo-init INIT openrc|systemd|both (default openrc; Gentoo only)\n  --kernel-update B  yes|no (default no); upgrade, regenerate, reboot, verify\n  --ipv6-acceptance  off|local|external static dual-stack checks\n  --reset-check B   yes|no (default no); verify held cancellation before install\n  --boot-size-mib N  FAT32 capacity (512-4096); consider 1024 for upgrades\n  --root-size-mib N  Optional bounded root partition for large sparse disks\n  --keep-disks B     yes|no (default no); retain successful guest overlays\n  --disk-size-gib N  Optional sparse overlay expansion (3072 tests BIOS/GPT)\n\nAll disk files and EFI variables are fresh disposable copies. No host devices,\nnetwork-policy changes, host reboot, or privileged mounts are used.\n";
+use rustaller::model::Target;
+use rustaller::postinstall::required_kernel;
+
+const HELP: &str = "Usage: cargo xtask vm-acceptance ACTION [OPTIONS]\n\nActions:\n  smoke           BIOS/UEFI Alpine Live boot smoke, not an installation test\n  prepare-source  Provision a disposable Debian Cloud source for kexec tests\n  install         Reinstall disposable source overlays and verify target boots\n\nCommon options:\n  --tools PATH       Extracted Debian QEMU/OVMF/xorriso root\n  --accel MODE       tcg|kvm (default tcg; no automatic fallback)\n  --memory-mib N     Guest RAM in MiB (512-65536; default 3072)\n  --output PATH      New private result directory (must not exist)\n  --firmware MODE    bios|efi|both (default both)\n  --timeout SECONDS  Per-case deadline (default 1800)\n\nSmoke: --iso FILE --sha256 HEX\nSource/install: --base FILE --sha512 HEX --key FILE --public-key FILE\n  --disk-bus BUS     virtio-blk|virtio-scsi|sata|nvme|pvscsi (default virtio-blk)\nInstall: --installer STATIC_ELF --target alpine|debian|arch|gentoo|all\n  --filesystem FS   xfs|ext4|all (default xfs)\n  --account MODE    root|admin|alternating (default alternating)\n  --kernel-update B  yes|no (default no); upgrade, regenerate, reboot, verify\n  --ipv6-acceptance  off|local|external static dual-stack checks\n  --reset-check B   yes|no (default no); verify held cancellation before install\n  --boot-size-mib N  FAT32 capacity (512-4096); consider 1024 for upgrades\n  --root-size-mib N  Optional bounded root partition for large sparse disks\n  --keep-disks B     yes|no (default no); retain successful guest overlays\n  --disk-size-gib N  Optional sparse overlay expansion (3072 tests BIOS/GPT)\n\nAll disk files and EFI variables are fresh disposable copies. No host devices,\nnetwork-policy changes, host reboot, or privileged mounts are used.\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Firmware {
@@ -26,6 +29,8 @@ const VM_IPV6_ADDRESS: &str = "fd42:5253:544c:1::15/64";
 const VM_IPV6_GATEWAY: &str = "fd42:5253:544c:1::2";
 const VM_IPV6_PREFIX: &str = "fd42:5253:544c:1::/64";
 const EXTERNAL_IPV6_HOST: &str = "www.debian.org";
+const VM_TRANSPORT_CA: &str = "/var/tmp/rustaller-vm/transport-ca.pem";
+const VM_TRANSPORT_PATH: &str = "/run/rustaller-vm/transport";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Ipv6Acceptance {
@@ -208,8 +213,7 @@ impl Options {
                     | "--disk-bus"
                     | "--filesystem"
                     | "--disk-size-gib"
-                    | "--kernel"
-                    | "--gentoo-init"
+                    | "--account"
                     | "--kernel-update"
                     | "--ipv6-acceptance"
                     | "--reset-check"
@@ -271,58 +275,25 @@ impl Options {
             .map(String::as_str)
             .unwrap_or("xfs")
         {
-            "all" => Ok(vec!["xfs", "ext4", "btrfs"]),
-            fs @ ("xfs" | "ext4" | "btrfs") => Ok(vec![fs]),
-            _ => Err("filesystem must be xfs, ext4, btrfs or all".into()),
+            "all" => Ok(vec!["xfs", "ext4"]),
+            fs @ ("xfs" | "ext4") => Ok(vec![fs]),
+            _ => Err("filesystem must be xfs, ext4 or all".into()),
         }
     }
-    fn kernels(&self, target: &str) -> Result<Vec<String>, String> {
-        use rustaller::{model::Target, postinstall::KernelChoice};
-        let target_enum = match target {
-            "alpine" => Target::Alpine,
-            "debian" => Target::Debian,
-            "arch" => Target::Arch,
-            "gentoo" => Target::Gentoo,
-            _ => return Err("invalid acceptance target".into()),
-        };
-        let requested = self
-            .values
-            .get("--kernel")
-            .map(String::as_str)
-            .unwrap_or(match target {
-                "alpine" => "virt",
-                "debian" => "cloud",
-                _ => "standard",
-            });
-        if requested == "all" {
-            return Ok(match target {
-                "alpine" => vec!["lts", "virt"],
-                "debian" => vec!["generic", "cloud"],
-                "arch" => vec!["standard", "lts", "hardened", "zen"],
-                "gentoo" => vec!["standard"],
-                _ => unreachable!(),
-            }
-            .into_iter()
-            .map(str::to_owned)
-            .collect());
-        }
-        KernelChoice::parse_for_target(requested, target_enum)
-            .map(|choice| vec![choice.as_str().to_owned()])
-            .map_err(|e| e.to_string())
-    }
-    fn gentoo_inits(&self, target: &str) -> Result<Vec<&str>, String> {
-        if target != "gentoo" {
-            return Ok(vec!["native"]);
-        }
+    fn admin_account(&self, firmware: Firmware, filesystem: &str) -> Result<&'static str, String> {
         match self
             .values
-            .get("--gentoo-init")
+            .get("--account")
             .map(String::as_str)
-            .unwrap_or("openrc")
+            .unwrap_or("alternating")
         {
-            "both" => Ok(vec!["openrc", "systemd"]),
-            init @ ("openrc" | "systemd") => Ok(vec![init]),
-            _ => Err("gentoo-init must be openrc, systemd or both".into()),
+            "root" => Ok("root"),
+            "admin" => Ok("rustaller-admin"),
+            "alternating" => match (firmware, filesystem) {
+                (Firmware::Bios, "xfs") | (Firmware::Efi, "ext4") => Ok("root"),
+                _ => Ok("rustaller-admin"),
+            },
+            _ => Err("account must be root, admin or alternating".into()),
         }
     }
     fn kernel_update(&self) -> Result<bool, String> {
@@ -608,6 +579,7 @@ fn prepare_source(
         &seed,
         Firmware::Bios,
         port,
+        None,
         "source",
         options.disk_bus()?,
         false,
@@ -616,6 +588,7 @@ fn prepare_source(
         port,
         key,
         known: case.join("known-hosts"),
+        account: "root",
     };
     ssh.wait_ready(&mut guest, Instant::now() + timeout)?;
     if let Err(error) = ssh.checked(
@@ -677,12 +650,27 @@ fn install_matrix(
     let public_path = options.path("--public-key")?;
     let public = public_key(&public_path)?;
     let targets = match options.value("--target")? {
-        "all" => vec!["alpine", "debian", "arch", "gentoo"],
-        target @ ("alpine" | "debian" | "arch" | "gentoo") => vec![target],
+        "all" => vec![Target::Alpine, Target::Debian, Target::Arch, Target::Gentoo],
+        "alpine" => vec![Target::Alpine],
+        "debian" => vec![Target::Debian],
+        "arch" => vec![Target::Arch],
+        "gentoo" => vec![Target::Gentoo],
         _ => return Err("invalid acceptance target".into()),
     };
-    if options.values.contains_key("--gentoo-init") && !targets.contains(&"gentoo") {
-        return Err("gentoo-init requires --target gentoo or all".into());
+    let filesystems = options.filesystems()?;
+    let bus = options.disk_bus()?;
+    let mut cases = Vec::new();
+    for target in targets {
+        for &filesystem in &filesystems {
+            for &mode in modes {
+                cases.push((
+                    target,
+                    filesystem,
+                    mode,
+                    options.admin_account(mode, filesystem)?,
+                ));
+            }
+        }
     }
     let keep_disks = match options
         .values
@@ -746,78 +734,66 @@ fn install_matrix(
                 .ok_or("invalid root-size-mib")
         })
         .transpose()?;
-    // Resolve the full choice matrix before creating any guest overlays.
-    for target in &targets {
-        options.kernels(target)?;
-        options.gentoo_inits(target)?;
-    }
     let probe = output.join("guest-probe");
     build_probe(&probe, &output.join("probe-build.log"))?;
+    let unauthorized = UnauthorizedKey::generate(output)?;
     let transport = Transport::new()?;
     let relay = Relay::start()?;
     let mut results = Vec::new();
     let mut failed = false;
-    for target in targets {
-        for kernel in options.kernels(target)? {
-            for init in options.gentoo_inits(target)? {
-                for filesystem in options.filesystems()? {
-                    for &mode in modes {
-                        let name =
-                            format!("{target}-{}-{filesystem}-{kernel}-{init}", mode.label());
-                        let case = output.join(&name);
-                        private_directory(&case)?;
-                        let result = install_case(
-                            tools,
-                            &base,
-                            &installer,
-                            &probe,
-                            &key,
-                            &public_path,
-                            &public,
-                            &transport,
-                            &relay,
-                            target,
-                            &kernel,
-                            init,
-                            kernel_update,
-                            source_nm,
-                            reset_check,
-                            ipv6,
-                            local_ipv6.as_ref(),
-                            boot_size_mib,
-                            root_size_mib,
-                            filesystem,
-                            options.values.get("--disk-size-gib").map(String::as_str),
-                            mode,
-                            options.disk_bus()?,
-                            &case,
-                            timeout,
-                        );
-                        let passed = result.is_ok();
-                        let line = match result {
-                            Ok(()) => format!("{name}: PASS"),
-                            Err(error) => {
-                                failed = true;
-                                write_private(&case.join("failure.txt"), error.as_bytes())?;
-                                format!("{name}: FAIL ({error})")
-                            }
-                        };
-                        println!("{line}");
-                        results.push(line);
-                        write_private(
-                            &output.join("results.txt"),
-                            format!(
-                                "Scope: full install acceptance, fresh disposable source overlays\n{}\n",
-                                results.join("\n")
-                            ).as_bytes(),
-                        )?;
-                        // Failed images remain available for offline guest/boot diagnosis.
-                        if passed && !keep_disks {
-                            let _ = fs::remove_file(case.join("disk.qcow2"));
-                        }
-                    }
-                }
+    for (target, filesystem, mode, account) in cases {
+        let name = format!("{target}-{}-{filesystem}-{account}", mode.label()).to_ascii_lowercase();
+        let case = output.join(&name);
+        private_directory(&case)?;
+        let result = install_case(
+            tools,
+            &base,
+            &installer,
+            &probe,
+            &key,
+            &unauthorized.0,
+            &public_path,
+            &public,
+            &transport,
+            &relay,
+            target,
+            account,
+            kernel_update,
+            source_nm,
+            reset_check,
+            ipv6,
+            local_ipv6.as_ref(),
+            boot_size_mib,
+            root_size_mib,
+            filesystem,
+            options.values.get("--disk-size-gib").map(String::as_str),
+            mode,
+            bus,
+            &case,
+            timeout,
+        );
+        let passed = result.is_ok();
+        let line = match result {
+            Ok(()) => format!("{name}: PASS"),
+            Err(error) => {
+                failed = true;
+                write_private(&case.join("failure.txt"), error.as_bytes())?;
+                format!("{name}: FAIL ({error})")
             }
+        };
+        println!("{line}");
+        results.push(line);
+        write_private(
+            &output.join("results.txt"),
+            format!(
+                "Scope: full install acceptance, fresh disposable source overlays\n{}\n",
+                results.join("\n")
+            )
+            .as_bytes(),
+        )?;
+        // Failed images remain available for offline guest/boot diagnosis.
+        if passed && !keep_disks {
+            let _ = fs::remove_file(case.join("disk.qcow2"));
         }
     }
     if failed {
@@ -834,13 +810,13 @@ fn install_case(
     installer: &Path,
     probe: &Path,
     key: &Path,
+    unauthorized_key: &Path,
     public_path: &Path,
     public: &str,
     transport: &Transport,
     relay: &Relay,
-    target: &str,
-    kernel: &str,
-    init: &str,
+    target: Target,
+    account: &'static str,
     kernel_update: bool,
     source_nm: bool,
     reset_check: bool,
@@ -855,6 +831,12 @@ fn install_case(
     case: &Path,
     timeout: Duration,
 ) -> Result<(), String> {
+    let kernel = required_kernel(target).ok_or("acceptance target has no kernel policy")?;
+    let init = target
+        .init_system()
+        .ok_or("acceptance target has no init policy")?;
+    let target = target.to_string().to_ascii_lowercase();
+    let target = target.as_str();
     let seed = create_seed(tools, case, public, transport, relay, source_nm)?;
     let disk = create_overlay(tools, base, case)?;
     let large_disk = disk_size_gib
@@ -866,6 +848,16 @@ fn install_case(
         })
         .transpose()?;
     let port = free_port()?;
+    let target_ssh = if account == "root" {
+        None
+    } else {
+        let forward = free_port()?;
+        if forward == port {
+            return Err("source and target need distinct host SSH ports".into());
+        }
+        Some((forward, 2222))
+    };
+    let (target_port, target_guest_port) = target_ssh.unwrap_or((port, 22));
     write_private(
         &case.join("hardware.txt"),
         format!(
@@ -883,6 +875,7 @@ fn install_case(
         &seed,
         mode,
         port,
+        target_ssh,
         target,
         bus,
         ipv6 != Ipv6Acceptance::Off,
@@ -891,6 +884,7 @@ fn install_case(
         port,
         key: key.to_owned(),
         known: case.join("known-source"),
+        account: "root",
     };
     let deadline = Instant::now() + timeout;
     source.wait_ready(&mut guest, deadline)?;
@@ -954,9 +948,9 @@ fn install_case(
         "/var/tmp/rustaller-vm/rustaller".to_owned(),
         target.to_owned(),
         format!("--target-disk={}", bus.device()),
-        "--username=root".into(),
+        format!("--username={account}"),
+        format!("--ssh-port={target_guest_port}"),
         "--ssh-key=/run/rustaller-vm/client.pub".into(),
-        format!("--kernel={kernel}"),
         format!("--hostname=rustaller-{target}"),
         "--timezone=Etc/UTC".into(),
         // The source uses static SLIRP addressing; there is no target DHCP
@@ -982,12 +976,7 @@ fn install_case(
     if let Some(size) = boot_size_mib {
         arguments.push(format!("--boot-size-mib={size}"));
     }
-    if target == "gentoo" {
-        arguments.push(format!("--gentoo-init={init}"));
-    }
-    if filesystem != "btrfs" {
-        arguments.extend(["--swapfile-mib=64".into(), "--swappiness=10".into()]);
-    }
+    arguments.extend(["--swapfile-mib=64".into(), "--swappiness=10".into()]);
     source.checked(
         &["sh", "-c", "uname -a; lsblk -o NAME,TYPE,SIZE,SERIAL,FSTYPE,MOUNTPOINTS; ip -brief address; ip route; cat /etc/resolv.conf; networkctl status --no-pager; free -m"],
         &case.join("source-state.log"),
@@ -1039,6 +1028,7 @@ fn install_case(
             "inspection did not return one identity-bound target-disk confirmation token".into(),
         );
     }
+    verify_invalid_client_keys(&source, &arguments, token[0], case, deadline)?;
     if reset_check {
         verify_preparation_reset(&source, &arguments, token[0], bus.device(), case, deadline)?;
     }
@@ -1054,16 +1044,19 @@ fn install_case(
         .spawn()
         .map_err(|e| format!("cannot dispatch guest installation: {e}"))?;
     let destination = Ssh {
-        port,
+        port: target_port,
         key: key.to_owned(),
         known: case.join("known-target"),
+        account,
     };
     let live = Ssh {
-        port,
+        port: target_port,
         key: key.to_owned(),
         known: case.join("known-live"),
+        account,
     };
     let mut last_live_log = Instant::now();
+    let mut live_authenticated = false;
     let expected = format!("rustaller-{target}");
     let mut ready = false;
     while Instant::now() < deadline {
@@ -1078,20 +1071,25 @@ fn install_case(
                 status.code()
             ));
         }
-        if last_live_log.elapsed() >= Duration::from_secs(10)
-            && read_log(&case.join("serial.log")).contains("RUSTALLER_LIVE_START")
+        let serial = read_log(&case.join("serial.log"));
+        let live_probe_interval = Duration::from_secs(if live_authenticated { 10 } else { 2 });
+        if last_live_log.elapsed() >= live_probe_interval && serial.contains("RUSTALLER_LIVE_START")
         {
             last_live_log = Instant::now();
             if let Ok(log) =
-                live.capture(&["cat", "/var/log/rustaller.log"], Duration::from_secs(5))
+                live.capture_root(&["cat", "/var/log/rustaller.log"], Duration::from_secs(5))
                 && log.success
             {
+                if !live_authenticated {
+                    live.verify_key_only(unauthorized_key, &case.join("live-ssh-policy.log"))?;
+                    live_authenticated = true;
+                }
                 write_private(&case.join("live-install.log"), &log.stdout)?;
                 if String::from_utf8_lossy(&log.stdout)
                     .lines()
                     .any(|line| line.starts_with("rustaller-worker:"))
                 {
-                    if let Ok(detail) = live.capture(&["sh", "-c",
+                    if let Ok(detail) = live.capture_root(&["sh", "-c",
                         "ps; findmnt -R /os; for p in /proc/[0-9]*; do for link in \"$p/root\" \"$p/cwd\" \"$p\"/fd/*; do value=$(readlink \"$link\" 2>/dev/null) || continue; case \"$value\" in /os|/os/*) printf '%s -> %s: ' \"$link\" \"$value\"; tr '\\000' ' ' < \"$p/cmdline\"; printf '\\n';; esac; done; done"], Duration::from_secs(30)) {
                         write_private(&case.join("live-failure-state.log"), &detail.stdout)?;
                     }
@@ -1099,7 +1097,13 @@ fn install_case(
                 }
             }
         }
-        if read_log(&case.join("serial.log")).contains("RUSTALLER_INSTALL_COMPLETE")
+        if serial
+            .lines()
+            .any(|line| line.starts_with("rustaller-worker:"))
+        {
+            return Err("Live worker stopped; see serial.log".into());
+        }
+        if serial.contains("RUSTALLER_INSTALL_COMPLETE")
             && let Ok(result) = destination.capture(
                 &["cat", "/proc/sys/kernel/hostname"],
                 Duration::from_secs(10),
@@ -1123,6 +1127,12 @@ fn install_case(
     if !serial.contains("RUSTALLER_LIVE_START") {
         return Err("no validated Alpine Live entry was observed".into());
     }
+    if !live_authenticated {
+        return Err(
+            "installer did not observe key-only SSH in Alpine Live; see serial logs".into(),
+        );
+    }
+    destination.verify_key_only(unauthorized_key, &case.join("target-ssh-policy.log"))?;
     let resets = guest
         .resets
         .load(Ordering::Relaxed)
@@ -1144,11 +1154,6 @@ fn install_case(
     // A reset-count failure must remain a failure, but should not discard the
     // opportunity to collect installed-target and native-update diagnostics.
     destination.checked(
-        &["mkdir", "-m", "700", "-p", "/run/rustaller-vm"],
-        &case.join("target-mkdir.log"),
-        Duration::from_secs(20),
-    )?;
-    destination.checked(
         &["mkdir", "-m", "700", "-p", "/var/tmp/rustaller-vm"],
         &case.join("target-executable-directory.log"),
         Duration::from_secs(20),
@@ -1160,34 +1165,23 @@ fn install_case(
     )?;
     destination.copy(
         &transport.ca_file,
-        "/etc/ssl/certs/rustaller-vm-ca.pem",
+        VM_TRANSPORT_CA,
         &case.join("copy-ca.log"),
     )?;
     let env = case.join("target-transport");
     write_private(
         &env,
-        transport
-            .environment(relay, "/etc/ssl/certs/rustaller-vm-ca.pem")?
-            .as_bytes(),
+        transport.environment(relay, VM_TRANSPORT_CA)?.as_bytes(),
     )?;
     destination.copy(
         &env,
-        "/run/rustaller-vm/transport",
+        "/var/tmp/rustaller-vm/transport",
         &case.join("copy-transport.log"),
     )?;
+    prepare_probe_transport(&destination, case, "target")?;
     destination.checked(
         &["chmod", "700", "/var/tmp/rustaller-vm/probe"],
         &case.join("probe-chmod.log"),
-        Duration::from_secs(20),
-    )?;
-    destination.checked(
-        &["chmod", "600", "/run/rustaller-vm/transport"],
-        &case.join("transport-chmod.log"),
-        Duration::from_secs(20),
-    )?;
-    destination.checked(
-        &["chmod", "644", "/etc/ssl/certs/rustaller-vm-ca.pem"],
-        &case.join("ca-chmod.log"),
         Duration::from_secs(20),
     )?;
     if let Some(endpoint) = local_ipv6 {
@@ -1199,21 +1193,21 @@ fn install_case(
     }
     verify_guest_ipv6(
         &destination,
+        target_guest_port,
         ipv6,
         local_ipv6,
         &case.join("target-ipv6.log"),
         deadline,
     )?;
-    destination.checked(
+    destination.checked_root(
         &[
             "/var/tmp/rustaller-vm/probe",
             target,
             mode.label(),
             filesystem,
             kernel,
-            init,
             if kernel_update { "update" } else { "check" },
-            "/run/rustaller-vm/transport",
+            VM_TRANSPORT_PATH,
         ],
         &case.join("target-probe.log"),
         remaining(deadline)?,
@@ -1230,7 +1224,7 @@ fn install_case(
         // boot ID before accepting SSH; a still-live old session cannot pass.
         let update_reset_before = guest.resets.load(Ordering::Relaxed);
         let update_firmware_before = read_log(&case.join("firmware-debug.log")).len();
-        let _ = destination.capture(&["reboot"], Duration::from_secs(15));
+        let _ = destination.capture_root(&["reboot"], Duration::from_secs(15));
         let mut rebooted = false;
         while Instant::now() < deadline {
             if read_log(&case.join("serial.log")).contains("Kernel panic - not syncing:") {
@@ -1253,37 +1247,24 @@ fn install_case(
         if !rebooted {
             return Err("kernel update reboot did not restore SSH before deadline".into());
         }
-        destination.checked(
-            &["mkdir", "-m", "700", "-p", "/run/rustaller-vm"],
-            &case.join("post-update-mkdir.log"),
-            Duration::from_secs(20),
-        )?;
-        destination.copy(
-            &env,
-            "/run/rustaller-vm/transport",
-            &case.join("post-update-copy-transport.log"),
-        )?;
-        destination.checked(
-            &["chmod", "600", "/run/rustaller-vm/transport"],
-            &case.join("post-update-transport-chmod.log"),
-            Duration::from_secs(20),
-        )?;
-        destination.checked(
+        destination.verify_key_only(unauthorized_key, &case.join("post-update-ssh-policy.log"))?;
+        prepare_probe_transport(&destination, case, "post-update")?;
+        destination.checked_root(
             &[
                 "/var/tmp/rustaller-vm/probe",
                 target,
                 mode.label(),
                 filesystem,
                 kernel,
-                init,
                 "check",
-                "/run/rustaller-vm/transport",
+                VM_TRANSPORT_PATH,
             ],
             &case.join("post-update-probe.log"),
             remaining(deadline)?,
         )?;
         verify_guest_ipv6(
             &destination,
+            target_guest_port,
             ipv6,
             local_ipv6,
             &case.join("post-update-ipv6.log"),
@@ -1318,9 +1299,28 @@ fn install_case(
             "Static dual stack, AAAA and direct external IPv6 TCP/TLS: PASS\nForwarded IPv6 SSH: PASS"
         }
     };
-    write_private(&case.join("accepted.txt"),format!("target={target}\nkernel_choice={kernel}\ninit={init}\nkernel_update_requested={kernel_update}\nfirmware={}\nraw_qmp_resets_after_dispatch={resets}\nos_requested_final_reboots=1\nSSH public-key authentication, native package update, kernel, hostname, {filesystem}/UUID fstab, rustaller-boot boot artifacts, DNS lookup, IPv4 route, filesystem-specific swap policy: PASS\n{ipv6_result}\n",mode.label()).as_bytes())?;
+    write_private(&case.join("accepted.txt"),format!("target={target}\nkernel_package={kernel}\ninit={init}\naccount={account}\nssh_port={target_guest_port}\nkernel_update_requested={kernel_update}\nfirmware={}\nraw_qmp_resets_after_dispatch={resets}\nos_requested_final_reboots=1\nKey-only Live and target SSH, invalid source keys, native package manager, kernel, hostname, {filesystem}/UUID fstab, rustaller-boot artifacts, DNS lookup, IPv4 route and swap: PASS\n{ipv6_result}\n",mode.label()).as_bytes())?;
     guest.stop();
     Ok(())
+}
+
+fn prepare_probe_transport(destination: &Ssh, case: &Path, label: &str) -> Result<(), String> {
+    destination.checked_root(
+        &["mkdir", "-m", "700", "-p", "/run/rustaller-vm"],
+        &case.join(format!("{label}-transport-directory.log")),
+        Duration::from_secs(20),
+    )?;
+    destination.checked_root(
+        &[
+            "install",
+            "-m",
+            "600",
+            "/var/tmp/rustaller-vm/transport",
+            VM_TRANSPORT_PATH,
+        ],
+        &case.join(format!("{label}-transport-install.log")),
+        Duration::from_secs(20),
+    )
 }
 
 fn verify_preparation_reset(
@@ -1422,8 +1422,55 @@ fn verify_preparation_reset(
         b"PASS: idle reset, --hold 0, cancellation and repeated reset. Root SSH, boot ID and partition-table ID unchanged, kexec unloaded and staging removed.\n")
 }
 
+fn verify_invalid_client_keys(
+    source: &Ssh,
+    arguments: &[String],
+    confirmation: &str,
+    case: &Path,
+    deadline: Instant,
+) -> Result<(), String> {
+    let mut test = arguments
+        .iter()
+        .filter(|arg| !arg.starts_with("--ssh-key="))
+        .cloned()
+        .collect::<Vec<_>>();
+    // Even if a credential check regresses, keep these source-only tests
+    // on the preparation side of kexec.
+    test.extend([
+        "--hold=0".into(),
+        "--confirm-erase".into(),
+        confirmation.into(),
+    ]);
+    for (name, key) in [
+        ("missing", None),
+        (
+            "unreadable",
+            Some("--ssh-key=/run/rustaller-vm/nonexistent.pub"),
+        ),
+        ("malformed", Some("--ssh-key=ssh-ed25519 not-a-public-key")),
+    ] {
+        let mut command = test.clone();
+        command.extend(key.map(str::to_owned));
+        let result =
+            source.capture_owned(&command, remaining(deadline)?.min(Duration::from_secs(60)))?;
+        write_private(&case.join(format!("source-{name}-key.log")), &result.stdout)?;
+        let diagnostic = String::from_utf8_lossy(&result.stdout).to_ascii_lowercase();
+        if result.success || !diagnostic.contains("key") {
+            return Err(format!(
+                "source did not reject the {name} SSH key before handoff"
+            ));
+        }
+    }
+    source.checked(
+        &["test", "!", "-e", "/var/tmp/rustaller-handoff/state"],
+        &case.join("source-invalid-key-state.log"),
+        remaining(deadline)?.min(Duration::from_secs(12)),
+    )
+}
+
 fn verify_guest_ipv6(
     guest: &Ssh,
+    ssh_port: u16,
     ipv6: Ipv6Acceptance,
     local: Option<&LocalIpv6Endpoint>,
     log: &Path,
@@ -1439,6 +1486,7 @@ fn verify_guest_ipv6(
         ),
         None => (format!("https://{EXTERNAL_IPV6_HOST}/"), "-"),
     };
+    let ssh_port_arg = ssh_port.to_string();
     guest.checked(
         &[
             "/var/tmp/rustaller-vm/probe",
@@ -1448,7 +1496,7 @@ fn verify_guest_ipv6(
             EXTERNAL_IPV6_HOST,
             &url,
             ca,
-            "22",
+            &ssh_port_arg,
         ],
         log,
         remaining(deadline)?.min(Duration::from_secs(50)),
@@ -1457,7 +1505,7 @@ fn verify_guest_ipv6(
         .split_once('/')
         .ok_or("invalid fixture address")?
         .0;
-    let connection = guest.ipv6_ssh_connection(address)?;
+    let connection = guest.ipv6_ssh_connection(address, ssh_port)?;
     let mut evidence = OpenOptions::new()
         .append(true)
         .open(log)
@@ -1696,6 +1744,7 @@ fn start_disk_guest(
     seed: &Path,
     firmware: Firmware,
     port: u16,
+    target_ssh: Option<(u16, u16)>,
     target: &str,
     bus: DiskBus,
     ipv6: bool,
@@ -1715,6 +1764,9 @@ fn start_disk_guest(
         seed.display()
     ));
     let mut network = format!("user,id=net0,hostfwd=tcp:127.0.0.1:{port}-:22");
+    if let Some((host, guest)) = target_ssh {
+        network.push_str(&format!(",hostfwd=tcp:127.0.0.1:{host}-:{guest}"));
+    }
     if ipv6 {
         network.push_str(&format!(
             ",ipv4=on,ipv6=on,ipv6-net={VM_IPV6_PREFIX},ipv6-host={VM_IPV6_GATEWAY}"
@@ -1880,13 +1932,53 @@ struct Ssh {
     port: u16,
     key: PathBuf,
     known: PathBuf,
+    account: &'static str,
+}
+struct UnauthorizedKey(PathBuf);
+impl UnauthorizedKey {
+    fn generate(directory: &Path) -> Result<Self, String> {
+        let key = Self(directory.join("unauthorized-test-key"));
+        checked(
+            Command::new("ssh-keygen")
+                .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+                .arg(&key.0),
+            &directory.join("unauthorized-test-keygen.log"),
+        )?;
+        Ok(key)
+    }
+}
+impl Drop for UnauthorizedKey {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+        let _ = fs::remove_file(self.0.with_extension("pub"));
+    }
 }
 struct Captured {
     success: bool,
     stdout: Vec<u8>,
 }
 impl Ssh {
+    fn connection_options(&self, command: &mut Command) {
+        command.args([
+            "-F",
+            "/dev/null",
+            "-o",
+            "IdentitiesOnly=yes",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "GlobalKnownHostsFile=/dev/null",
+            "-o",
+            "ConnectTimeout=5",
+            "-o",
+            "ConnectionAttempts=1",
+        ]);
+        command
+            .arg("-o")
+            .arg(format!("UserKnownHostsFile={}", self.known.display()));
+    }
     fn common(&self, command: &mut Command) {
+        self.connection_options(command);
         command.args(["-i"]).arg(&self.key).args([
             "-o",
             "BatchMode=yes",
@@ -1897,19 +1989,109 @@ impl Ssh {
             "-o",
             "PreferredAuthentications=publickey",
             "-o",
-            "StrictHostKeyChecking=accept-new",
-            "-o",
-            "GlobalKnownHostsFile=/dev/null",
-            "-o",
-            "ConnectTimeout=5",
-            "-o",
-            "ConnectionAttempts=1",
-            "-o",
             "LogLevel=ERROR",
         ]);
-        command
-            .arg("-o")
-            .arg(format!("UserKnownHostsFile={}", self.known.display()));
+    }
+    fn verify_key_only(&self, unauthorized: &Path, log: &Path) -> Result<(), String> {
+        let auth = self.capture(&["id", "-un"], Duration::from_secs(8))?;
+        if !auth.success || String::from_utf8_lossy(&auth.stdout).trim() != self.account {
+            return Err("authorized key did not authenticate as the selected administrator".into());
+        }
+        let privileged = self.capture_root(&["id", "-u"], Duration::from_secs(8))?;
+        if !privileged.success || String::from_utf8_lossy(&privileged.stdout).trim() != "0" {
+            return Err(
+                "installed administrator cannot run privileged commands without a password".into(),
+            );
+        }
+        let connection = format!("user={},host=localhost,addr=127.0.0.1", self.account);
+        let effective = self.capture_root(
+            &["/usr/sbin/sshd", "-T", "-C", &connection],
+            Duration::from_secs(8),
+        )?;
+        let effective_config = String::from_utf8_lossy(&effective.stdout);
+        let root_login = effective_config
+            .lines()
+            .find_map(|line| line.strip_prefix("permitrootlogin "));
+        let expected_root = if self.account == "root" {
+            matches!(root_login, Some("prohibit-password" | "without-password"))
+        } else {
+            root_login == Some("no")
+        };
+        if !effective.success
+            || !expected_root
+            || ![
+                "pubkeyauthentication yes",
+                "passwordauthentication no",
+                "kbdinteractiveauthentication no",
+                "permitemptypasswords no",
+                "authenticationmethods publickey",
+            ]
+            .iter()
+            .all(|expected| effective_config.lines().any(|line| line == *expected))
+        {
+            write_private(log, &effective.stdout)?;
+            return Err(format!(
+                "effective OpenSSH authentication policy differs; see {}",
+                log.display()
+            ));
+        }
+        let ownership = self.capture(
+            &["sh", "-c", "uid=$(id -u); test \"$(stat -c '%a:%u' ~/.ssh)\" = \"700:$uid\" && test \"$(stat -c '%a:%u' ~/.ssh/authorized_keys)\" = \"600:$uid\""],
+            Duration::from_secs(8),
+        )?;
+        if !ownership.success {
+            write_private(log, &ownership.stdout)?;
+            return Err("effective authorized_keys ownership or permissions differ".into());
+        }
+        let mut evidence = format!(
+            "Authorized public-key login as {} and privileged id: PASS\nEffective OpenSSH configuration and authorized_keys modes/ownership: PASS\n",
+            self.account
+        );
+        for (name, account, method, key) in [
+            ("unauthorized key", self.account, "publickey", unauthorized),
+            ("password", self.account, "password", self.key.as_path()),
+            (
+                "keyboard-interactive",
+                self.account,
+                "keyboard-interactive",
+                self.key.as_path(),
+            ),
+            ("root login", "root", "publickey", self.key.as_path()),
+        ] {
+            if name == "root login" && self.account == "root" {
+                continue;
+            }
+            let mut command = Command::new("ssh");
+            self.connection_options(&mut command);
+            command
+                .args([
+                    "-v",
+                    "-o",
+                    "IdentityAgent=none",
+                    "-o",
+                    "NumberOfPasswordPrompts=0",
+                    "-o",
+                    &format!("PreferredAuthentications={method}"),
+                    "-i",
+                ])
+                .arg(key)
+                .arg("-p")
+                .arg(self.port.to_string())
+                .arg(format!("{account}@127.0.0.1"))
+                .arg("true")
+                .stdin(Stdio::null());
+            command.env("LC_ALL", "C");
+            let auth = capture_timeout(command, Duration::from_secs(8))?;
+            if auth.success || !exclusively_public_key(&String::from_utf8_lossy(&auth.stdout)) {
+                write_private(log, &auth.stdout)?;
+                return Err(format!(
+                    "SSH accepted or did not firmly reject {name}; see {}",
+                    log.display()
+                ));
+            }
+            evidence.push_str(&format!("{name} denied; only publickey offered: PASS\n"));
+        }
+        write_private(log, evidence.as_bytes())
     }
     fn command_owned(&self, args: &[String]) -> Command {
         let mut command = Command::new("ssh");
@@ -1917,7 +2099,7 @@ impl Ssh {
         command
             .arg("-p")
             .arg(self.port.to_string())
-            .arg("root@127.0.0.1")
+            .arg(format!("{}@127.0.0.1", self.account))
             .arg(
                 args.iter()
                     .map(|value| quote(value))
@@ -1927,13 +2109,14 @@ impl Ssh {
         command.stdin(Stdio::null());
         command
     }
-    fn ipv6_ssh_connection(&self, address: &str) -> Result<String, String> {
+    fn ipv6_ssh_connection(&self, address: &str, port: u16) -> Result<String, String> {
         // SLIRP hostfwd accepts IPv4 only. The test probe relays the second
         // SSH stream inside the disposable guest without changing sshd policy.
         let connector = self.command_owned(&[
             "/var/tmp/rustaller-vm/probe".into(),
             "relay-ipv6".into(),
             address.into(),
+            port.to_string(),
         ]);
         let proxy = connector
             .get_args()
@@ -1944,11 +2127,13 @@ impl Ssh {
         self.common(&mut ssh);
         ssh.args([
             "-6",
+            "-p",
+            &port.to_string(),
             "-o",
             &format!("ProxyCommand=ssh {proxy}"),
             "-o",
             &format!("HostKeyAlias=[127.0.0.1]:{}", self.port),
-            &format!("root@{address}"),
+            &format!("{}@{address}", self.account),
             "printenv SSH_CONNECTION",
         ])
         .stdin(Stdio::null());
@@ -1960,7 +2145,7 @@ impl Ssh {
             || fields[0].parse::<std::net::Ipv6Addr>().is_err()
             || fields[1].parse::<u16>().is_err()
             || fields[2].parse::<std::net::Ipv6Addr>().ok() != address.parse().ok()
-            || fields[3] != "22"
+            || fields[3].parse::<u16>().ok() != Some(port)
         {
             return Err("public-key SSH did not report the expected target IPv6 socket".into());
         }
@@ -1975,6 +2160,13 @@ impl Ssh {
             timeout,
         )
     }
+    fn capture_root(&self, args: &[&str], timeout: Duration) -> Result<Captured, String> {
+        if self.account == "root" {
+            self.capture(args, timeout)
+        } else {
+            self.capture(&[&["sudo", "-n", "--"][..], args].concat(), timeout)
+        }
+    }
     fn checked(&self, args: &[&str], log: &Path, timeout: Duration) -> Result<(), String> {
         let result = self.capture(args, timeout)?;
         write_private(log, &result.stdout)?;
@@ -1986,6 +2178,13 @@ impl Ssh {
             ));
         }
         Ok(())
+    }
+    fn checked_root(&self, args: &[&str], log: &Path, timeout: Duration) -> Result<(), String> {
+        if self.account == "root" {
+            self.checked(args, log, timeout)
+        } else {
+            self.checked(&[&["sudo", "-n", "--"][..], args].concat(), log, timeout)
+        }
     }
     fn wait_ready(&self, guest: &mut Guest, deadline: Instant) -> Result<(), String> {
         while Instant::now() < deadline {
@@ -2010,7 +2209,7 @@ impl Ssh {
             .arg("-P")
             .arg(self.port.to_string())
             .arg(source)
-            .arg(format!("root@127.0.0.1:{destination}"));
+            .arg(format!("{}@127.0.0.1:{destination}", self.account));
         let result = capture_timeout(command, Duration::from_secs(90))?;
         write_private(log, &result.stdout)?;
         if !result.success {
@@ -2018,6 +2217,16 @@ impl Ssh {
         }
         Ok(())
     }
+}
+fn exclusively_public_key(output: &str) -> bool {
+    let mut methods = output
+        .lines()
+        .filter_map(|line| line.strip_prefix("debug1: Authentications that can continue: "));
+    methods.next() == Some("publickey")
+        && methods.all(|method| method == "publickey")
+        && output
+            .lines()
+            .any(|line| line.ends_with("Permission denied (publickey)."))
 }
 fn capture_timeout(mut command: Command, timeout: Duration) -> Result<Captured, String> {
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -2322,34 +2531,29 @@ mod tests {
         assert!(options.disk_bus().is_err());
     }
     #[test]
-    fn kernel_and_gentoo_init_matrices_cover_official_families() {
-        let mut options = Options::parse(&[
-            "install".into(),
-            "--kernel".into(),
-            "all".into(),
-            "--gentoo-init".into(),
-            "both".into(),
-        ])
-        .unwrap();
-        assert_eq!(options.kernels("alpine").unwrap(), ["lts", "virt"]);
-        assert_eq!(options.kernels("debian").unwrap(), ["generic", "cloud"]);
+    fn account_assignment_covers_both_modes_per_filesystem_and_firmware() {
+        let mut options = Options::parse(&["install".into()]).unwrap();
+        for (mode, filesystem, account) in [
+            (Firmware::Bios, "xfs", "root"),
+            (Firmware::Efi, "ext4", "root"),
+            (Firmware::Bios, "ext4", "rustaller-admin"),
+            (Firmware::Efi, "xfs", "rustaller-admin"),
+        ] {
+            assert_eq!(options.admin_account(mode, filesystem).unwrap(), account);
+        }
+        options.values.insert("--account".into(), "admin".into());
         assert_eq!(
-            options.kernels("arch").unwrap(),
-            ["standard", "lts", "hardened", "zen"]
+            options.admin_account(Firmware::Bios, "xfs").unwrap(),
+            "rustaller-admin"
         );
-        assert_eq!(options.kernels("gentoo").unwrap(), ["standard"]);
-        assert_eq!(
-            options.gentoo_inits("gentoo").unwrap(),
-            ["openrc", "systemd"]
-        );
-        assert_eq!(options.gentoo_inits("debian").unwrap(), ["native"]);
-        options.values.insert("--kernel".into(), "linux-zen".into());
-        assert_eq!(options.kernels("arch").unwrap(), ["zen"]);
-        assert!(options.kernels("debian").is_err());
-        options
-            .values
-            .insert("--gentoo-init".into(), "multilib".into());
-        assert!(options.gentoo_inits("gentoo").is_err());
+        for removed in ["--kernel", "--gentoo-init", "--password", "--root-password"] {
+            assert!(Options::parse(&["install".into(), removed.into(), "any".into()]).is_err());
+        }
+    }
+
+    #[test]
+    fn kernel_update_and_boot_capacity_are_bounded() {
+        let mut options = Options::parse(&["install".into()]).unwrap();
         assert!(!options.kernel_update().unwrap());
         options
             .values
@@ -2364,19 +2568,34 @@ mod tests {
             .insert("--boot-size-mib".into(), "128".into());
         assert!(options.boot_size_mib().is_err());
     }
+
     #[test]
-    fn filesystem_matrix_accepts_three_roots_and_rejects_unknown_filesystems() {
+    fn filesystem_matrix_accepts_two_roots_and_rejects_btrfs() {
         let mut options = Options::parse(&["install".into()]).unwrap();
         assert_eq!(options.filesystems().unwrap(), ["xfs"]);
         options.values.insert("--filesystem".into(), "all".into());
-        assert_eq!(options.filesystems().unwrap(), ["xfs", "ext4", "btrfs"]);
-        for filesystem in ["xfs", "ext4", "btrfs"] {
+        assert_eq!(options.filesystems().unwrap(), ["xfs", "ext4"]);
+        for filesystem in ["xfs", "ext4"] {
             options
                 .values
                 .insert("--filesystem".into(), filesystem.into());
             assert_eq!(options.filesystems().unwrap(), [filesystem]);
         }
-        options.values.insert("--filesystem".into(), "zfs".into());
+        options.values.insert("--filesystem".into(), "btrfs".into());
         assert!(options.filesystems().is_err());
+    }
+
+    #[test]
+    fn authentication_probe_distinguishes_denial_from_connection_failure() {
+        let public_key_only = "debug1: Authentications that can continue: publickey
+root@127.0.0.1: Permission denied (publickey).
+";
+        assert!(exclusively_public_key(public_key_only));
+        assert!(!exclusively_public_key(
+            &public_key_only.replace("continue: publickey", "continue: publickey,password")
+        ));
+        assert!(!exclusively_public_key(
+            "ssh: connect to host 127.0.0.1 port 22: Connection refused"
+        ));
     }
 }

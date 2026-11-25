@@ -4,7 +4,7 @@ use rustaller::host::initrd::{
     InitrdError, inject_network_bootstrap, install_worker_and_plan, repack_initrd,
     stage_alpine_initrd, unpack_initrd,
 };
-use rustaller::model::{InstallPlan, SecretString, Target};
+use rustaller::model::{InstallPlan, Target};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
@@ -12,7 +12,7 @@ use crate::support::Scratch;
 
 fn automatic_plan() -> InstallPlan {
     let mut plan = InstallPlan::new(Target::Alpine);
-    plan.password = Some(SecretString::new("initrd-secret-sentinel"));
+    plan.ssh_keys.push(crate::support::PUBLIC_KEY.into());
     plan
 }
 
@@ -177,10 +177,7 @@ fn initrd_payload_installs_matching_worker_and_private_versioned_plan() {
     );
     let decoded = decode_plan(&fs::read(&paths.plan).unwrap()).unwrap();
     assert_eq!(decoded.target, Target::Alpine);
-    assert_eq!(
-        decoded.password.as_ref().map(SecretString::expose),
-        Some("initrd-secret-sentinel")
-    );
+    assert_eq!(decoded.ssh_keys, [crate::support::PUBLIC_KEY]);
 }
 
 #[test]

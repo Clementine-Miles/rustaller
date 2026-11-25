@@ -339,7 +339,7 @@ pub fn verify_mount(runner: &mut impl CommandRunner, root: &Path, boot_uuid: &st
     Ok(())
 }
 
-/// New installations pin the selected package family without reinterpreting
+/// New installations pin the target package family without reinterpreting
 /// four-line boot-state files from existing installations.
 pub fn record_kernel_family(root: &Path, package: &str) -> Result<()> {
     validate_root(root).map_err(|e| e.to_string())?;
@@ -353,19 +353,23 @@ pub fn record_kernel_family(root: &Path, package: &str) -> Result<()> {
     )
     .map_err(|e| e.to_string())
 }
+// Includes pins written on existing installations. Target selection is owned
+// by postinstall::required_kernel, independently of this on-disk contract.
+const BOOT_KERNEL_FAMILIES: &[&str] = &[
+    "linux",
+    "linux-lts",
+    "linux-virt",
+    "linux-hardened",
+    "linux-zen",
+    "linux-cachyos",
+    "linux-cachyos-server",
+    "linux-image-cloud-amd64",
+    "linux-image-amd64",
+    "sys-kernel/gentoo-kernel-bin",
+];
+
 fn known_family(package: &str) -> bool {
-    matches!(
-        package,
-        "linux"
-            | "linux-lts"
-            | "linux-virt"
-            | "linux-hardened"
-            | "linux-zen"
-            | "linux-cachyos"
-            | "linux-image-amd64"
-            | "linux-image-cloud-amd64"
-            | "sys-kernel/gentoo-kernel-bin"
-    )
+    BOOT_KERNEL_FAMILIES.contains(&package)
 }
 fn family_matches(package: &str, version: &str) -> bool {
     match package {
@@ -373,9 +377,7 @@ fn family_matches(package: &str, version: &str) -> bool {
         "linux-image-cloud-amd64" => version.ends_with("-cloud-amd64"),
         "linux-lts" => matches!(version, "lts" | "linux-lts"),
         "linux-virt" => version == "virt",
-        "sys-kernel/gentoo-kernel-bin" => {
-            version.ends_with("-gentoo-dist-bin") || version.ends_with("-gentoo-dist")
-        }
+        "sys-kernel/gentoo-kernel-bin" => version.ends_with("-gentoo-dist-bin"),
         _ => version == package,
     }
 }
@@ -404,23 +406,14 @@ fn selected_family(root: &Path, active: Option<&str>) -> Result<Option<SelectedF
                 .and_then(|text| rustaller_boot_core::Config::parse(text).ok())
                 .and_then(|cfg| cfg.entry("current").and_then(|e| e.version.clone()));
             Ok(current.and_then(|version| {
-                [
-                    "linux",
-                    "linux-lts",
-                    "linux-virt",
-                    "linux-hardened",
-                    "linux-zen",
-                    "linux-cachyos",
-                    "linux-image-cloud-amd64",
-                    "linux-image-amd64",
-                    "sys-kernel/gentoo-kernel-bin",
-                ]
-                .into_iter()
-                .find(|family| family_matches(family, &version))
-                .map(|package| SelectedFamily {
-                    package: package.into(),
-                    required: false,
-                })
+                BOOT_KERNEL_FAMILIES
+                    .iter()
+                    .copied()
+                    .find(|family| family_matches(family, &version))
+                    .map(|package| SelectedFamily {
+                        package: package.into(),
+                        required: false,
+                    })
             }))
         }
         Err(e) => Err(e.to_string()),
@@ -452,6 +445,7 @@ fn read_state(root: &Path) -> Result<BootState> {
     let lines: Vec<_> = text.lines().collect();
     if lines.len() != 4
         || !crate::shared::storage::valid_uuid(lines[1])
+        // Previous installations may still update Btrfs boot generations.
         || !matches!(lines[2], "xfs" | "ext4" | "btrfs")
         || !crate::shared::storage::valid_uuid(lines[3])
     {
@@ -1342,8 +1336,34 @@ mod tests {
             "sys-kernel/gentoo-kernel-bin",
             "6.18.64-p1-gentoo-dist-bin",
         ));
+        assert!(!family_matches(
+            "sys-kernel/gentoo-kernel-bin",
+            "6.18.64-p1-gentoo-dist",
+        ));
         let d = generation_fixture();
         assert!(record_kernel_family(&d.0, "linux-custom").is_err());
+    }
+    #[test]
+    fn arch_server_pin_requires_the_native_server_kernel_and_initramfs_pair() {
+        let d = generation_fixture();
+        record_kernel_family(&d.0, "linux-cachyos-server").unwrap();
+        kernel(&d, "boot/vmlinuz-linux-cachyos", "cachyos");
+        d.write("boot/initramfs-linux-cachyos.img", "cachyos-initrd");
+        let before = d.read("boot/rustaller/boot.toml");
+        assert!(refresh(&mut mount_runner(&d, 500000), &d.0).is_err());
+        assert_eq!(d.read("boot/rustaller/boot.toml"), before);
+        kernel(&d, "boot/vmlinuz-linux-cachyos-server", "cachyos-server");
+        assert!(refresh(&mut mount_runner(&d, 500000), &d.0).is_err());
+        assert_eq!(d.read("boot/rustaller/boot.toml"), before);
+        d.write(
+            "boot/initramfs-linux-cachyos-server.img",
+            "cachyos-server-initrd",
+        );
+        refresh(&mut mount_runner(&d, 500000), &d.0).unwrap();
+        assert_eq!(
+            config(&d).entry("current").unwrap().version.as_deref(),
+            Some("linux-cachyos-server")
+        );
     }
     #[test]
     fn partial_stream_copy_cannot_publish_over_an_existing_payload() {

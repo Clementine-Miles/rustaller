@@ -1109,13 +1109,16 @@ fn network(runner: &mut impl CommandRunner, root: &Path) -> NetworkFacts {
                 "port ",
                 "passwordauthentication ",
                 "pubkeyauthentication ",
+                "kbdinteractiveauthentication ",
+                "permitemptypasswords ",
+                "authenticationmethods ",
                 "permitrootlogin ",
             ]
             .iter()
             .any(|prefix| v.starts_with(prefix))
         })
         .map(line)
-        .take(8)
+        .take(16)
         .collect();
     let qdiscs = qdiscs(&fact(runner, "tc", &["qdisc", "show"]));
     for interface in &mut interfaces {
@@ -1603,7 +1606,7 @@ pub fn report(
     if plan.hold == Some(1) {
         return PreflightReport {
             current,
-            target: "Alpine Live rescue; no target partitioning or bootloader installation".into(),
+            target: planned_target(plan, Some(manifest)),
             blocked: false,
             warning: format!(
                 "RESCUE: interrupts connectivity on {}",
@@ -1796,8 +1799,24 @@ fn planned_count(plan: &InstallPlan, manifest: &DeploymentManifest) -> Option<us
 /// The same target preview is available when optional host probes or strict
 /// preflight fail. Detected firmware/layout/network are then explicitly unknown.
 pub fn planned_target(plan: &InstallPlan, manifest: Option<&DeploymentManifest>) -> String {
+    let account = plan.account_name();
+    let root_ssh = if account == "root" {
+        "public key only"
+    } else {
+        "disabled. The selected account has sudo access."
+    };
+    let ssh = format!(
+        "SSH port: {}; account: {account}\nSSH public keys only: {} sources\nRoot SSH login: {root_ssh}\n",
+        plan.ssh_port.unwrap_or(22),
+        plan.ssh_keys.len(),
+    );
     if plan.hold == Some(1) {
-        return "Alpine Live rescue; no target partitioning or bootloader installation".into();
+        return format!(
+            "Alpine Live rescue\nInit: {}\nNo target partitioning or bootloader installation.\n{ssh}",
+            crate::model::Target::Alpine
+                .init_system()
+                .unwrap_or(UNKNOWN),
+        );
     }
     let count = manifest.and_then(|m| planned_count(plan, m));
     let table = manifest
@@ -1820,31 +1839,15 @@ pub fn planned_target(plan: &InstallPlan, manifest: Option<&DeploymentManifest>)
     } else {
         "source policy unverified"
     };
-    let kernel = crate::targets::packages::configuration_for_plan(plan, plan.target, false)
-        .map(|v| v.kernel.package.to_owned())
-        .unwrap_or_else(|_| UNKNOWN.into());
+    let kernel = crate::postinstall::required_kernel(plan.target).unwrap_or(UNKNOWN);
+    let init = plan.target.init_system().unwrap_or(UNKNOWN);
     let gentoo = if plan.target == crate::model::Target::Gentoo {
-        plan.system
-            .gentoo_init
-            .map(|init| {
-                format!(
-                    "Init: {}\nStage3: {}\nABI: amd64, no-multilib (64-bit only)\n",
-                    init.as_str(),
-                    init.stage3_variant()
-                )
-            })
-            .unwrap_or_else(|| {
-                "Init / stage3: Unknown (Gentoo plan requires explicit init)\n".into()
-            })
-    } else {
         format!(
-            "Init: {}\n",
-            if plan.target == crate::model::Target::Alpine {
-                "OpenRC"
-            } else {
-                "systemd"
-            }
+            "Stage3: {}\nABI: amd64, no-multilib (64-bit only)\n",
+            crate::host::sources::GENTOO_STAGE3_PREFIX,
         )
+    } else {
+        String::new()
     };
     let root_size = match plan.system.root_size_mib {
         Some(mib) => format!("{mib} MiB"),
@@ -1868,7 +1871,7 @@ pub fn planned_target(plan: &InstallPlan, manifest: Option<&DeploymentManifest>)
             ),
     };
     let target = format!(
-        "Distribution: {}\n{gentoo}Kernel package/family: {kernel} (version determined after installation)\nBootloader: rustaller-boot schema {}\nFirmware: {}\nPartition table: {table}; count: {}\nFAT32: {} MiB at /boot\nRoot: {} at / ({root_size})\nBtrfs: {}\nSwapfile: {}; swappiness {}\nHostname: {}\nTimezone: {}\nNetwork: {network}; MTU {}\nIPv6: {}; address preference: {}\nTCP congestion / queue: {} / {}\nDNS: {} {:?}; search {:?}\nSSH port: {}; account: {}\nPublic keys: {} sources; credentials hidden\nProfile: {}; tools={}; retain docs={}; cache={}\n",
+        "Distribution: {}\nInit: {init}\n{gentoo}Kernel package: {kernel} (version determined after installation)\nBootloader: rustaller-boot schema {}\nFirmware: {}\nPartition table: {table}; count: {}\nFAT32: {} MiB at /boot\nRoot: {} at / ({root_size})\nSwapfile: {}; swappiness {}\nHostname: {}\nTimezone: {}\nNetwork: {network}; MTU {}\nIPv6: {}; address preference: {}\nTCP congestion / queue: {} / {}\nDNS: {} {:?}; search {:?}\n{ssh}Profile: {}; tools={}; retain docs={}; cache={}\n",
         plan.target,
         crate::targets::boot::VERSION,
         firmware,
@@ -1877,14 +1880,6 @@ pub fn planned_target(plan: &InstallPlan, manifest: Option<&DeploymentManifest>)
             .unwrap_or_else(|| UNKNOWN.into()),
         plan.system.boot_size_mib.unwrap_or(512),
         plan.system.root_filesystem.as_str(),
-        if plan.system.root_filesystem.as_str() == "btrfs" {
-            format!(
-                "@; zstd level {} (0=off)",
-                plan.system.btrfs_compression.unwrap_or(3)
-            )
-        } else {
-            "not selected".into()
-        },
         plan.system
             .swap
             .size_mib
@@ -1915,23 +1910,13 @@ pub fn planned_target(plan: &InstallPlan, manifest: Option<&DeploymentManifest>)
         plan.system.dns.mode.as_str(),
         plan.system.dns.servers,
         plan.system.dns.search_domains,
-        plan.ssh_port.unwrap_or(22),
-        plan.username.as_deref().unwrap_or("root"),
-        plan.ssh_keys.len(),
         plan.system.profile.as_str(),
         plan.system.with_tools,
         plan.system.keep_docs,
         plan.system.keep_package_cache
     );
 
-    let target = format!("{target}{}", planned_network(plan, manifest));
-    if plan.system.root_filesystem == crate::config::RootFilesystem::Btrfs {
-        format!(
-            "{target}Warning: FAT32 /boot is outside root snapshots; restore matching kernel/initramfs separately.\n"
-        )
-    } else {
-        target
-    }
+    format!("{target}{}", planned_network(plan, manifest))
 }
 
 #[cfg(test)]
@@ -2105,18 +2090,22 @@ mod tests {
         assert!(value.len() < 1024);
     }
     #[test]
-    fn failed_preflight_keeps_gentoo_and_btrfs_target_settings_visible() {
+    fn failed_preflight_keeps_fixed_gentoo_and_ext4_target_settings_visible() {
         let mut plan = InstallPlan::new(crate::model::Target::Gentoo);
-        plan.system.root_filesystem = crate::config::RootFilesystem::Btrfs;
+        plan.system.root_filesystem = crate::config::RootFilesystem::Ext4;
+        plan.username = Some("administrator".into());
         let target = planned_target(&plan, None);
         assert!(target.contains("amd64-nomultilib-openrc"));
         assert!(target.contains("no-multilib (64-bit only)"));
-        assert!(target.contains("gentoo-kernel-bin"));
+        assert!(target.contains("sys-kernel/gentoo-kernel-bin"));
+        assert!(target.contains("Init: OpenRC"));
         assert!(target.contains("Unknown (unverified)"));
         assert!(target.contains("at /boot"));
-        assert!(target.contains("outside root snapshots"));
+        assert!(target.contains("Root: ext4"));
         assert!(target.contains("source policy unverified"));
         assert!(target.contains("SSH port:"));
+        assert!(target.contains("SSH public keys only"));
+        assert!(target.contains("Root SSH login: disabled"));
         assert!(!target.contains("count: 0"));
     }
     #[test]

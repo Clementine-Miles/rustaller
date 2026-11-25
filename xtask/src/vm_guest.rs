@@ -21,35 +21,32 @@ fn main() -> ExitCode {
 }
 fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    if let [mode, address] = args.as_slice()
+    if let [mode, address, port] = args.as_slice()
         && mode == "relay-ipv6"
     {
-        return relay_ipv6_ssh(address);
+        return relay_ipv6_ssh(address, port);
     }
     if let [mode, address, gateway, dns, url, ca, ssh_port] = args.as_slice()
         && mode == "ipv6"
     {
         return verify_ipv6(address, gateway, dns, url, ca, ssh_port);
     }
-    if args.len() != 7
+    if args.len() != 6
         || !matches!(args[0].as_str(), "alpine" | "debian" | "arch" | "gentoo")
         || !matches!(args[1].as_str(), "bios" | "efi")
-        || !matches!(args[2].as_str(), "xfs" | "ext4" | "btrfs")
-        || !matches!(args[4].as_str(), "native" | "openrc" | "systemd")
-        || !matches!(args[5].as_str(), "check" | "update")
+        || !matches!(args[2].as_str(), "xfs" | "ext4")
+        || !matches!(args[4].as_str(), "check" | "update")
     {
         return Err(
-            "expected TARGET bios|efi xfs|ext4|btrfs KERNEL INIT check|update TRANSPORT_FILE"
-                .into(),
+            "expected TARGET bios|efi xfs|ext4 KERNEL_PACKAGE check|update TRANSPORT_FILE".into(),
         );
     }
     let target = &args[0];
     let firmware = &args[1];
     let filesystem = &args[2];
-    let selected_kernel = &args[3];
-    let selected_init = &args[4];
-    let update = args[5] == "update";
-    let transport = load_transport(Path::new(&args[6]))?;
+    let package = &args[3];
+    let update = args[4] == "update";
+    let transport = load_transport(Path::new(&args[5]))?;
     let os = fs::read_to_string("/etc/os-release").map_err(|e| e.to_string())?;
     let id = os
         .lines()
@@ -72,7 +69,7 @@ fn run() -> Result<(), String> {
         return Err("target architecture is not x86_64".into());
     }
     let kernel = run_capture("uname", &["-r"], &transport)?;
-    verify_kernel(target, selected_kernel, kernel.trim(), &transport)?;
+    verify_kernel(target, package, kernel.trim(), &transport)?;
     for path in [
         "/etc/ssl/certs/rustaller-install.pem",
         "/etc/apt/apt.conf.d/99rustaller-install-transport",
@@ -84,8 +81,14 @@ fn run() -> Result<(), String> {
             ));
         }
     }
+    let pid1 = fs::read_to_string("/proc/1/comm").map_err(|e| e.to_string())?;
+    if matches!(target.as_str(), "debian" | "arch") != (pid1.trim() == "systemd") {
+        return Err("guest init differs from the distribution policy".into());
+    }
     if target == "gentoo" {
-        verify_gentoo_init(selected_init, &transport)?;
+        verify_gentoo_openrc(&transport)?;
+    } else if target == "alpine" {
+        run_capture("rc-service", &["sshd", "status"], &transport)?;
     }
     if target == "debian" {
         // Native initramfs-tools silently skips hooks that fail this check.
@@ -125,41 +128,37 @@ fn run() -> Result<(), String> {
     {
         return Err("root fstab lacks its UUID binding".into());
     }
-    if filesystem != "btrfs" {
-        if fstab
-            .lines()
-            .filter(|line| line.split_whitespace().next() == Some("/swapfile"))
-            .count()
-            != 1
-        {
-            return Err("swapfile fstab entry is not unique".into());
-        }
-        let swap = fs::read_to_string("/proc/swaps").map_err(|e| e.to_string())?;
-        if !swap
-            .lines()
-            .skip(1)
-            .any(|line| line.split_whitespace().next() == Some("/swapfile"))
-        {
-            return Err("target swapfile was not activated during boot".into());
-        }
-        if fs::metadata("/swapfile")
-            .map_err(|e| e.to_string())?
-            .permissions()
-            .mode()
-            & 0o777
-            != 0o600
-        {
-            return Err("swapfile permissions differ from 0600".into());
-        }
-        if fs::read_to_string("/proc/sys/vm/swappiness")
-            .map_err(|e| e.to_string())?
-            .trim()
-            != "10"
-        {
-            return Err("target swappiness was not applied".into());
-        }
-    } else if Path::new("/swapfile").exists() || !fstab.contains("subvol=@,compress=zstd:3") {
-        return Err("Btrfs requires @ with compression and no swapfile".into());
+    if fstab
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some("/swapfile"))
+        .count()
+        != 1
+    {
+        return Err("swapfile fstab entry is not unique".into());
+    }
+    let swap = fs::read_to_string("/proc/swaps").map_err(|e| e.to_string())?;
+    if !swap
+        .lines()
+        .skip(1)
+        .any(|line| line.split_whitespace().next() == Some("/swapfile"))
+    {
+        return Err("target swapfile was not activated during boot".into());
+    }
+    if fs::metadata("/swapfile")
+        .map_err(|e| e.to_string())?
+        .permissions()
+        .mode()
+        & 0o777
+        != 0o600
+    {
+        return Err("swapfile permissions differ from 0600".into());
+    }
+    if fs::read_to_string("/proc/sys/vm/swappiness")
+        .map_err(|e| e.to_string())?
+        .trim()
+        != "10"
+    {
+        return Err("target swappiness was not applied".into());
     }
     if !mounts.lines().any(|line| {
         let f: Vec<_> = line.split_whitespace().collect();
@@ -190,6 +189,9 @@ fn run() -> Result<(), String> {
     }
     let config = fs::read_to_string(config_path()).map_err(|e| e.to_string())?;
     verify_boot(&config, filesystem)?;
+    if target == "arch" {
+        verify_arch_generation(&config, package, kernel.trim(), &transport)?;
+    }
     if !Path::new("/usr/local/libexec/rustaller-boot-update").is_file() {
         return Err("boot-update helper absent".into());
     }
@@ -236,23 +238,20 @@ fn run() -> Result<(), String> {
     let (program, arguments): (&str, &[&str]) = match target.as_str() {
         "alpine" => ("apk", &["update"]),
         "debian" => ("apt-get", &["-o", APT_TEST_CA, "update"]),
-        "arch" => (
-            "pacman",
-            &["--config", PACMAN_TEST_CONFIG, "-Sy", "--noconfirm"],
-        ),
+        "arch" => ("pacman", &["-Q", package]),
         "gentoo" => ("emerge-webrsync", &[]),
         _ => unreachable!(),
     };
     fs::write(
         "/run/rustaller-vm/wgetrc",
-        "ca_certificate = /etc/ssl/certs/rustaller-vm-ca.pem\n",
+        "ca_certificate = /var/tmp/rustaller-vm/transport-ca.pem\n",
     )
     .map_err(|e| e.to_string())?;
     if target == "arch" {
         let config = fs::read_to_string("/etc/pacman.conf").map_err(|e| e.to_string())?;
         let config = config.replacen(
             "[options]\n",
-            "[options]\nXferCommand = /usr/bin/curl --disable --fail --silent --show-error --location --proto =https --proto-redir =https --connect-timeout 15 --speed-limit 1 --speed-time 30 --max-time 3600 --cacert /etc/ssl/certs/rustaller-vm-ca.pem --output %o -- %u\n",
+            "[options]\nXferCommand = /usr/bin/curl --disable --fail --silent --show-error --location --proto =https --proto-redir =https --connect-timeout 15 --speed-limit 1 --speed-time 30 --max-time 3600 --cacert /var/tmp/rustaller-vm/transport-ca.pem --output %o -- %u\n",
             1,
         );
         fs::write(PACMAN_TEST_CONFIG, config).map_err(|e| e.to_string())?;
@@ -270,20 +269,23 @@ fn run() -> Result<(), String> {
         ));
     }
     if update {
-        native_kernel_update(target, selected_kernel, &transport)?;
+        native_kernel_update(target, package, &transport)?;
     }
     println!("RUSTALLER_VM_ACCEPTANCE_PASS target={target} firmware={firmware}");
     Ok(())
 }
 
-fn relay_ipv6_ssh(address: &str) -> Result<(), String> {
+fn relay_ipv6_ssh(address: &str, port: &str) -> Result<(), String> {
     let ip = address
         .parse::<Ipv6Addr>()
         .map_err(|_| "invalid fixture IPv6 address")?;
     if !ip.is_unique_local() {
         return Err("IPv6 SSH relay requires the disposable ULA fixture".into());
     }
-    let peer = SocketAddr::V6(SocketAddrV6::new(ip, 22, 0, 0));
+    let port = port
+        .parse::<u16>()
+        .map_err(|_| "invalid SSH fixture port")?;
+    let peer = SocketAddr::V6(SocketAddrV6::new(ip, port, 0, 0));
     let mut connection =
         TcpStream::connect_timeout(&peer, Duration::from_secs(5)).map_err(|e| e.to_string())?;
     let mut input = connection.try_clone().map_err(|e| e.to_string())?;
@@ -445,38 +447,15 @@ fn verify_boot(text: &str, filesystem: &str) -> Result<(), String> {
     }
     Ok(())
 }
-fn kernel_package(target: &str, choice: &str) -> Result<&'static str, String> {
-    match (target, choice) {
-        ("alpine", "virt" | "cloud") => Ok("linux-virt"),
-        ("alpine", "auto" | "standard" | "lts" | "generic") => Ok("linux-lts"),
-        ("debian", "cloud") => Ok("linux-image-cloud-amd64"),
-        ("debian", "auto" | "standard" | "generic") => Ok("linux-image-amd64"),
-        ("arch", "auto" | "standard") => Ok("linux"),
-        ("arch", "lts") => Ok("linux-lts"),
-        ("arch", "hardened") => Ok("linux-hardened"),
-        ("arch", "zen") => Ok("linux-zen"),
-        ("arch", "cachyos") => Ok("linux-cachyos"),
-        ("gentoo", "auto" | "standard") => Ok("sys-kernel/gentoo-kernel-bin"),
-        _ => Err("invalid selected kernel family".into()),
-    }
-}
 fn verify_kernel(
     target: &str,
-    choice: &str,
+    package: &str,
     release: &str,
     transport: &[(String, String)],
 ) -> Result<(), String> {
-    let package = kernel_package(target, choice)?;
     let correct = match target {
-        "alpine" => release.ends_with(if package == "linux-virt" {
-            "-virt"
-        } else {
-            "-lts"
-        }),
-        "debian" => {
-            release.ends_with("-amd64")
-                && release.contains("cloud") == (package == "linux-image-cloud-amd64")
-        }
+        "alpine" => release.ends_with("-virt"),
+        "debian" => release.ends_with("-cloud-amd64"),
         "arch" => fs::read_to_string(format!("/usr/lib/modules/{release}/pkgbase"))
             .is_ok_and(|value| value.trim() == package),
         "gentoo" => {
@@ -511,15 +490,68 @@ fn verify_kernel(
     }
     Ok(())
 }
-fn verify_gentoo_init(init: &str, transport: &[(String, String)]) -> Result<(), String> {
-    let pid1 = fs::read_to_string("/proc/1/comm").map_err(|e| e.to_string())?;
-    if (pid1.trim() == "systemd") != (init == "systemd") {
-        return Err("Gentoo PID1 differs from selected init".into());
+
+fn verify_arch_generation(
+    config: &str,
+    package: &str,
+    release: &str,
+    transport: &[(String, String)],
+) -> Result<(), String> {
+    for module in fs::read_dir("/usr/lib/modules").map_err(|e| e.to_string())? {
+        let module = module.map_err(|e| e.to_string())?;
+        let path = module.path().join("pkgbase");
+        match fs::read_to_string(path) {
+            Ok(value) if value.trim() == package => {}
+            Ok(_) => return Err("unexpected alternate Arch kernel is installed".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
     }
+    let entry = config
+        .split_once("[entries.current]\n")
+        .ok_or("Arch boot configuration is missing the current entry")?
+        .1
+        .split("\n[")
+        .next()
+        .ok_or("Arch current boot entry is empty")?;
+    let fields = |name: &str| {
+        entry.lines().find_map(|line| {
+            let (key, value) = line.split_once('=')?;
+            (key.trim() == name).then_some(value.trim())
+        })
+    };
+    let kernel = fields("kernel")
+        .and_then(|value| value.split('"').nth(1))
+        .ok_or("Arch current boot entry lacks a kernel path")?;
+    let initrd = fields("initrds")
+        .and_then(|value| value.split('"').skip(1).step_by(2).last())
+        .ok_or("Arch current boot entry lacks an initramfs path")?;
+    run_capture(
+        "cmp",
+        &[
+            "-s",
+            &format!("/usr/lib/modules/{release}/vmlinuz"),
+            &format!("/boot{kernel}"),
+        ],
+        transport,
+    )?;
+    run_capture(
+        "cmp",
+        &[
+            "-s",
+            &format!("/boot/initramfs-{package}.img"),
+            &format!("/boot{initrd}"),
+        ],
+        transport,
+    )?;
+    Ok(())
+}
+
+fn verify_gentoo_openrc(transport: &[(String, String)]) -> Result<(), String> {
     let profile = fs::canonicalize("/etc/portage/make.profile").map_err(|e| e.to_string())?;
     let profile = profile.to_string_lossy();
-    if !profile.contains("/no-multilib") || profile.contains("/systemd") != (init == "systemd") {
-        return Err("Gentoo profile does not match nomultilib/init policy".into());
+    if !profile.ends_with("/no-multilib") {
+        return Err("Gentoo profile does not match the no-multilib OpenRC policy".into());
     }
     if run_capture("portageq", &["envvar", "ABI_X86"], transport)?
         .split_whitespace()
@@ -528,32 +560,21 @@ fn verify_gentoo_init(init: &str, transport: &[(String, String)]) -> Result<(), 
     {
         return Err("Gentoo ABI_X86 must contain only 64".into());
     }
-    if init == "openrc" {
-        run_capture("rc-service", &["sshd", "status"], transport)?;
-        let runlevel = run_capture("rc-update", &["show", "default"], transport)?;
-        if !runlevel.contains("net.") || !runlevel.contains("sshd") {
-            return Err("Gentoo OpenRC network/SSH services are not enabled".into());
-        }
-    } else if init == "systemd" {
-        run_capture(
-            "systemctl",
-            &["is-active", "sshd", "systemd-networkd", "systemd-resolved"],
-            transport,
-        )?;
-    } else {
-        return Err("Gentoo init must be explicit".into());
+    run_capture("rc-service", &["sshd", "status"], transport)?;
+    let runlevel = run_capture("rc-update", &["show", "default"], transport)?;
+    if !runlevel.contains("net.") || !runlevel.contains("sshd") {
+        return Err("Gentoo OpenRC network/SSH services are not enabled".into());
     }
     Ok(())
 }
 const PACMAN_TEST_CONFIG: &str = "/run/rustaller-vm/pacman.conf";
-const APT_TEST_CA: &str = "Acquire::https::CaInfo=/etc/ssl/certs/rustaller-vm-ca.pem";
+const APT_TEST_CA: &str = "Acquire::https::CaInfo=/var/tmp/rustaller-vm/transport-ca.pem";
 
 fn native_kernel_update(
     target: &str,
-    choice: &str,
+    package: &str,
     transport: &[(String, String)],
 ) -> Result<(), String> {
-    let package = kernel_package(target, choice)?;
     let before = fs::read_to_string(config_path()).map_err(|e| e.to_string())?;
     let edited = before.replace(
         "extra_cmdline = \"\"",
@@ -700,27 +721,4 @@ fn run_capture(
         return Err(format!("{program} failed with {:?}", output.status.code()));
     }
     String::from_utf8(output.stdout).map_err(|_| format!("{program} returned non-UTF8 data"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn selected_package_matrix_rejects_cross_distribution_choices() {
-        for (target, choice, package) in [
-            ("alpine", "lts", "linux-lts"),
-            ("alpine", "virt", "linux-virt"),
-            ("debian", "generic", "linux-image-amd64"),
-            ("debian", "cloud", "linux-image-cloud-amd64"),
-            ("arch", "standard", "linux"),
-            ("arch", "lts", "linux-lts"),
-            ("arch", "hardened", "linux-hardened"),
-            ("arch", "zen", "linux-zen"),
-            ("gentoo", "standard", "sys-kernel/gentoo-kernel-bin"),
-        ] {
-            assert_eq!(kernel_package(target, choice).unwrap(), package);
-        }
-        assert!(kernel_package("debian", "hardened").is_err());
-        assert!(kernel_package("gentoo", "cloud").is_err());
-    }
 }

@@ -3,6 +3,9 @@
 
 use rustaller::command::{CommandInput, CommandRunner, CommandSpec, OutputMode, SystemRunner};
 use rustaller::host::sources::{self, SourceError};
+use rustaller::model::Target;
+use rustaller::postinstall::required_kernel;
+use rustaller::targets::cachyos::{ARCHIVE_URL, BASELINE_REPOSITORY};
 
 const METADATA_LIMIT: usize = 1_048_576;
 
@@ -68,8 +71,14 @@ fn audit_arch<R: CommandRunner>(runner: &mut R) -> Result<String, String> {
     let source = sources::arch_repositories("x86_64").map_err(source_error)?;
     head(runner, &source.core_db)?;
     head(runner, &source.extra_db)?;
+    let database = format!("{BASELINE_REPOSITORY}/cachyos.db");
+    head(runner, &database)?;
+    head(runner, &format!("{database}.sig"))?;
+    head(runner, ARCHIVE_URL)?;
+    let kernel = required_kernel(Target::Arch).expect("Arch target kernel policy");
     Ok(format!(
-        "core/extra x86_64 repository databases reachable.\n  {}\n  Required package policy: {}; trusted {} required. Package signatures NOT tested. No ISO/bootstrap tar is used by the pacstrap path.",
+        "Arch core/extra databases, CachyOS baseline database/signature and pinned source archive reachable for {}.\n  {}\n  Required Arch package policy: {}; trusted {} required. Repository contents, dependencies and signatures are unchecked by this HEAD audit.",
+        kernel,
         sources::ARCH_MIRROR,
         source.signature_policy,
         source.keyring_package,
@@ -77,21 +86,16 @@ fn audit_arch<R: CommandRunner>(runner: &mut R) -> Result<String, String> {
 }
 
 fn audit_gentoo<R: CommandRunner>(runner: &mut R) -> Result<String, String> {
-    let mut reports = Vec::new();
-    for init in [
-        rustaller::config::GentooInit::Openrc,
-        rustaller::config::GentooInit::Systemd,
-    ] {
-        let index = get(runner, &sources::gentoo_stage3_index_url(init))?;
-        let source =
-            sources::parse_gentoo_stage3_for_init(&index, "x86_64", init).map_err(source_error)?;
-        let digests = get(runner, &source.digests_url)?;
-        let sha512 = sources::parse_gentoo_sha512(&source, &digests).map_err(source_error)?;
-        head(runner, &source.url)?;
-        head(runner, &source.signature_url)?;
-        reports.push(format!("{} stage3 {} reachable (index size {} bytes); selected SHA512 parsed: {}\n  {}\n  clearsigned index/DIGESTS parsed; signatures NOT verified; stage3 NOT downloaded or hashed.", init.stage3_variant(), source.timestamp, source.size, sha512, source.url));
-    }
-    Ok(reports.join("\n  "))
+    let index = get(runner, sources::GENTOO_STAGE3_INDEX_URL)?;
+    let source = sources::parse_gentoo_stage3(&index, "x86_64").map_err(source_error)?;
+    let digests = get(runner, &source.digests_url)?;
+    let sha512 = sources::parse_gentoo_sha512(&source, &digests).map_err(source_error)?;
+    head(runner, &source.url)?;
+    head(runner, &source.signature_url)?;
+    Ok(format!(
+        "{} reachable (index size {} bytes). Parsed SHA512 {}.\n  {}\n  Clearsigned index and DIGESTS parsed. Signature and payload verification require the installer.",
+        source.filename, source.size, sha512, source.url
+    ))
 }
 
 fn source_error(error: SourceError) -> String {
@@ -215,5 +219,32 @@ mod tests {
         ]);
         assert!(get(&mut runner, sources::ALPINE_RELEASES_URL).is_err());
         assert!(get(&mut runner, sources::ALPINE_RELEASES_URL).is_err());
+    }
+
+    #[test]
+    fn arch_endpoints_cover_the_required_cachyos_source_and_baseline_signature() {
+        let mut runner =
+            MockRunner::new((0..5).map(|_| CommandOutput::new(Some(0), vec![], vec![])));
+        let report = audit_arch(&mut runner).unwrap();
+        assert!(report.contains("linux-cachyos-server"));
+        assert!(
+            runner
+                .calls()
+                .iter()
+                .all(|request| request.args.iter().any(|arg| arg == "--head"))
+        );
+        let signed_index = format!("{BASELINE_REPOSITORY}/cachyos.db.sig");
+        assert!(runner.calls().iter().any(|request| {
+            request
+                .args
+                .last()
+                .is_some_and(|arg| arg == signed_index.as_str())
+        }));
+        assert!(
+            runner
+                .calls()
+                .iter()
+                .any(|request| request.args.last().is_some_and(|arg| arg == ARCHIVE_URL))
+        );
     }
 }

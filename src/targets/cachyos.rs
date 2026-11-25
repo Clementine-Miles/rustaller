@@ -1,10 +1,12 @@
-//! Opt-in CachyOS setup using a reviewed, digest-pinned official script archive.
-//! Only a checked, isolated Arch target is modified. Package signatures remain required.
+//! Authenticated CachyOS repositories and the fixed Arch server kernel.
 use crate::command::{
     CommandInput, CommandRunner, CommandSpec, OutputMode, capture_checked, run_checked,
 };
-use crate::shared::configure::validate_root;
+use crate::host::inspect::cpu::{self, IsaLevel};
+use crate::model::Target;
+use crate::postinstall::required_kernel;
 use crate::shared::configure::write_config;
+use crate::shared::configure::{read_config, validate_root};
 use std::{
     ffi::OsStr,
     fs, io,
@@ -12,8 +14,16 @@ use std::{
     path::Path,
 };
 
-pub const ARCHIVE_URL: &str = "https://mirror.cachyos.org/cachyos-repo.tar.xz";
-pub const ARCHIVE_SHA256: &str = "a1e3a74bdd12c10ac7317079e3e8c8e7d5557d818e4d4021364005a336b6afdc";
+// The upstream mirror's rolling archive can change independently of this installer.
+pub const ARCHIVE_URL: &str = "https://codeload.github.com/CachyOS/cachyos-repo-add-script/tar.gz/5b27dc1eff276e104077cfaf75798b4c290eaef4";
+pub const ARCHIVE_SHA256: &str = "1076d254cf10036dfa910bd6ca8e45c8d623836d19b2f1722fff7f6cf7aee510";
+const ARCHIVE_SCRIPT: &str =
+    "cachyos-repo-add-script-5b27dc1eff276e104077cfaf75798b4c290eaef4/cachyos-repo.sh";
+const MIRROR: &str = "https://mirror.cachyos.org/repo";
+pub const BASELINE_REPOSITORY: &str = "https://mirror.cachyos.org/repo/x86_64/cachyos";
+const KEYRING_PACKAGE: &str = "cachyos-keyring-20240331-1-any.pkg.tar.zst";
+const PUBLIC_KEY: &str = "cachyos-public.asc";
+const KEYRING_MAX_BYTES: u64 = 1024 * 1024;
 pub const RELEASE_FINGERPRINT: &str = "882DCFE48E2051D48E2562ABF3B607488DB35A47";
 const KEY_URL: &str = "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x882DCFE48E2051D48E2562ABF3B607488DB35A47";
 const WORKER: &str = "usr/local/libexec/rustaller-cachyos-worker";
@@ -122,25 +132,56 @@ fn verify_archive<R: CommandRunner>(r: &mut R, path: &Path) -> Result<(), Cachyo
         )),
     )
 }
-/// Download and authenticate inputs before the destructive boundary.
+/// Authenticate the upstream setup revision, trust root, keyring package and
+/// repository metadata, then resolve the required package and dependencies.
 pub fn prepare_assets<R: CommandRunner>(r: &mut R, work: &Path) -> Result<(), CachyosError> {
     validate_root(work).map_err(error)?;
-    let archive = work.join("cachyos-repo.tar.xz");
+    let archive = work.join("cachyos-repo.tar.gz");
     download(r, ARCHIVE_URL, &archive, 1024 * 1024)?;
     verify_archive(r, &archive)?;
-    let key = work.join("cachyos-public.asc");
-    download(r, KEY_URL, &key, 1024 * 1024)?;
-    let home = work.join("cachyos-key-check");
-    fs::create_dir(&home)?;
-    fs::set_permissions(&home, fs::Permissions::from_mode(0o700))?;
-    let listing = capture(
+    let script = capture(
         r,
         &command(
+            "tar",
+            [
+                OsStr::new("-xzOf"),
+                archive.as_os_str(),
+                ARCHIVE_SCRIPT.as_ref(),
+            ],
+            "cachyos-read-reviewed-keyring-source",
+        ),
+    )?;
+    if !script.lines().any(|line| {
+        line.trim_start()
+            .starts_with(&format!("pacman -U \"${{mirror_url}}/{KEYRING_PACKAGE}\""))
+    }) {
+        return Err(error(
+            "reviewed source no longer identifies the native keyring package",
+        ));
+    }
+
+    let key = work.join(PUBLIC_KEY);
+    download(r, KEY_URL, &key, KEYRING_MAX_BYTES)?;
+    let home = work.join("cachyos-gnupg");
+    fs::create_dir(&home)?;
+    fs::set_permissions(&home, fs::Permissions::from_mode(0o700))?;
+    let gpg = |args: &[&OsStr], phase: &str| {
+        command(
             "gpg",
             [
                 OsStr::new("--batch"),
                 "--homedir".as_ref(),
                 home.as_os_str(),
+            ]
+            .into_iter()
+            .chain(args.iter().copied()),
+            phase,
+        )
+    };
+    let listing = capture(
+        r,
+        &gpg(
+            &[
                 "--with-colons".as_ref(),
                 "--show-keys".as_ref(),
                 key.as_os_str(),
@@ -153,6 +194,126 @@ pub fn prepare_assets<R: CommandRunner>(r: &mut R, work: &Path) -> Result<(), Ca
             "release key does not match the pinned full fingerprint",
         ));
     }
+    checked(
+        r,
+        &gpg(
+            &["--import".as_ref(), key.as_os_str()],
+            "cachyos-import-release-key",
+        ),
+    )?;
+    let package = work.join(KEYRING_PACKAGE);
+    let signature = work.join(format!("{KEYRING_PACKAGE}.sig"));
+    let url = format!("{BASELINE_REPOSITORY}/{KEYRING_PACKAGE}");
+    download(r, &url, &package, KEYRING_MAX_BYTES)?;
+    download(r, &format!("{url}.sig"), &signature, 64 * 1024)?;
+    checked(
+        r,
+        &gpg(
+            &[
+                "--verify".as_ref(),
+                signature.as_os_str(),
+                package.as_os_str(),
+            ],
+            "cachyos-verify-keyring-package",
+        ),
+    )?;
+    checked(
+        r,
+        &command(
+            "gpgconf",
+            [
+                OsStr::new("--homedir"),
+                home.as_os_str(),
+                "--kill".as_ref(),
+                "all".as_ref(),
+            ],
+            "cachyos-stop-release-key-agent",
+        ),
+    )?;
+    fs::remove_dir_all(home)?;
+
+    let home = work.join("cachyos-pacman-gnupg");
+    let db = work.join("cachyos-pacman-db");
+    fs::create_dir(&db)?;
+    let keyring = |args: &[&OsStr], phase: &str| {
+        command(
+            "pacman-key",
+            [OsStr::new("--gpgdir"), home.as_os_str()]
+                .into_iter()
+                .chain(args.iter().copied()),
+            phase,
+        )
+    };
+    checked(
+        r,
+        &keyring(&["--init".as_ref()], "cachyos-preflight-keyring-init"),
+    )?;
+    checked(
+        r,
+        &keyring(
+            &["--populate".as_ref(), "archlinux".as_ref()],
+            "cachyos-preflight-arch-keys",
+        ),
+    )?;
+    checked(
+        r,
+        &keyring(
+            &["--add".as_ref(), key.as_os_str()],
+            "cachyos-preflight-add-release-key",
+        ),
+    )?;
+    checked(
+        r,
+        &keyring(
+            &["--lsign-key".as_ref(), RELEASE_FINGERPRINT.as_ref()],
+            "cachyos-preflight-trust-release-key",
+        ),
+    )?;
+
+    let isa = guest_isa();
+    let config = work.join("cachyos-pacman.conf");
+    let text = repository_config(&super::rolling::arch_configuration(false)?, isa)?;
+    let text = if Path::new(super::install::LIVE_TRANSPORT_CA).is_file() {
+        super::rolling::arch_transport_config(&text, super::install::LIVE_TRANSPORT_CA)?
+    } else {
+        text
+    };
+    write_config::<CachyosError>(&config, text.as_bytes(), 0o600)?;
+    checked(
+        r,
+        &command(
+            "pacman",
+            [
+                OsStr::new("--config"),
+                config.as_os_str(),
+                "--gpgdir".as_ref(),
+                home.as_os_str(),
+                "--dbpath".as_ref(),
+                db.as_os_str(),
+                "-Syup".as_ref(),
+                "--noconfirm".as_ref(),
+                "--print-format".as_ref(),
+                "%n".as_ref(),
+                server_target(isa).as_ref(),
+                "base".as_ref(),
+                "mkinitcpio".as_ref(),
+            ],
+            "cachyos-resolve-authenticated-server-kernel",
+        ),
+    )?;
+    checked(
+        r,
+        &command(
+            "gpgconf",
+            [
+                OsStr::new("--homedir"),
+                home.as_os_str(),
+                "--kill".as_ref(),
+                "all".as_ref(),
+            ],
+            "cachyos-stop-preflight-key-agent",
+        ),
+    )?;
     Ok(())
 }
 pub fn valid_primary_key(listing: &str) -> bool {
@@ -179,219 +340,271 @@ pub fn valid_primary_key(listing: &str) -> bool {
     }
     primary_count == 1 && found == [RELEASE_FINGERPRINT]
 }
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum IsaLevel {
-    Baseline,
-    V2,
-    V3,
-    V4,
+fn guest_isa() -> IsaLevel {
+    cpu::inspect(Path::new("/"))
+        .isa_level
+        .unwrap_or(IsaLevel::V1)
 }
-/// glibc's supported/searched result includes kernel OSXSAVE/XCR0 usability,
-/// unlike /proc/cpuinfo flags or CPUID alone. This is the official script's probe.
-pub fn isa_level(loader_help: &str) -> IsaLevel {
-    let supports = |level: &str| {
-        loader_help
-            .lines()
-            .any(|l| l.trim() == format!("x86-64-{level} (supported, searched)"))
-    };
-    if supports("v4") {
-        IsaLevel::V4
-    } else if supports("v3") {
-        IsaLevel::V3
-    } else if supports("v2") {
-        IsaLevel::V2
-    } else {
-        IsaLevel::Baseline
+
+fn repo_tier(isa: IsaLevel) -> Option<&'static str> {
+    match isa {
+        IsaLevel::V4 => Some("v4"),
+        IsaLevel::V3 => Some("v3"),
+        IsaLevel::V1 | IsaLevel::V2 => None,
     }
 }
-/// Only reviewed substitutions: full pinned key instead of short-ID lookup,
-/// noninteractive pacman and mandatory awk error propagation.
-pub fn adapt_official_script(script: &str) -> Result<String, CachyosError> {
-    let changes = [
-        (
-            "pacman-key --recv-keys F3B607488DB35A47 --keyserver keyserver.ubuntu.com",
-            "pacman-key --add ./rustaller-cachyos.asc".to_owned(),
-        ),
-        (
-            "pacman-key --lsign-key F3B607488DB35A47",
-            format!("pacman-key --lsign-key {RELEASE_FINGERPRINT}"),
-        ),
-        (
-            "gawk -i inplace -f $gawk_script $pacman_conf_cachyos || true",
-            "gawk -i inplace -f $gawk_script $pacman_conf_cachyos".to_owned(),
-        ),
-        (
-            "pacman -U \"${mirror_url}",
-            "pacman --noconfirm -U \"${mirror_url}".to_owned(),
-        ),
-        (
-            "    pacman -Syu\n",
-            "    pacman --noconfirm -Syu\n".to_owned(),
-        ),
-    ];
-    let mut out = script.to_owned();
-    for (old, new) in changes {
-        if out.matches(old).count() != 1 {
-            return Err(error(
-                "reviewed official script changed; update its pinned digest and adapter",
+
+fn kernel_package() -> &'static str {
+    required_kernel(Target::Arch).unwrap()
+}
+
+fn server_target(isa: IsaLevel) -> String {
+    let repository = repo_tier(isa)
+        .map(|tier| format!("cachyos-{tier}"))
+        .unwrap_or_else(|| "cachyos".into());
+    format!("{repository}/{}", kernel_package())
+}
+
+fn repository_blocks(isa: IsaLevel) -> String {
+    let mut repositories = String::new();
+    if let Some(tier) = repo_tier(isa) {
+        for repository in [
+            format!("cachyos-{tier}"),
+            format!("cachyos-core-{tier}"),
+            format!("cachyos-extra-{tier}"),
+        ] {
+            repositories.push_str(&format!(
+                "[{repository}]\nSigLevel = Required\nServer = {MIRROR}/x86_64_{tier}/{repository}\n\n"
             ));
         }
-        out = out.replacen(old, &new, 1);
     }
-    Ok(out)
+    repositories.push_str(&format!(
+        "[cachyos]\nSigLevel = Required\nServer = {BASELINE_REPOSITORY}\n\n"
+    ));
+    repositories
 }
+
+pub fn repository_config(base: &str, isa: IsaLevel) -> Result<String, CachyosError> {
+    let (options, arch_repos) = base
+        .split_once("\n[core]\n")
+        .ok_or_else(|| error("Arch core repository missing"))?;
+    if options
+        .lines()
+        .filter(|line| *line == "Architecture = x86_64")
+        .count()
+        != 1
+        || base
+            .lines()
+            .any(|line| line.trim_start().starts_with("[cachyos"))
+    {
+        return Err(error("unexpected initial Arch repository configuration"));
+    }
+    let options = if let Some(tier) = repo_tier(isa) {
+        options.replacen(
+            "Architecture = x86_64",
+            &format!("Architecture = x86_64 x86_64_{tier}"),
+            1,
+        )
+    } else {
+        options.into()
+    };
+    Ok(format!(
+        "{options}\n{}[core]\n{arch_repos}",
+        repository_blocks(isa)
+    ))
+}
+
 fn write(root: &Path, path: &str, bytes: &[u8], mode: u32) -> Result<(), CachyosError> {
     write_config::<CachyosError>(&root.join(path), bytes, mode)
 }
-/// Execute the official setup only inside a newly bootstrapped target chroot.
+
+/// Install the signed native keyring before repository activation. The first
+/// transaction that can install optimized packages is the full kernel upgrade.
 pub fn configure_repositories<R: CommandRunner>(
     r: &mut R,
     root: &Path,
     work: &Path,
 ) -> Result<(), CachyosError> {
     validate_root(root).map_err(error)?;
-    verify_archive(r, &work.join("cachyos-repo.tar.xz"))?;
     if !root.join("etc/arch-release").is_file() {
         return Err(error("Arch target root required"));
     }
-    checked(
-        r,
-        &chroot(
-            root,
-            [
-                "pacman",
-                "-Syu",
-                "--noconfirm",
-                "--needed",
-                "gawk",
-                "curl",
-                "gnupg",
-            ],
-            "cachyos-target-setup-tools",
-        ),
-    )?;
-    let help = capture(
-        r,
-        &chroot(
-            root,
-            ["/lib/ld-linux-x86-64.so.2", "--help"],
-            "cachyos-detect-usable-isa",
-        ),
-    )?;
-    if !help.contains("glibc-hwcaps") {
-        return Err(error("cannot establish usable x86-64 ISA level"));
+    let key = work.join(PUBLIC_KEY);
+    let package = work.join(KEYRING_PACKAGE);
+    let sig_name = format!("{KEYRING_PACKAGE}.sig");
+    let signature = work.join(&sig_name);
+    let staging = "var/lib/rustaller/cachyos-setup";
+    let key_path = format!("/{staging}/{PUBLIC_KEY}");
+    let package_path = format!("/{staging}/{KEYRING_PACKAGE}");
+    for (from, name, limit) in [
+        (&key, PUBLIC_KEY, KEYRING_MAX_BYTES),
+        (&package, KEYRING_PACKAGE, KEYRING_MAX_BYTES),
+        (&signature, &sig_name, 64 * 1024),
+    ] {
+        regular(from, limit)?;
+        write(root, &format!("{staging}/{name}"), &fs::read(from)?, 0o600)?;
     }
-    let isa = isa_level(&help);
-    let target_dir = root.join("var/lib/rustaller/cachyos-setup");
-    fs::create_dir_all(&target_dir)?;
-    checked(
-        r,
-        &command(
-            "tar",
-            [
-                OsStr::new("-xJf"),
-                work.join("cachyos-repo.tar.xz").as_os_str(),
-                "--no-same-owner".as_ref(),
-                "--no-same-permissions".as_ref(),
-                "-C".as_ref(),
-                target_dir.as_os_str(),
-            ],
-            "cachyos-extract-pinned-scripts",
-        ),
-    )?;
-    let dir = target_dir.join("cachyos-repo");
-    let script = adapt_official_script(&fs::read_to_string(dir.join("cachyos-repo.sh"))?)?;
-    write(
-        root,
-        "var/lib/rustaller/cachyos-setup/cachyos-repo/cachyos-repo.sh",
-        script.as_bytes(),
-        0o700,
-    )?;
-    write(
-        root,
-        "var/lib/rustaller/cachyos-setup/cachyos-repo/rustaller-cachyos.asc",
-        &fs::read(work.join("cachyos-public.asc"))?,
-        0o600,
-    )?;
-    // bash -c here is a fixed, audited command, never interpolated user input.
     checked(
         r,
         &chroot(
             root,
-            [
-                "bash",
-                "-c",
-                "cd /var/lib/rustaller/cachyos-setup/cachyos-repo && exec bash ./cachyos-repo.sh --install",
-            ],
-            "cachyos-official-repository-setup",
+            ["pacman-key", "--populate", "archlinux"],
+            "arch-populate-native-keyring",
         ),
     )?;
-    let path = root.join("etc/pacman.conf");
-    let mut config = fs::read_to_string(&path)?;
-    if matches!(isa, IsaLevel::Baseline | IsaLevel::V2)
-        && !config.lines().any(|l| l.trim() == "[cachyos]")
-    {
-        // Official script only adds optimized tiers. The official manual documents
-        // this unoptimized repository for CPUs below v3.
-        let index = config
-            .find("[core]")
-            .ok_or_else(|| error("Arch core repository missing"))?;
-        config.insert_str(
-            index,
-            "[cachyos]\nInclude = /etc/pacman.d/cachyos-mirrorlist\n\n",
-        );
-        write(root, "etc/pacman.conf", config.as_bytes(), 0o644)?;
-    }
-    validate_repository_config(&config, isa)?;
-    fs::remove_dir_all(target_dir)?;
+    checked(
+        r,
+        &chroot(
+            root,
+            ["pacman-key", "--add", &key_path],
+            "cachyos-add-pinned-release-key",
+        ),
+    )?;
+    checked(
+        r,
+        &chroot(
+            root,
+            ["pacman-key", "--lsign-key", RELEASE_FINGERPRINT],
+            "cachyos-trust-pinned-release-key",
+        ),
+    )?;
+    checked(
+        r,
+        &chroot(
+            root,
+            ["pacman", "-U", "--noconfirm", "--needed", &package_path],
+            "cachyos-install-native-signed-keyring",
+        ),
+    )?;
+    checked(
+        r,
+        &chroot(
+            root,
+            ["pacman-key", "--populate", "cachyos"],
+            "cachyos-populate-native-keyring",
+        ),
+    )?;
+    let path = "etc/pacman.conf";
+    let config = repository_config(&read_config(&root.join(path))?, guest_isa())?;
+    write(root, path, config.as_bytes(), 0o644)?;
+    fs::remove_dir_all(root.join(staging))?;
     Ok(())
 }
-pub fn validate_repository_config(config: &str, isa: IsaLevel) -> Result<(), CachyosError> {
-    let lines = config
+
+/// Match the active repository tier to the capabilities of every schedulable
+/// vCPU. A post-install CPU change must not trigger an incompatible upgrade.
+pub(super) fn configured_server_target(root: &Path) -> Result<String, CachyosError> {
+    let config = read_config(&root.join("etc/pacman.conf"))?;
+    let active: Vec<_> = config
         .lines()
         .map(str::trim)
-        .filter(|l| !l.starts_with('#'))
-        .collect::<Vec<_>>();
-    if !lines.contains(&"SigLevel = Required DatabaseOptional")
-        || lines.iter().any(|l| {
-            (l.starts_with("SigLevel") && *l != "SigLevel = Required DatabaseOptional")
-                || (l.starts_with("RemoteFileSigLevel") && *l != "RemoteFileSigLevel = Required")
-        })
-    {
-        return Err(error("mandatory package signature policy changed"));
-    }
-    let tier_complete = |tier: &str| {
+        .filter(|line| line.starts_with("[cachyos"))
+        .collect();
+    let supported = guest_isa();
+    let expected = |tier| {
         [
             format!("[cachyos-{tier}]"),
             format!("[cachyos-core-{tier}]"),
             format!("[cachyos-extra-{tier}]"),
+            "[cachyos]".into(),
         ]
-        .iter()
-        .all(|repo| lines.contains(&repo.as_str()))
     };
-    let complete = match isa {
-        IsaLevel::V4 => tier_complete("v4") || tier_complete("znver4"),
-        IsaLevel::V3 => tier_complete("v3"),
-        _ => true,
-    };
-    if !lines.contains(&"[cachyos]") || !complete {
+    let selected = if active == ["[cachyos]"] {
+        IsaLevel::V1
+    } else if matches!(supported, IsaLevel::V3 | IsaLevel::V4) && active == expected("v3") {
+        IsaLevel::V3
+    } else if supported == IsaLevel::V4 && active == expected("v4") {
+        IsaLevel::V4
+    } else {
         return Err(error(
-            "official script did not enable the complete detected ISA repository set",
+            "configured CachyOS repositories do not match usable guest ISA",
+        ));
+    };
+    if !config.contains(&repository_blocks(selected)) {
+        return Err(error(
+            "configured CachyOS server or signature policy changed",
         ));
     }
-    if matches!(isa, IsaLevel::Baseline | IsaLevel::V2)
-        && lines
-            .iter()
-            .any(|l| l.starts_with("[cachyos-") && !l.contains("mirror"))
-    {
-        return Err(error("unsupported optimized ISA repository"));
+    Ok(server_target(selected))
+}
+
+pub(super) fn verify_server_kernel<R: CommandRunner>(
+    r: &mut R,
+    root: &Path,
+) -> Result<(), CachyosError> {
+    let native = |args: &[&str], phase| {
+        if root == Path::new("/") {
+            command(args[0], &args[1..], phase)
+        } else {
+            chroot(root, args, phase)
+        }
+    };
+    let name = kernel_package();
+    let files = capture(
+        r,
+        &native(
+            &["pacman", "-Qql", name],
+            "cachyos-list-installed-server-files",
+        ),
+    )?;
+    let mut modules = files.lines().filter_map(|line| {
+        line.strip_prefix("/usr/lib/modules/")?
+            .strip_suffix("/vmlinuz")
+    });
+    let version = modules
+        .next()
+        .filter(|&version| {
+            version.ends_with("-cachyos-server")
+                && version
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"._+-".contains(&byte))
+        })
+        .ok_or_else(|| error("server module release missing from installed package"))?;
+    if modules.next().is_some() {
+        return Err(error(
+            "ambiguous server module release in installed package",
+        ));
     }
-    if isa == IsaLevel::V3
-        && lines
-            .iter()
-            .any(|l| l.contains("-v4]") || l.contains("-znver4]"))
+    let directory = format!("usr/lib/modules/{version}");
+    let pkgbase = root.join(&directory).join("pkgbase");
+    regular(&pkgbase, 128)?;
+    if fs::read_to_string(pkgbase)?.trim() != name {
+        return Err(error("server module package identity mismatch"));
+    }
+    let module_kernel = format!("/{directory}/vmlinuz");
+    let boot_kernel = format!("/boot/vmlinuz-{name}");
+    let initramfs = format!("/boot/initramfs-{name}.img");
+    for path in [&module_kernel, &boot_kernel, &initramfs] {
+        regular(&root.join(path.trim_start_matches('/')), 1024 * 1024 * 1024)?;
+    }
+    let hashes = capture(
+        r,
+        &native(
+            &["sha256sum", &module_kernel, &boot_kernel],
+            "cachyos-compare-native-server-kernel",
+        ),
+    )?;
+    let mut hashes = hashes
+        .lines()
+        .filter_map(|line| line.split_ascii_whitespace().next());
+    if !matches!((hashes.next(), hashes.next()), (Some(a), Some(b)) if a.len() == 64 && a == b) {
+        return Err(error(
+            "FAT32 kernel differs from the server package payload",
+        ));
+    }
+    let image = capture(
+        r,
+        &native(
+            &["lsinitcpio", "-l", &initramfs],
+            "cachyos-verify-matching-initramfs",
+        ),
+    )?;
+    let modules = format!("{directory}/");
+    if !image
+        .lines()
+        .any(|line| line.trim_start_matches("./").starts_with(&modules))
     {
-        return Err(error("unsupported v4 repository"));
+        return Err(error("initramfs release differs from the server package"));
     }
     Ok(())
 }
@@ -429,25 +642,35 @@ pub fn run_firstboot_update<R: CommandRunner>(r: &mut R, root: &Path) -> Result<
     if !root.join("etc/arch-release").is_file() {
         return Err(error("firstboot update requires Arch"));
     }
+    let server = configured_server_target(root)?;
+    let native = |args: &[&str], phase| {
+        if root == Path::new("/") {
+            command(args[0], &args[1..], phase)
+        } else {
+            chroot(root, args, phase)
+        }
+    };
     for (args, phase) in [
         (
-            vec!["pacman", "-Syu", "--noconfirm"],
+            vec!["/usr/local/libexec/rustaller-boot-update", "check"],
+            "cachyos-firstboot-check-boot-mount",
+        ),
+        (
+            vec!["pacman", "-Syu", "--noconfirm", "--needed", &server],
             "cachyos-firstboot-full-upgrade",
         ),
         (vec!["mkinitcpio", "-P"], "cachyos-firstboot-initramfs"),
-        (
-            vec!["/usr/local/libexec/rustaller-boot-update", "refresh"],
+    ] {
+        checked(r, &native(&args, phase))?;
+    }
+    verify_server_kernel(r, root)?;
+    checked(
+        r,
+        &native(
+            &["/usr/local/libexec/rustaller-boot-update", "refresh"],
             "cachyos-firstboot-boot-refresh",
         ),
-    ] {
-        let spec = if root == Path::new("/") {
-            command(args[0], &args[1..], phase)
-        } else {
-            // Isolated roots are used by regression mocks, never a CLI path.
-            chroot(root, args, phase)
-        };
-        checked(r, &spec)?;
-    }
+    )?;
     // Only successful package hooks and explicit boot-artifact rebuilds complete
     // the job. A failed command leaves the pending marker and service for retry.
     fs::remove_file(root.join(PENDING))?;

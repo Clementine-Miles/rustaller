@@ -112,10 +112,6 @@ pub(crate) fn retry<R: CommandRunner>(
     unreachable!("retry is called with at least one attempt")
 }
 
-pub(crate) fn apk<R: CommandRunner>(runner: &mut R, args: &[&str]) -> Result<(), StorageError> {
-    retry(runner, &command("apk", args, "live-partition-packages"), 5)
-}
-
 const TWO_TIB: u64 = 2 * 1024_u64.pow(4);
 
 /// Recheck immediately before wiping: cloud volumes can be attached read-only,
@@ -232,7 +228,6 @@ pub struct DiskLayout {
     boot_mode: BootMode,
     partitions: Vec<Partition>,
     root_filesystem: RootFilesystem,
-    btrfs_compression: u8,
 }
 
 impl DiskLayout {
@@ -275,7 +270,6 @@ impl DiskLayout {
             boot_mode,
             partitions,
             root_filesystem: plan.plan().system.root_filesystem,
-            btrfs_compression: plan.plan().system.btrfs_compression.unwrap_or(3),
         })
     }
 
@@ -340,18 +334,9 @@ pub fn render_fstab(
         return Err(StorageError::InvalidUuid);
     }
     let filesystem = layout.root_filesystem();
-    let options = if filesystem == RootFilesystem::Btrfs {
-        btrfs_options(layout.btrfs_compression)
-    } else {
-        "defaults".into()
-    };
-    let pass = if filesystem == RootFilesystem::Ext4 {
-        1
-    } else {
-        0
-    };
+    let pass = u8::from(filesystem == RootFilesystem::Ext4);
     Ok(format!(
-        "UUID={root_uuid} / {} {options} 0 {pass}\nUUID={boot_uuid} /boot vfat fmask=0177,dmask=0077,quiet 0 2\n",
+        "UUID={root_uuid} / {} defaults 0 {pass}\nUUID={boot_uuid} /boot vfat fmask=0177,dmask=0077,quiet 0 2\n",
         filesystem.as_str()
     ))
 }
@@ -373,26 +358,18 @@ pub struct PartitionEnvironment {
     pub device_links: Option<PathBuf>,
 }
 
+/// Live prepares the authenticated formatting tools before authorizing erasure.
 pub fn create_partitions<R: CommandRunner>(
     runner: &mut R,
     layout: &DiskLayout,
     environment: &PartitionEnvironment,
 ) -> Result<(), StorageError> {
     let filesystem = layout.root_filesystem.as_str();
-    let tools = match layout.root_filesystem {
-        RootFilesystem::Xfs => "xfsprogs",
-        RootFilesystem::Ext4 => "e2fsprogs",
-        RootFilesystem::Btrfs => "btrfs-progs",
-    };
-    apk(runner, &["add", "parted", tools])?;
-    apk(runner, &["add", "dosfstools"])?;
-    apk(runner, &["add", "wipefs"])?;
     let device = layout.device();
     checked(
         runner,
         &command("wipefs", ["-a", "-f", &device], "live-wipe-disk"),
     )?;
-    apk(runner, &["del", "wipefs"])?;
 
     let mut args = vec![
         device.clone(),
@@ -452,23 +429,23 @@ pub fn create_partitions<R: CommandRunner>(
         )?;
     }
     let root = layout.root_partition();
-    // Preserve conservative XFS features and fully allocated optional swapfiles.
-    // No reflink sharing is needed on this root, including its optional swapfile.
-    let args = vec![
-        "-f",
-        // Avoid a full-volume discard during installation on thin VPS disks.
-        "-K",
-        "-m",
-        "reflink=0,bigtime=0,inobtcount=0",
-        "-i",
-        "nrext64=0",
-        &root,
-    ];
     match layout.root_filesystem {
-        RootFilesystem::Xfs => checked(runner, &command("mkfs.xfs", args, "live-format-root"))?,
-        RootFilesystem::Btrfs => checked(
+        // Keep conservative XFS features and skip full-volume discard on thin disks.
+        RootFilesystem::Xfs => checked(
             runner,
-            &command("mkfs.btrfs", ["-f", "-K", &root], "live-format-root"),
+            &command(
+                "mkfs.xfs",
+                [
+                    "-f",
+                    "-K",
+                    "-m",
+                    "reflink=0,bigtime=0,inobtcount=0",
+                    "-i",
+                    "nrext64=0",
+                    &root,
+                ],
+                "live-format-root",
+            ),
         )?,
         // Fully initialize inode tables/journal before the target's first boot.
         // Avoid whole-volume discard on thin-provisioned VPS disks.
@@ -486,11 +463,7 @@ pub fn create_partitions<R: CommandRunner>(
             ),
         )?,
     }
-    refresh_partition_table(runner, layout, environment)?;
-    if layout.target == Target::Alpine {
-        apk(runner, &["del", "parted"])?;
-    }
-    Ok(())
+    refresh_partition_table(runner, layout, environment)
 }
 
 pub fn refresh_partition_table<R: CommandRunner>(
@@ -650,42 +623,6 @@ pub fn mount_target<R: CommandRunner>(
             "live-mount-root",
         ),
     )?;
-    if layout.root_filesystem.as_str() == "btrfs" {
-        let subvolume = root.join("@");
-        let created = checked(
-            runner,
-            &command(
-                "btrfs",
-                [
-                    "subvolume".as_ref(),
-                    "create".as_ref(),
-                    subvolume.as_os_str(),
-                ],
-                "create-root-subvolume",
-            ),
-        );
-        let unmounted = checked(
-            runner,
-            &command("umount", [root.as_os_str()], "unmount-btrfs-top"),
-        );
-        created?;
-        unmounted?;
-        checked(
-            runner,
-            &command(
-                "mount",
-                [
-                    "-t".as_ref(),
-                    "btrfs".as_ref(),
-                    "-o".as_ref(),
-                    btrfs_options(layout.btrfs_compression).as_ref(),
-                    layout.root_partition().as_ref(),
-                    root.as_os_str(),
-                ],
-                "mount-btrfs-root",
-            ),
-        )?;
-    }
     {
         let efi = layout.boot_partition();
         let efi_root = root.join("boot");
@@ -719,12 +656,4 @@ pub(crate) fn valid_uuid(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
         && value.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-')
-}
-
-pub fn btrfs_options(compression: u8) -> String {
-    if compression == 0 {
-        "subvol=@".into()
-    } else {
-        format!("subvol=@,compress=zstd:{compression}")
-    }
 }

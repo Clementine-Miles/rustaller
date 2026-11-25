@@ -193,47 +193,23 @@ mod sources {
     }
 
     #[test]
-    fn gentoo_variants_are_bound_to_exact_init_and_nomultilib_identity() {
-        use rustaller::config::GentooInit;
-        use rustaller::host::sources::{gentoo_stage3_index_url, parse_gentoo_stage3_for_init};
-        for init in [GentooInit::Openrc, GentooInit::Systemd] {
-            let path = format!(
-                "20261018T124555Z/stage3-{}-20261018T124555Z.tar.xz",
-                init.stage3_variant()
-            );
-            let source =
-                parse_gentoo_stage3_for_init(&armored(&format!("{path} 1234")), "x86_64", init)
-                    .unwrap();
-            assert_eq!(source.init_system().unwrap(), init);
-            assert!(source.validate_for_init(init).is_ok());
-            let other = if init == GentooInit::Openrc {
-                GentooInit::Systemd
-            } else {
-                GentooInit::Openrc
-            };
-            assert!(source.validate_for_init(other).is_err());
-            assert!(
-                parse_gentoo_stage3_for_init(&armored(&format!("{path} 1234")), "x86_64", other)
-                    .is_err()
-            );
-            assert!(
-                gentoo_stage3_index_url(init)
-                    .ends_with(&format!("latest-stage3-{}.txt", init.stage3_variant()))
-            );
-            for bad in [
-                path.replace("nomultilib-", ""),
-                path.replace("nomultilib", "musl"),
-                path.replace("amd64", "x32"),
-            ] {
-                assert!(
-                    parse_gentoo_stage3_for_init(&armored(&format!("{bad} 1234")), "x86_64", init)
-                        .is_err()
-                );
-            }
-            let mut tampered = source.clone();
-            tampered.url = "https://untrusted.example/stage3.tar.xz".into();
-            assert!(tampered.init_system().is_err());
+    fn gentoo_accepts_only_official_openrc_nomultilib_identity() {
+        use rustaller::host::sources::GENTOO_STAGE3_INDEX_URL;
+        assert!(GENTOO_STAGE3_INDEX_URL.ends_with("latest-stage3-amd64-nomultilib-openrc.txt"));
+        let source =
+            parse_gentoo_stage3(&armored(&format!("{STAGE3_PATH} 1234")), "x86_64").unwrap();
+        assert!(source.validate().is_ok());
+        for bad in [
+            STAGE3_PATH.replace("openrc", "systemd"),
+            STAGE3_PATH.replace("nomultilib-", ""),
+            STAGE3_PATH.replace("nomultilib", "musl"),
+            STAGE3_PATH.replace("amd64", "x32"),
+        ] {
+            assert!(parse_gentoo_stage3(&armored(&format!("{bad} 1234")), "x86_64").is_err());
         }
+        let mut tampered = source;
+        tampered.url = "https://untrusted.example/stage3.tar.xz".into();
+        assert!(tampered.validate().is_err());
     }
     #[test]
     fn gentoo_digest_requires_one_correctly_named_sha512_in_signed_metadata() {

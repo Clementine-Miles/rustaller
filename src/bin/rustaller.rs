@@ -110,18 +110,17 @@ fn run_install(plan: &InstallPlan, provided_confirmation: Option<&str>) -> Resul
     if !plan.target.is_automatic() {
         return Err("Select an installation or Alpine Live rescue route.".into());
     }
+    plan.validate_install_credentials()
+        .map_err(|error| error.to_string())?;
     if rustaller::worker_bytes().is_empty() {
         return Err("matching rustaller-worker is not embedded".into());
     }
-    // Own the resolved plan: hostname discovery and a terminal root-password
-    // prompt must be serialized before crossing into Live, never rediscovered there.
-    let mut encoded = rustaller::codec::encode_plan(plan).map_err(|error| error.to_string())?;
-    let decoded = rustaller::codec::decode_plan(&encoded);
-    encoded.fill(0);
-    let mut owned_plan = decoded.map_err(|error| error.to_string())?;
-    rustaller::host::hostname::resolve_install_hostname(&mut owned_plan, std::path::Path::new("/"));
-    let plan = &mut owned_plan;
+    let mut owned_plan = plan.clone();
     let mut runner = SystemRunner;
+    owned_plan.ssh_keys = handoff::resolve_public_keys(&mut runner, &owned_plan.ssh_keys)
+        .map_err(|error| error.to_string())?;
+    rustaller::host::hostname::resolve_install_hostname(&mut owned_plan, std::path::Path::new("/"));
+    let plan = &owned_plan;
     let deployment = handoff::discover(&mut runner, plan).map_err(|error| error.to_string())?;
     println!(
         "{}",
@@ -140,20 +139,6 @@ fn run_install(plan: &InstallPlan, provided_confirmation: Option<&str>) -> Resul
     );
     println!("Firmware: {}", deployment.manifest.boot_mode.as_str());
     println!("Confirmation token: {}", deployment.confirmation);
-    if plan.hold != Some(1)
-        && plan.username.as_deref().unwrap_or("root") != "root"
-        && plan.root_password.is_none()
-    {
-        if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-            return Err("Non-root installation requires a separate --root-password. Use the TUI or interactive CLI to enter it privately.".into());
-        }
-        plan.root_password = Some(rustaller::host::password::prompt_root_password()?);
-    }
-    plan.validate_install_credentials()
-        .map_err(|error| error.to_string())?;
-    if plan.password.is_none() && plan.ssh_keys.is_empty() {
-        return Err("Configure an SSH public key or password before installation. Use the TUI to enter and confirm a password without command-line history.".into());
-    }
     let confirmation = match provided_confirmation {
         Some(value) => value.to_owned(),
         None => {

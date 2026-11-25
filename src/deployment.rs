@@ -116,9 +116,9 @@ impl DeploymentManifest {
             return Err(fail("Debian stable codename"));
         }
         if let Some(stage) = &self.gentoo_stage3 {
-            stage.init_system().map_err(|_| {
-                fail("Gentoo source is not the official selected nomultilib stage3")
-            })?;
+            stage
+                .validate()
+                .map_err(|_| fail("Gentoo source is not the official nomultilib OpenRC stage3"))?;
         }
         Ok(())
     }
