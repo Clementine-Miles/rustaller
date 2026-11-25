@@ -164,10 +164,10 @@ The guest validates the address, prefix, DAD state, default route and AAAA
 resolution. HTTPS must report both an IPv6 source and peer and a verified
 certificate. No proxy or IPv4 fallback participates in the probe.
 
-The harness also authenticates SSH over an IPv6 target socket using SSH
-forwarding through its IPv4 management channel. This verifies the installed
-daemon's IPv6 listener, selected port and key policy. External inbound
-reachability is outside this SLIRP topology.
+The authenticated IPv4 control session starts a test-only Rust relay inside
+the guest. A separate SSH session then authenticates against the target's
+IPv6 socket and verifies the selected port. The relay keeps the installed
+SSH policy intact. External inbound reachability is outside this SLIRP topology.
 
 `--ipv6-acceptance external` requires direct, working IPv6 from the QEMU host to
 the documented HTTPS endpoint `www.debian.org`. It tests the actual installed
@@ -178,6 +178,12 @@ It does not establish SLAAC, DHCPv6 or IPv6 resolver transport.
 `--source-network-manager networkmanager` installs NetworkManager on the
 disposable Debian source and applies a static Ethernet profile before the
 installer captures the network policy.
+
+On 2026-11-25, the NetworkManager-to-Alpine BIOS/ext4 case passed installation,
+native initramfs rebuild and reboot. The Alpine UEFI/ext4 image passed controlled
+IPv6 transport and authenticated SSH before and after a native rebuild on its
+disposable snapshot. Held preparation reset passed in the original guest.
+[Network, reset and boot evidence](evidence/2026-11-25/network-reset-boot.txt)
 
 The `smoke --iso` input is the official Alpine Live test image, not an installer
 feature. Its stock boot files and source-image bootloader remain harness inputs;

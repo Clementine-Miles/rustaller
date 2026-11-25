@@ -5,7 +5,10 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 use std::process::{Command, ExitCode};
 use std::time::Duration;
-use std::{fs, io::Read};
+use std::{
+    fs,
+    io::{Read, Write},
+};
 
 fn main() -> ExitCode {
     match run() {
@@ -18,6 +21,11 @@ fn main() -> ExitCode {
 }
 fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
+    if let [mode, address] = args.as_slice()
+        && mode == "relay-ipv6"
+    {
+        return relay_ipv6_ssh(address);
+    }
     if let [mode, address, gateway, dns, url, ca, ssh_port] = args.as_slice()
         && mode == "ipv6"
     {
@@ -265,6 +273,36 @@ fn run() -> Result<(), String> {
         native_kernel_update(target, selected_kernel, &transport)?;
     }
     println!("RUSTALLER_VM_ACCEPTANCE_PASS target={target} firmware={firmware}");
+    Ok(())
+}
+
+fn relay_ipv6_ssh(address: &str) -> Result<(), String> {
+    let ip = address
+        .parse::<Ipv6Addr>()
+        .map_err(|_| "invalid fixture IPv6 address")?;
+    if !ip.is_unique_local() {
+        return Err("IPv6 SSH relay requires the disposable ULA fixture".into());
+    }
+    let peer = SocketAddr::V6(SocketAddrV6::new(ip, 22, 0, 0));
+    let mut connection =
+        TcpStream::connect_timeout(&peer, Duration::from_secs(5)).map_err(|e| e.to_string())?;
+    let mut input = connection.try_clone().map_err(|e| e.to_string())?;
+    let _upstream = std::thread::spawn(move || {
+        let _ = std::io::copy(&mut std::io::stdin().lock(), &mut input);
+        let _ = input.shutdown(std::net::Shutdown::Write);
+    });
+    let mut output = std::io::stdout().lock();
+    let mut buffer = [0; 8192];
+    loop {
+        let size = connection.read(&mut buffer).map_err(|e| e.to_string())?;
+        if size == 0 {
+            break;
+        }
+        output
+            .write_all(&buffer[..size])
+            .and_then(|()| output.flush())
+            .map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 

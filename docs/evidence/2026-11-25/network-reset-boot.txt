@@ -1,0 +1,24 @@
+Rustaller network, lifecycle and loader acceptance
+Source baseline 9ba26f27745bccc2d965f1657dfb33d5cdc4f60a matched origin/main before edits.
+Disposable QEMU 10.0.13 under TCG. No host block device or physical reboot.
+
+Held preparation and cancellation
+The Alpine UEFI install case first ran rustaller reset on idle state, authorized --hold 0 on the disposable source, and reset twice. Preparation assets and state were removed. The original boot ID, partition-table ID and key-authenticated SSH were unchanged. /sys/kernel/kexec_loaded remained 0. PASS
+
+Firmware fallback fixtures
+Debian cloud 6.12.107+deb13-cloud-amd64 with an early archive and a separate initramfs. A Rust guest PID 1 reported the booted generation and ordered archives.
+OVMF, SeaBIOS/MBR and SeaBIOS/GPT selected current normally. With the current kernel absent, a bad header or the current initramfs absent, each loaded previous and reached PID 1.
+With both kernel paths missing, the loaders reported the error and made one previous-generation attempt. No kernel ran.
+
+External IPv6 prerequisite
+The host had link-local IPv6 and no route to the endpoint's IPv6 address. The external acceptance mode refused the prerequisite with IPv6 Internet connectivity NOT VERIFIED.
+
+NetworkManager source to Alpine BIOS/MBR ext4
+Debian source ran NetworkManager 1.52.1 with one active wired static profile. Rustaller captured it automatically, used it through Alpine Live, installed the Minimal target, regenerated initramfs and rebooted.
+Alpine linux-virt 6.18.65-0-virt booted before and after the rebuild. Public-key SSH, default IPv4 route, DNS, FAT32 /boot and the saved command-line argument passed.
+
+Explicit dual-stack Alpine UEFI/GPT ext4
+The full source-to-Live installation booted Alpine 6.18.65-0-virt. Its initial probe verified the IPv6 address, route, AAAA resolver, HTTPS and listener. The probe's first SSH forwarding mechanism was prohibited by the installed SSH policy. The fixed Rust relay was verified by restarting a disposable snapshot of the installed disk. The installed SSH configuration was kept intact.
+Before and after mkinitfs and reboot, eth0 had exactly one global-scope address fd42:5253:544c:1::15/64 and one IPv6 default route via fd42:5253:544c:1::2 on eth0. The native resolver returned an AAAA record for www.debian.org using the fixture's IPv4 DNS server. A direct IPv6 HTTPS request from fd42:5253:544c:1::15 to the controlled endpoint at fd42:5253:544c:1::2 returned HTTP 200 and certificate verification result 0. A separate public-key SSH session reached the guest IPv6 socket on port 22 via the relay.
+The boot ID changed after the rebuild. The extra_cmdline comment survived publication, rustaller_ipv6_reboot=1 reached the running kernel, and rustaller-boot-update verify passed. The kernel release stayed 6.18.65-0-virt.
+External IPv6, external inbound SSH, IPv6 DNS transport, SLAAC and DHCPv6 were not verified end to end by this fixture.

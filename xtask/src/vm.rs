@@ -1928,17 +1928,12 @@ impl Ssh {
         command
     }
     fn ipv6_ssh_connection(&self, address: &str) -> Result<String, String> {
-        // This libslirp hostfwd accepts IPv4 only. Open a direct-tcpip stream
-        // inside the guest to its IPv6 address, then authenticate a separate
-        // SSH session over that stream with the existing disposable client key.
-        let mut connector = Command::new("ssh");
-        self.common(&mut connector);
-        connector.args([
-            "-W",
-            &format!("[{address}]:22"),
-            "-p",
-            &self.port.to_string(),
-            "root@127.0.0.1",
+        // SLIRP hostfwd accepts IPv4 only. The test probe relays the second
+        // SSH stream inside the disposable guest without changing sshd policy.
+        let connector = self.command_owned(&[
+            "/var/tmp/rustaller-vm/probe".into(),
+            "relay-ipv6".into(),
+            address.into(),
         ]);
         let proxy = connector
             .get_args()
