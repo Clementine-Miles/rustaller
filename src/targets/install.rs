@@ -636,18 +636,33 @@ fn configure_key_only_ssh<R: CommandRunner>(
     // NP is deliberately not a usable crypt(3) hash. Non-PAM OpenSSH treats
     // native shadow lock markers such as '!' as disabling public-key login as
     // well. A nonempty invalid hash keeps the account usable without a password.
-    let shadow = if username == "root" {
-        "root:NP\n".into()
+    const NO_PASSWORD: &str = "NP";
+    let accounts = ["root", username];
+    let accounts = &accounts[..if username == "root" { 1 } else { 2 }];
+    if busybox_accounts {
+        let shadow = accounts
+            .iter()
+            .map(|account| format!("{account}:{NO_PASSWORD}\n"))
+            .collect::<String>();
+        run_checked(
+            runner,
+            &account_command(root, &["chpasswd", "-e"], "ssh-disable-account-passwords")
+                .stdin(CommandInput::Bytes(shadow.into_bytes())),
+        )?;
     } else {
-        format!("root:NP\n{username}:NP\n")
-    };
-    run_checked(
-        runner,
-        &account_command(root, &["chpasswd", "-e"], "ssh-disable-account-passwords")
-            .stdin(CommandInput::Bytes(shadow.into_bytes()))
-            .stdout_mode(OutputMode::Discard)
-            .stderr_mode(OutputMode::Capture),
-    )?;
+        // Shadow's chpasswd validates crypt hash syntax and rejects NP.
+        // usermod accepts the fixed disabled-password marker as shadow data.
+        for account in accounts {
+            run_checked(
+                runner,
+                &account_command(
+                    root,
+                    &["usermod", "--password", NO_PASSWORD, account],
+                    "ssh-disable-account-passwords",
+                ),
+            )?;
+        }
+    }
 
     if username != "root" {
         let administrator = capture(
@@ -761,8 +776,10 @@ fn key_only_ssh_config(plan: &crate::model::InstallPlan, native: &str, live: boo
     // whose per-connection semantics can override a prepended global policy.
     // Carry forward the native PAM choice, subsystems and forwarding behavior.
     for line in native.lines() {
-        if let Some((key, value)) = line.split_once(' ')
-            && NATIVE_SSH_SETTINGS.contains(&key)
+        if let Some((name, value)) = line.split_once(' ')
+            && let Some(&key) = NATIVE_SSH_SETTINGS
+                .iter()
+                .find(|key| name.eq_ignore_ascii_case(key))
             && !value.is_empty()
             && !value.chars().any(char::is_control)
             && (key != "usepam" || value == "yes")
@@ -805,7 +822,7 @@ fn valid_effective_ssh_policy(plan: &crate::model::InstallPlan, facts: &str) -> 
     let setting = |key| {
         let mut values = facts.lines().filter_map(|line| {
             let (name, value) = line.split_once(' ')?;
-            (key == name).then_some(value)
+            name.eq_ignore_ascii_case(key).then_some(value)
         });
         let first = values.next()?;
         values.next().is_none().then_some(first)
@@ -2096,7 +2113,7 @@ mod runtime_tests {
             plan.ssh_port = Some(2222);
             let config = key_only_ssh_config(
                 &plan,
-                "passwordauthentication yes\nusepam yes\nallowtcpforwarding no\n\
+                "PasswordAuthentication yes\nUsePAM yes\nAllowTcpForwarding no\n\
                  disableforwarding yes\ninclude sshd_config.d/test.conf\nmatch all\n\
                  subsystem sftp /usr/lib/openssh/sftp-server\n",
                 false,
@@ -2106,12 +2123,13 @@ mod runtime_tests {
             assert!(config.contains(&format!("PermitRootLogin {root_login}\n")));
             assert!(config.contains("PasswordAuthentication no\n"));
             assert!(config.contains("AuthenticationMethods publickey\n"));
-            assert!(config.contains("usepam yes\n"));
-            assert!(config.contains("allowtcpforwarding no\n"));
+            assert!(config.contains("UsePAM yes\n"));
+            assert!(config.contains("AllowTcpForwarding no\n"));
             assert!(config.contains("disableforwarding yes\n"));
             assert!(config.contains("subsystem sftp /usr/lib/openssh/sftp-server\n"));
             assert!(!config.contains("sshd_config.d"));
             assert!(!config.contains("match all"));
+            assert!(valid_effective_ssh_policy(&plan, &config));
             let facts = ssh_policy_facts(&plan);
             assert!(valid_effective_ssh_policy(&plan, &facts));
             for (previous, altered) in [
@@ -2145,17 +2163,28 @@ mod runtime_tests {
         );
         let effective = ssh_policy_facts(&plan);
         let mut runner = MockRunner::new(
-            ["", "", "", "0\n", "", "", "usepam yes\n", "", &effective]
-                .map(|stdout| CommandOutput::new(Some(0), stdout.as_bytes().to_vec(), vec![])),
+            [
+                "",
+                "",
+                "",
+                "",
+                "0\n",
+                "",
+                "",
+                "usepam yes\n",
+                "",
+                &effective,
+            ]
+            .map(|stdout| CommandOutput::new(Some(0), stdout.as_bytes().to_vec(), vec![])),
         );
         configure_key_only_ssh(&mut runner, &root.0, &plan, false).unwrap();
         let calls = runner.calls();
-        assert_eq!(calls[2].phase, "ssh-disable-account-passwords");
-        assert_eq!(
-            calls[2].stdin,
-            CommandInput::Bytes(b"root:NP\nalice:NP\n".to_vec())
-        );
-        assert_eq!(calls[3].phase, "ssh-verify-sudo-account");
+        for (call, account) in calls[2..4].iter().zip(["root", "alice"]) {
+            assert_eq!(call.phase, "ssh-disable-account-passwords");
+            assert_eq!(call.args[1..], ["usermod", "--password", "NP", account]);
+            assert_eq!(call.stdin, CommandInput::Null);
+        }
+        assert_eq!(calls[4].phase, "ssh-verify-sudo-account");
         for (path, mode) in [
             ("home/alice", 0o700),
             ("home/alice/.ssh", 0o700),

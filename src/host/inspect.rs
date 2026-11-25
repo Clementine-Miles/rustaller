@@ -1105,17 +1105,19 @@ fn network(runner: &mut impl CommandRunner, root: &Path) -> NetworkFacts {
     let ssh_policy = fact(runner, "sshd", &["-T"])
         .lines()
         .filter(|v| {
-            [
-                "port ",
-                "passwordauthentication ",
-                "pubkeyauthentication ",
-                "kbdinteractiveauthentication ",
-                "permitemptypasswords ",
-                "authenticationmethods ",
-                "permitrootlogin ",
-            ]
-            .iter()
-            .any(|prefix| v.starts_with(prefix))
+            v.split_once(' ').is_some_and(|(name, _)| {
+                [
+                    "port",
+                    "passwordauthentication",
+                    "pubkeyauthentication",
+                    "kbdinteractiveauthentication",
+                    "permitemptypasswords",
+                    "authenticationmethods",
+                    "permitrootlogin",
+                ]
+                .iter()
+                .any(|key| name.eq_ignore_ascii_case(key))
+            })
         })
         .map(line)
         .take(16)

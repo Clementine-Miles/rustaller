@@ -2011,7 +2011,11 @@ impl Ssh {
         let effective_config = String::from_utf8_lossy(&effective.stdout);
         let root_login = effective_config
             .lines()
-            .find_map(|line| line.strip_prefix("permitrootlogin "));
+            .filter_map(|line| line.split_once(' '))
+            .find_map(|(name, value)| {
+                name.eq_ignore_ascii_case("permitrootlogin")
+                    .then_some(value)
+            });
         let expected_root = if self.account == "root" {
             matches!(root_login, Some("prohibit-password" | "without-password"))
         } else {
@@ -2027,7 +2031,11 @@ impl Ssh {
                 "authenticationmethods publickey",
             ]
             .iter()
-            .all(|expected| effective_config.lines().any(|line| line == *expected))
+            .all(|expected| {
+                effective_config
+                    .lines()
+                    .any(|line| line.eq_ignore_ascii_case(expected))
+            })
         {
             write_private(log, &effective.stdout)?;
             return Err(format!(
