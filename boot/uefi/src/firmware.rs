@@ -57,10 +57,52 @@ fn run() -> Result<()> {
         );
         read_config(&mut root, "/rustaller/boot.toml.previous")
     })?;
-    let entry = select(&config);
-    println!("Booting {} ({})", entry.name, entry.kernel);
+    let mut serial = serial_console(&config);
+    let entry = select(&config, &mut serial);
+    let mut started = false;
+    match attempt(&mut root, parent, &config, entry, &mut serial, &mut started) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            report(&mut serial, &format!("{}: {}", entry.name, error.status()));
+            // StartImage is the irreversible boundary: a returning application
+            // may already have run code. Never guess that retry is safe then.
+            if started {
+                return Err(error);
+            }
+            let previous = config.fallback_entry(entry).ok_or(error)?;
+            report(&mut serial, "Trying previous generation once");
+            attempt(
+                &mut root,
+                parent,
+                &config,
+                previous,
+                &mut serial,
+                &mut started,
+            )
+            .inspect_err(|error| {
+                report(
+                    &mut serial,
+                    &format!("{}: {}", previous.name, error.status()),
+                );
+            })
+        }
+    }
+}
+
+fn attempt(
+    root: &mut Directory,
+    parent: Handle,
+    config: &Config,
+    entry: &Entry,
+    serial: &mut Option<boot::ScopedProtocol<Serial>>,
+    started: &mut bool,
+) -> Result<()> {
+    report(
+        serial,
+        &format!("Booting {} ({})", entry.name, entry.kernel),
+    );
     let kernel_path = filename(&entry.kernel)?;
-    let mut kernel = open(&mut root, &kernel_path)?;
+    let mut kernel = open(root, &kernel_path)?;
     let mut header = [0u8; 4096];
     read_exact(&mut kernel, &mut header)?;
     if !rustaller_boot_core::valid_efi_stub(&header) {
@@ -72,9 +114,8 @@ fn run() -> Result<()> {
         // Align the next cpio header after any early uncompressed microcode archives.
         let len = stream.len().next_multiple_of(4);
         stream.resize(len, 0);
-        append_file(&mut root, source, &mut stream, 512 * 1024 * 1024)?;
+        append_file(root, source, &mut stream, 512 * 1024 * 1024)?;
     }
-    drop(root);
     let options = CString16::try_from(
         config
             .cmdline()
@@ -91,6 +132,9 @@ fn run() -> Result<()> {
                 image.set_load_options(options.as_ptr().cast(), options.num_bytes() as u32);
             }
             drop(image);
+            // Release the firmware serial device before control leaves the loader.
+            serial.take();
+            *started = true;
             boot::start_image(child)
         })();
         // StartImage normally unloads a returning application. Clear any
@@ -104,6 +148,14 @@ fn run() -> Result<()> {
         }
         result
     })
+}
+
+fn report(console: &mut Option<boot::ScopedProtocol<Serial>>, text: &str) {
+    if let Some(serial) = console.as_mut() {
+        let _ = serial.write(text.as_bytes());
+        let _ = serial.write(b"\r\n");
+    }
+    println!("{text}");
 }
 
 fn read_config(root: &mut Directory, path: &str) -> Result<Config> {
@@ -176,9 +228,8 @@ fn append_file(root: &mut Directory, path: &str, out: &mut Vec<u8>, limit: usize
     read_exact(&mut file, &mut out[start..])
 }
 
-fn select(cfg: &Config) -> &Entry {
-    let mut serial = cfg
-        .boot
+fn serial_console(cfg: &Config) -> Option<boot::ScopedProtocol<Serial>> {
+    cfg.boot
         .serial
         .then(|| {
             let handle = boot::get_handle_for_protocol::<Serial>().ok()?;
@@ -191,7 +242,10 @@ fn select(cfg: &Config) -> &Entry {
             serial.set_attributes(&mode).ok()?;
             Some(serial)
         })
-        .flatten();
+        .flatten()
+}
+
+fn select<'a>(cfg: &'a Config, serial: &mut Option<boot::ScopedProtocol<Serial>>) -> &'a Entry {
     let keys = b"123456789abcdefg";
     for (entry, key) in cfg.entries.iter().zip(keys) {
         let line = format!(

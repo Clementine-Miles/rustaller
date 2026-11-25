@@ -339,6 +339,106 @@ pub fn verify_mount(runner: &mut impl CommandRunner, root: &Path, boot_uuid: &st
     Ok(())
 }
 
+/// New installations pin the selected package family without reinterpreting
+/// four-line boot-state files from existing installations.
+pub fn record_kernel_family(root: &Path, package: &str) -> Result<()> {
+    validate_root(root).map_err(|e| e.to_string())?;
+    if !known_family(package) {
+        return Err("unsupported selected kernel family".into());
+    }
+    write_config::<crate::shared::configure::ConfigurationError>(
+        &root.join("etc/rustaller/kernel-family"),
+        format!("{package}\n").as_bytes(),
+        0o600,
+    )
+    .map_err(|e| e.to_string())
+}
+fn known_family(package: &str) -> bool {
+    matches!(
+        package,
+        "linux"
+            | "linux-lts"
+            | "linux-virt"
+            | "linux-hardened"
+            | "linux-zen"
+            | "linux-cachyos"
+            | "linux-image-amd64"
+            | "linux-image-cloud-amd64"
+            | "sys-kernel/gentoo-kernel-bin"
+    )
+}
+fn family_matches(package: &str, version: &str) -> bool {
+    match package {
+        "linux-image-amd64" => version.ends_with("-amd64") && !version.ends_with("-cloud-amd64"),
+        "linux-image-cloud-amd64" => version.ends_with("-cloud-amd64"),
+        "linux-lts" => matches!(version, "lts" | "linux-lts"),
+        "linux-virt" => version == "virt",
+        "sys-kernel/gentoo-kernel-bin" => {
+            version.ends_with("-gentoo-dist-bin") || version.ends_with("-gentoo-dist")
+        }
+        _ => version == package,
+    }
+}
+struct SelectedFamily {
+    package: String,
+    required: bool,
+}
+fn selected_family(root: &Path, active: Option<&str>) -> Result<Option<SelectedFamily>> {
+    let path = root.join("etc/rustaller/kernel-family");
+    match fs::symlink_metadata(&path) {
+        Ok(_) => {
+            let bytes = regular(root, &path)?;
+            let family = std::str::from_utf8(&bytes)
+                .map_err(|_| "invalid kernel family")?
+                .trim();
+            if !known_family(family) {
+                return Err("unsupported recorded kernel family".into());
+            }
+            Ok(Some(SelectedFamily {
+                package: family.into(),
+                required: true,
+            }))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let current = active
+                .and_then(|text| rustaller_boot_core::Config::parse(text).ok())
+                .and_then(|cfg| cfg.entry("current").and_then(|e| e.version.clone()));
+            Ok(current.and_then(|version| {
+                [
+                    "linux",
+                    "linux-lts",
+                    "linux-virt",
+                    "linux-hardened",
+                    "linux-zen",
+                    "linux-cachyos",
+                    "linux-image-cloud-amd64",
+                    "linux-image-amd64",
+                    "sys-kernel/gentoo-kernel-bin",
+                ]
+                .into_iter()
+                .find(|family| family_matches(family, &version))
+                .map(|package| SelectedFamily {
+                    package: package.into(),
+                    required: false,
+                })
+            }))
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+fn managed_current(name: &str) -> bool {
+    name == "current"
+        || name
+            .strip_prefix("current-")
+            .is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
+}
+fn managed_previous(name: &str) -> bool {
+    name == "previous"
+        || name
+            .strip_prefix("previous-")
+            .is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
+}
+
 struct BootState {
     firmware: BootMode,
     uuid: String,
@@ -389,6 +489,7 @@ fn refresh_inner(runner: &mut impl CommandRunner, root: &Path, installing: bool)
     let _lock = refresh_lock(root)?;
     let boot = root.join("boot");
     let active_toml = native_active(&boot, installing, state.firmware)?;
+    let mut family = selected_family(root, active_toml.as_deref())?;
     cleanup_temporaries(&boot)?;
     if boot.join("rustaller").is_dir() {
         cleanup_temporaries(&boot.join("rustaller"))?;
@@ -432,6 +533,24 @@ fn refresh_inner(runner: &mut impl CommandRunner, root: &Path, installing: bool)
             checked_source(root, &initrd)?,
         ));
     }
+    if let Some(selected) = &family {
+        pairs.sort_by(|a, b| {
+            family_matches(&selected.package, &b.0)
+                .cmp(&family_matches(&selected.package, &a.0))
+                .then_with(|| kernel_order(&b.0, &a.0))
+        });
+        if !pairs
+            .first()
+            .is_some_and(|p| family_matches(&selected.package, &p.0))
+        {
+            if selected.required {
+                return Err("selected kernel family has no complete native kernel/initramfs pair; old boot policy retained".into());
+            }
+            // Legacy installations never recorded a package selection. If its
+            // inferred family was removed, retain their historical behavior.
+            family = None;
+        }
+    }
     if pairs.is_empty() || pairs.len() > 8 {
         return Err("require 1-8 complete kernel/initramfs pairs".into());
     }
@@ -452,12 +571,19 @@ fn refresh_inner(runner: &mut impl CommandRunner, root: &Path, installing: bool)
     }
     // Flat native files are the only sources: never traverse our generation
     // directories, even though both sources and destinations now live on FAT.
-    let needed = pairs.iter().map(|(_, k, i)| k.1 + i.1).sum::<u64>()
-        + microcode.iter().map(|(_, n)| n).sum::<u64>();
+    let reuse = reusable_sources(&boot, active_toml.as_deref(), &pairs, &microcode)?;
+    let needed = pairs
+        .iter()
+        .flat_map(|(_, k, i)| [k, i])
+        .chain(&microcode)
+        .filter(|source| !reuse.contains_key(&source.0))
+        .map(|source| source.1)
+        .sum::<u64>();
     prune_old_generations(root, state.firmware)?;
     if boot.join(NATIVE_CONFIG).is_file()
         && let Some(active) = &active_toml
         && unchanged(&boot, active, &pairs, &microcode)?
+        && root_identity(active, &state)?
     {
         return Ok(());
     }
@@ -486,18 +612,41 @@ fn refresh_inner(runner: &mut impl CommandRunner, root: &Path, installing: bool)
     let mut modules = Vec::new();
     for (i, (source, size)) in microcode.iter().enumerate() {
         let path = format!("{generation}/microcode-{i}");
-        copy_generation(source, &boot.join(&path), *size)?;
-        modules.push(path);
+        if let Some(saved) = reuse.get(source) {
+            modules.push(saved.clone());
+        } else {
+            copy_generation(source, &boot.join(&path), *size)?;
+            modules.push(path);
+        }
     }
     let mut entries = Vec::new();
     for (i, (version, kernel, initrd)) in pairs.into_iter().enumerate() {
-        let k = format!("{generation}/kernel-{i}");
-        let init = format!("{generation}/initrd-{i}");
-        copy_generation(&kernel.0, &boot.join(&k), kernel.1)?;
-        copy_generation(&initrd.0, &boot.join(&init), initrd.1)?;
+        let k = match reuse.get(&kernel.0) {
+            Some(path) => path.clone(),
+            None => {
+                let path = format!("{generation}/kernel-{i}");
+                copy_generation(&kernel.0, &boot.join(&path), kernel.1)?;
+                path
+            }
+        };
+        let init = match reuse.get(&initrd.0) {
+            Some(path) => path.clone(),
+            None => {
+                let path = format!("{generation}/initrd-{i}");
+                copy_generation(&initrd.0, &boot.join(&path), initrd.1)?;
+                path
+            }
+        };
         entries.push((version, k, init));
     }
-    publish_toml(&boot, &state, active_toml.as_deref(), &entries, &modules)?;
+    publish_toml(
+        &boot,
+        &state,
+        active_toml.as_deref(),
+        &entries,
+        &modules,
+        family.as_ref().map(|f| f.package.as_str()),
+    )?;
     verify(root)?;
     prune_old_generations(root, state.firmware)
 }
@@ -507,6 +656,9 @@ pub fn verify(root: &Path) -> Result<()> {
     let boot = root.join("boot");
     let text = config_text(&boot, NATIVE_CONFIG)?.ok_or("active boot.toml missing")?;
     validate_toml(&boot, &text, state.firmware)?;
+    if !root_identity(&text, &state)? {
+        return Err("boot.toml root identity differs from recorded install state".into());
+    }
     verify_loaders(root, state.firmware)
 }
 fn config_text(boot: &Path, name: &str) -> Result<Option<String>> {
@@ -553,6 +705,44 @@ fn native_active(boot: &Path, installing: bool, mode: BootMode) -> Result<Option
 type Source = (PathBuf, u64);
 type KernelPair = (String, Source, Source);
 
+fn root_identity(text: &str, state: &BootState) -> Result<bool> {
+    let cfg = rustaller_boot_core::Config::parse(text).map_err(|e| e.to_string())?;
+    Ok(
+        cfg.linux.root == format!("UUID={}", state.uuid)
+            && cfg.linux.rootfstype == state.filesystem,
+    )
+}
+/// Reuse only installer-owned immutable payloads; native flat files and custom
+/// paths can be overwritten by package tools and never become stable references.
+fn reusable_sources(
+    boot: &Path,
+    active: Option<&str>,
+    pairs: &[KernelPair],
+    microcode: &[Source],
+) -> Result<std::collections::BTreeMap<PathBuf, String>> {
+    let mut result = std::collections::BTreeMap::new();
+    let Some(text) = active else {
+        return Ok(result);
+    };
+    let cfg = rustaller_boot_core::Config::parse(text).map_err(|e| e.to_string())?;
+    let mut paths = std::collections::BTreeSet::new();
+    for entry in cfg.entries {
+        for path in std::iter::once(entry.kernel).chain(entry.initrds) {
+            if path[1..].split('/').next().is_some_and(managed_generation) {
+                paths.insert(path[1..].to_owned());
+            }
+        }
+    }
+    for source in pairs.iter().flat_map(|(_, k, i)| [k, i]).chain(microcode) {
+        for path in &paths {
+            if equal_source(source, &boot.join(path))? {
+                result.insert(source.0.clone(), path.clone());
+                break;
+            }
+        }
+    }
+    Ok(result)
+}
 fn equal_source(source: &Source, saved: &Path) -> Result<bool> {
     use std::io::Read;
     let mut a = fs::File::open(&source.0).map_err(|e| e.to_string())?;
@@ -573,28 +763,31 @@ fn equal_source(source: &Source, saved: &Path) -> Result<bool> {
         }
     }
 }
-fn entry_name(index: usize) -> String {
-    if index == 0 {
-        "current".into()
-    } else {
-        format!("current-{}", index + 1)
-    }
-}
 fn unchanged(boot: &Path, text: &str, pairs: &[KernelPair], microcode: &[Source]) -> Result<bool> {
     let cfg = rustaller_boot_core::Config::parse(text).map_err(|e| e.to_string())?;
     if pairs.len()
         != cfg
             .entries
             .iter()
-            .filter(|e| e.name.starts_with("current"))
+            .filter(|e| {
+                managed_current(&e.name)
+                    && pairs
+                        .iter()
+                        .any(|(version, _, _)| e.version.as_deref() == Some(version))
+            })
             .count()
     {
         return Ok(false);
     }
     for (i, (version, kernel, initrd)) in pairs.iter().enumerate() {
-        let Some(entry) = cfg.entry(&entry_name(i)) else {
-            return Ok(false);
+        let entry = if i == 0 {
+            cfg.entry("current")
+        } else {
+            cfg.entries
+                .iter()
+                .find(|e| managed_current(&e.name) && e.version.as_deref() == Some(version))
         };
+        let Some(entry) = entry else { return Ok(false) };
         if entry.version.as_deref() != Some(version)
             || entry.initrds.len() != microcode.len() + 1
             || !equal_source(kernel, &boot.join(&entry.kernel[1..]))?
@@ -620,13 +813,36 @@ fn publish_toml(
     active: Option<&str>,
     pairs: &[(String, String, String)],
     modules: &[String],
+    family: Option<&str>,
 ) -> Result<()> {
-    use rustaller_boot_core::{Entry, create, replace_entries};
-    let mut entries: Vec<_> = pairs
-        .iter()
-        .enumerate()
-        .map(|(i, (version, k, rd))| Entry {
-            name: entry_name(i),
+    use rustaller_boot_core::{Entry, create, replace_entries_for_root};
+    let old = active
+        .map(|text| validate_toml(boot, text, state.firmware))
+        .transpose()?;
+    let mut names = std::collections::BTreeSet::from(["current".to_owned(), "previous".to_owned()]);
+    let mut entries = Vec::new();
+    for (i, (version, k, rd)) in pairs.iter().enumerate() {
+        let name = if i == 0 {
+            "current".to_owned()
+        } else {
+            let existing = old.as_ref().and_then(|cfg| {
+                cfg.entries.iter().find(|e| {
+                    e.name != "current"
+                        && managed_current(&e.name)
+                        && e.version.as_deref() == Some(version)
+                        && !names.contains(&e.name)
+                })
+            });
+            existing.map(|e| e.name.clone()).unwrap_or_else(|| {
+                (2..=16)
+                    .map(|n| format!("current-{n}"))
+                    .find(|n| !names.contains(n))
+                    .expect("at most eight kernels")
+            })
+        };
+        names.insert(name.clone());
+        entries.push(Entry {
+            name,
             version: Some(version.clone()),
             kernel: format!("/{k}"),
             initrds: modules
@@ -634,37 +850,98 @@ fn publish_toml(
                 .chain(std::iter::once(rd))
                 .map(|p| format!("/{p}"))
                 .collect(),
+        });
+    }
+    let matches_family = |entry: &Entry| {
+        family.is_none_or(|family| {
+            entry
+                .version
+                .as_deref()
+                .is_some_and(|v| family_matches(family, v))
         })
-        .collect();
-    let text = if let Some(old) = active {
-        let cfg = validate_toml(boot, old, state.firmware)?;
-        let current: Vec<_> = cfg
-            .entries
-            .into_iter()
-            .filter(|e| e.name.starts_with("current"))
-            .collect();
-        let previous: Vec<_> = current
-            .iter()
-            .cloned()
-            .map(|mut e| {
-                e.name = e.name.replacen("current", "previous", 1);
-                e
+    };
+    let selected = &entries[0];
+    let old_current = old.as_ref().and_then(|cfg| {
+        cfg.entry("current")
+            .filter(|e| matches_family(e))
+            .or_else(|| {
+                cfg.entries
+                    .iter()
+                    .filter(|e| managed_current(&e.name) && matches_family(e))
+                    .max_by(|a, b| {
+                        kernel_order(
+                            a.version.as_deref().unwrap_or(""),
+                            b.version.as_deref().unwrap_or(""),
+                        )
+                    })
             })
-            .collect();
-        entries.extend(previous.iter().cloned());
-        let text = replace_entries(old, &entries).map_err(|e| e.to_string())?;
-        validate_toml(boot, &text, state.firmware)?;
-        // Both names in this recovery document refer to the same intact older
-        // generation. This also preserves a user's explicit default="previous".
-        let recovery: Vec<_> = current.into_iter().chain(previous).collect();
-        let backup = replace_entries(old, &recovery).map_err(|e| e.to_string())?;
-        fat_replace(&boot.join(BACKUP_CONFIG), backup.as_bytes())?;
-        text
-    } else {
-        create(&format!("UUID={}", state.uuid), &state.filesystem, &entries)
-            .map_err(|e| e.to_string())?
+    });
+    let same_payload = |a: &Entry, b: &Entry| a.kernel == b.kernel && a.initrds == b.initrds;
+    let previous = match old_current {
+        Some(old_current) if !same_payload(selected, old_current) => Some(old_current.clone()),
+        _ => old
+            .as_ref()
+            .and_then(|cfg| cfg.entry("previous"))
+            .filter(|e| matches_family(e) && !same_payload(selected, e))
+            .cloned()
+            .or_else(|| {
+                entries
+                    .iter()
+                    .skip(1)
+                    .find(|e| matches_family(e) && !same_payload(selected, e))
+                    .cloned()
+            }),
+    };
+    if let Some(mut previous) = previous {
+        previous.name = "previous".into();
+        entries.push(previous);
+    }
+    // Keep explicit custom entries and a user's still-valid explicit menu
+    // default. Managed primary aliases alone are rotated by the updater.
+    if let Some(cfg) = &old {
+        for entry in &cfg.entries {
+            if (!managed_current(&entry.name) && !managed_previous(&entry.name)
+                || entry.name == cfg.boot.default
+                    && !matches!(entry.name.as_str(), "current" | "previous"))
+                && !entries.iter().any(|e| e.name == entry.name)
+            {
+                entries.push(entry.clone());
+            }
+        }
+    }
+    let root = format!("UUID={}", state.uuid);
+    let text = match active {
+        Some(text) => replace_entries_for_root(text, &entries, &root, &state.filesystem)
+            .map_err(|e| e.to_string())?,
+        None => create(&root, &state.filesystem, &entries).map_err(|e| e.to_string())?,
     };
     validate_toml(boot, &text, state.firmware)?;
+    if let Some(old) = active {
+        let cfg = rustaller_boot_core::Config::parse(old).map_err(|e| e.to_string())?;
+        let mut recovery: Vec<_> = cfg
+            .entries
+            .iter()
+            .filter(|e| !managed_previous(&e.name))
+            .cloned()
+            .collect();
+        // The backup represents the complete older current set, not another
+        // chain of increasingly old previous generations. Preserve an explicit
+        // previous default as an alias of its independently bootable current.
+        if let Some(current) = cfg.entry("current") {
+            let mut previous = current.clone();
+            previous.name = "previous".into();
+            recovery.push(previous);
+        }
+        if !recovery.iter().any(|e| e.name == cfg.boot.default)
+            && let Some(default) = cfg.entry(&cfg.boot.default)
+        {
+            recovery.push(default.clone());
+        }
+        let backup = replace_entries_for_root(old, &recovery, &root, &state.filesystem)
+            .map_err(|e| e.to_string())?;
+        validate_toml(boot, &backup, state.firmware)?;
+        fat_replace(&boot.join(BACKUP_CONFIG), backup.as_bytes())?;
+    }
     sync_directory(boot)?;
     fat_replace(&boot.join(NATIVE_CONFIG), text.as_bytes())
 }
@@ -904,6 +1181,170 @@ fn prune_old_generations(root: &Path, mode: BootMode) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        command::{CommandOutput, MockRunner},
+        test_support::Scratch,
+    };
+    fn kernel(d: &Scratch, path: &str, label: &str) {
+        let mut bytes = vec![0u8; 4096];
+        bytes[..2].copy_from_slice(b"MZ");
+        bytes[60..64].copy_from_slice(&64u32.to_le_bytes());
+        bytes[64..70].copy_from_slice(b"PE\0\0\x64\x86");
+        bytes[84..86].copy_from_slice(&240u16.to_le_bytes());
+        bytes[88..90].copy_from_slice(&0x20bu16.to_le_bytes());
+        bytes[132] = 1;
+        bytes[156] = 10;
+        bytes[0x1fe..0x200].copy_from_slice(&[0x55, 0xaa]);
+        bytes[0x202..0x206].copy_from_slice(b"HdrS");
+        bytes[0x206..0x208].copy_from_slice(&0x20cu16.to_le_bytes());
+        bytes[0x211] = 1;
+        bytes[0x234] = 1;
+        bytes[0x236] = 1;
+        bytes.extend_from_slice(label.as_bytes());
+        let path = d.0.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, bytes).unwrap();
+    }
+    fn generation_fixture() -> Scratch {
+        let d = Scratch::new("boot-refine");
+        kernel(&d, "boot/vmlinuz-linux", "kernel");
+        kernel(&d, "boot/rustaller-1-1/kernel-0", "kernel");
+        kernel(&d, "boot/EFI/BOOT/BOOTX64.EFI", "loader");
+        d.write("boot/initramfs-linux.img", "initramfs");
+        d.write("boot/rustaller-1-1/initrd-0", "initramfs");
+        d.write(
+            "etc/rustaller/boot-state",
+            "RUSTALLER-BOOT-1-EFI\n1234-abcd\nbtrfs\nabcd-5678\n",
+        );
+        let entry = rustaller_boot_core::Entry {
+            name: "current".into(),
+            version: Some("linux".into()),
+            kernel: "/rustaller-1-1/kernel-0".into(),
+            initrds: vec!["/rustaller-1-1/initrd-0".into()],
+        };
+        d.write(
+            "boot/rustaller/boot.toml",
+            &rustaller_boot_core::create("UUID=1234-abcd", "btrfs", &[entry]).unwrap(),
+        );
+        d
+    }
+    fn mount_runner(d: &Scratch, free: u64) -> MockRunner {
+        let mut sector = vec![0; 512];
+        sector[510..].copy_from_slice(&[0x55, 0xaa]);
+        sector[36] = 8;
+        sector[44] = 2;
+        sector[67..71].copy_from_slice(&0xabcd5678u32.to_le_bytes());
+        MockRunner::new([
+            CommandOutput::new(Some(0),format!("vfat {} abcd-5678 / /dev/vda1\n",d.0.join("boot").display()).into_bytes(),vec![]),
+            CommandOutput::new(Some(0),sector,vec![]),
+            CommandOutput::new(Some(0),format!("Filesystem 1024-blocks Used Available Capacity Mounted\n/dev/vda1 524288 100 {free} 1% /boot\n").into_bytes(),vec![]),
+        ])
+    }
+    fn config(d: &Scratch) -> rustaller_boot_core::Config {
+        rustaller_boot_core::Config::parse(&d.read("boot/rustaller/boot.toml")).unwrap()
+    }
+    #[test]
+    fn selected_family_stays_current_and_unrelated_updates_preserve_previous() {
+        let d = generation_fixture();
+        record_kernel_family(&d.0, "linux").unwrap();
+        kernel(&d, "boot/vmlinuz-linux-zen", "zen");
+        d.write("boot/initramfs-linux-zen.img", "zen-initrd");
+        refresh(&mut mount_runner(&d, 500000), &d.0).unwrap();
+        assert_eq!(
+            config(&d).entry("current").unwrap().version.as_deref(),
+            Some("linux")
+        );
+        assert!(config(&d).entry("previous").is_none());
+        d.write("boot/initramfs-linux.img", "new-initrd");
+        refresh(&mut mount_runner(&d, 500000), &d.0).unwrap();
+        let selected = config(&d);
+        let previous = selected.entry("previous").unwrap().clone();
+        assert_eq!(previous.version.as_deref(), Some("linux"));
+        assert_eq!(
+            selected.entry("current").unwrap().kernel,
+            previous.kernel,
+            "unchanged kernel reused across initrd rebuild"
+        );
+        d.write("boot/initramfs-linux-zen.img", "updated-zen-initrd");
+        refresh(&mut mount_runner(&d, 500000), &d.0).unwrap();
+        assert_eq!(config(&d).entry("previous"), Some(&previous));
+        fs::remove_file(d.0.join("boot/vmlinuz-linux")).unwrap();
+        let before = d.read("boot/rustaller/boot.toml");
+        assert!(refresh(&mut mount_runner(&d, 500000), &d.0).is_err());
+        assert_eq!(d.read("boot/rustaller/boot.toml"), before);
+    }
+    #[test]
+    fn refresh_pins_root_identity_retains_custom_policy_and_copies_only_changed_payloads() {
+        let d = generation_fixture();
+        record_kernel_family(&d.0, "linux").unwrap();
+        let old = d.read("boot/rustaller/boot.toml");
+        let edited = old
+            .replace(
+                "root = \"UUID=1234-abcd\"",
+                "root = \"UUID=ffff-1111\" # keep root comment",
+            )
+            .replace("rootfstype = \"btrfs\"", "rootfstype = \"xfs\"")
+            .replace(
+                "default = \"current\"",
+                "default = \"rescue\" # custom default",
+            )
+            .replace(
+                "[linux]",
+                "[linux]\ncmdline_override='root=/dev/user ro' # explicit full override",
+            )
+            + "\n[entries.rescue] # custom entry\nkernel='/rustaller-1-1/kernel-0'\ninitrds=['/rustaller-1-1/initrd-0'] # custom initrd\n";
+        d.write("boot/rustaller/boot.toml", &edited);
+        assert!(verify(&d.0).is_err());
+        refresh(&mut mount_runner(&d, 1025), &d.0).unwrap();
+        let new = d.read("boot/rustaller/boot.toml");
+        let cfg = config(&d);
+        assert_eq!(cfg.linux.root, "UUID=1234-abcd");
+        assert_eq!(cfg.linux.rootfstype, "btrfs");
+        assert_eq!(cfg.boot.default, "rescue");
+        assert_eq!(cfg.cmdline().unwrap(), "root=/dev/user ro");
+        for comment in [
+            "# keep root comment",
+            "# custom default",
+            "# explicit full override",
+            "# custom entry",
+            "# custom initrd",
+        ] {
+            assert!(new.contains(comment), "{comment}");
+        }
+        assert_eq!(
+            cfg.entry("current").unwrap().kernel,
+            "/rustaller-1-1/kernel-0"
+        );
+        assert_eq!(
+            fs::read_dir(d.0.join("boot"))
+                .unwrap()
+                .filter(|e| e
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("rustaller-"))
+                .count(),
+            1
+        );
+        verify(&d.0).unwrap();
+    }
+    #[test]
+    fn family_matching_separates_debian_cloud_and_generic_and_rejects_unknown_pins() {
+        assert!(family_matches("linux-image-amd64", "6.12.1-amd64"));
+        assert!(!family_matches("linux-image-amd64", "6.12.1-cloud-amd64"));
+        assert!(family_matches(
+            "linux-image-cloud-amd64",
+            "6.12.1-cloud-amd64"
+        ));
+        assert!(!family_matches("linux-image-cloud-amd64", "6.12.1-amd64"));
+        assert!(family_matches(
+            "sys-kernel/gentoo-kernel-bin",
+            "6.18.64-p1-gentoo-dist-bin",
+        ));
+        let d = generation_fixture();
+        assert!(record_kernel_family(&d.0, "linux-custom").is_err());
+    }
     #[test]
     fn partial_stream_copy_cannot_publish_over_an_existing_payload() {
         let d = crate::test_support::Scratch::new("boot-copy");

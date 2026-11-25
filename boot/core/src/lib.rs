@@ -141,6 +141,15 @@ impl Config {
             .expect("default entry validated on parse")
     }
 
+    /// Only one older generation is eligible after a recoverable load error.
+    /// Do not retry a manually selected previous entry or identical payloads.
+    pub fn fallback_entry(&self, selected: &Entry) -> Option<&Entry> {
+        self.entry("previous").filter(|previous| {
+            selected.name != "previous"
+                && (previous.kernel != selected.kernel || previous.initrds != selected.initrds)
+        })
+    }
+
     pub fn cmdline(&self) -> Result<String, Error> {
         let linux = &self.linux;
         let uuid = linux
@@ -294,7 +303,7 @@ fn validate_entries(entries: &[Entry]) -> Result<(), Error> {
 #[cfg(feature = "edit")]
 mod edit;
 #[cfg(feature = "edit")]
-pub use edit::{create, replace_entries};
+pub use edit::{create, replace_entries, replace_entries_for_root};
 
 mod efi;
 pub use efi::{valid_bzimage, valid_efi_stub};
@@ -343,6 +352,55 @@ initrds = ["/generation/early", "/generation/initramfs"]
                 .is_err()
             );
         }
+    }
+    #[test]
+    fn only_a_distinct_previous_payload_is_eligible_for_one_fallback() {
+        let text = format!(
+            "{POLICY}\n[entries.previous]\nkernel='/older/kernel'\ninitrds=['/older/initrd']\n"
+        );
+        let cfg = Config::parse(&text).unwrap();
+        let previous = cfg.fallback_entry(cfg.entry("current").unwrap()).unwrap();
+        assert_eq!(previous.name, "previous");
+        assert!(cfg.fallback_entry(previous).is_none());
+        let identical = text
+            .replace("/older/kernel", "/generation/vmlinuz")
+            .replace(
+                "initrds=['/older/initrd']",
+                "initrds=['/generation/early','/generation/initramfs']",
+            );
+        let cfg = Config::parse(&identical).unwrap();
+        assert!(cfg.fallback_entry(cfg.entry("current").unwrap()).is_none());
+        assert!(
+            Config::parse(POLICY)
+                .unwrap()
+                .fallback_entry(&Entry::default())
+                .is_none()
+        );
+    }
+    #[cfg(feature = "edit")]
+    #[test]
+    fn identity_refresh_retains_custom_entry_comments_default_and_explicit_override() {
+        let text=POLICY.replace("[linux]","[boot]\ndefault='rescue' # chosen entry\n[linux]\ncmdline_override='root=/dev/custom ro' # explicit override")
+            .replace("root = \"UUID=1234-abcd\"","root = \"UUID=1234-abcd\" # recorded root")
+            + "\n[entries.rescue] # custom menu\nkernel='/custom/kernel' # custom image\ninitrds=['/custom/initrd'] # custom stream\n";
+        let cfg = Config::parse(&text).unwrap();
+        let updated =
+            replace_entries_for_root(&text, &cfg.entries, "UUID=abcd-5678", "xfs").unwrap();
+        for comment in [
+            "# chosen entry",
+            "# explicit override",
+            "# recorded root",
+            "# custom menu",
+            "# custom image",
+            "# custom stream",
+        ] {
+            assert!(updated.contains(comment), "{comment}: {updated}");
+        }
+        let cfg = Config::parse(&updated).unwrap();
+        assert_eq!(cfg.boot.default, "rescue");
+        assert_eq!(cfg.linux.root, "UUID=abcd-5678");
+        assert_eq!(cfg.linux.rootfstype, "xfs");
+        assert_eq!(cfg.cmdline().unwrap(), "root=/dev/custom ro");
     }
     #[test]
     fn parser_bounds_ambiguity_and_paths() {

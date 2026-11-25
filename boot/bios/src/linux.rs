@@ -71,6 +71,34 @@ pub fn boot(count: u32) -> Result<()> {
         config(&mut fat, "/rustaller/boot.toml.previous").map_err(|_| e)
     })?;
     let entry = select(&cfg);
+    match attempt(&mut fat, map, heap, HEAP, count, &cfg, entry) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            machine::message(error, cfg.boot.serial);
+            machine::message("\r\n", cfg.boot.serial);
+            let previous = cfg.fallback_entry(entry).ok_or(error)?;
+            machine::message("Trying previous generation once\r\n", cfg.boot.serial);
+            attempt(&mut fat, map, heap, HEAP, count, &cfg, previous)
+        }
+    }
+}
+
+/// Every error here occurs before the irreversible protected-mode Linux jump.
+/// Physical workspace allocation is stateless, so the failed attempt's ranges
+/// can be overwritten without retaining references into them.
+fn attempt(
+    fat: &mut Fat,
+    map: &[machine::Region],
+    heap: u32,
+    heap_size: u32,
+    count: u32,
+    cfg: &Config,
+    entry: &Entry,
+) -> Result<()> {
+    machine::message(
+        &format!("Booting {} ({})\r\n", entry.name, entry.kernel),
+        cfg.boot.serial,
+    );
     let kernel = fat.file(&entry.kernel)?;
     let mut header = [0u8; 4096];
     fat.bytes(kernel, 0, &mut header)?;
@@ -101,7 +129,7 @@ pub fn boot(count: u32) -> Result<()> {
     // Prefer the advertised physical load address. Fall back to a suitably
     // aligned placement only for a relocatable kernel.
     let pref = u64::from_le_bytes(header[0x258..0x260].try_into().unwrap());
-    let used = [(heap, HEAP)];
+    let used = [(heap, heap_size)];
     let dest = pref
         .checked_add(u64::from(init_size))
         .and_then(|end| machine::allocate(map, init_size, align, end, &used).ok())
@@ -126,7 +154,7 @@ pub fn boot(count: u32) -> Result<()> {
         total,
         4096,
         u64::from(u32at(&header, 0x22c)) + 1,
-        &[(heap, HEAP), (dest, init_size)],
+        &[(heap, heap_size), (dest, init_size)],
     )?;
     let stream = unsafe { machine::ram(rd, total) };
     let mut end = 0;

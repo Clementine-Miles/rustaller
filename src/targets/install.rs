@@ -560,6 +560,10 @@ pub fn configure<R: CommandRunner>(
         if let Some(frp) = &assets.frp {
             install_frpc(root, plan.plan(), frp)?;
         }
+        let selected_kernel =
+            super::packages::configuration_for_plan(plan.plan(), plan.plan().target, true)?;
+        super::boot::record_kernel_family(root, selected_kernel.kernel.package)
+            .map_err(InstallError::Boot)?;
         super::boot::install(runner, root, layout, &assets.work, root_uuid, efi_uuid)
             .map_err(InstallError::Boot)?;
         if plan.plan().target == Target::Alpine {

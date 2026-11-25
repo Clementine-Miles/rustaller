@@ -48,11 +48,26 @@ Both loaders use the same maintained TOML parser and policy code. Limits are 32 
 
 ## Kernel updates and recovery
 
-The distribution owns its normal kernel and initramfs files in `/boot`. Apk/mkinitfs, Debian kernel hooks/initramfs-tools, pacman/mkinitcpio and Gentoo installkernel/dracut invoke `/usr/local/libexec/rustaller-boot-update`. Native hooks verify the mount point, filesystem root, FAT32 boot record and recorded volume serial before writing. The helper serializes publication, matches native filenames, orders kernel versions, places available microcode before each initramfs and copies only complete pairs. It checks and syncs the copies before replacing the active TOML file. Identical payloads can reuse the current generation. Automatic updates replace the installer-owned entries and preserve the user's boot policy, Linux arguments and comments elsewhere in the document.
+The distribution owns its normal kernel and initramfs files in `/boot`. Apk/mkinitfs, Debian kernel hooks/initramfs-tools, pacman/mkinitcpio and Gentoo installkernel/dracut invoke `/usr/local/libexec/rustaller-boot-update`. Native hooks verify the mount point, filesystem root, FAT32 boot record and recorded volume serial before writing. The helper selects the newest complete kernel from the recorded installation package family for `current`. Additional complete kernels remain available by name. A legacy installation can infer its family from the existing current entry if recognizable. Microcode precedes the initramfs. Identical payloads already in a managed generation are reused after byte comparison.
+
+Refresh reasserts the root UUID and filesystem from install state. It preserves
+Btrfs settings, user arguments, comments and explicit command-line overrides.
+It validates and syncs the complete generation before publishing its entries.
 
 Allow room for the native images, the retained generations and the incoming generation plus 1 MiB of metadata reserve. A 512 MiB boot partition can run out of space during an upgrade. The exact requirement depends on the actual kernel and initramfs sizes. Publication fails if a native pair is incomplete or there is insufficient space.
 
-Select `previous` in the loader menu to use the last independently published generation. A validated recovery document, `/boot/rustaller/boot.toml.previous`, accompanies it after an update. If the primary configuration is unreadable the loader announces the recovery attempt. A malformed user edit stops automatic publication. From rescue, mount the expected boot filesystem, verify the saved configuration and its referenced payloads, then restore the recovery file as `boot.toml`. After repairing the native kernel or initramfs, run:
+Select `previous` in the loader menu to use the last independently published
+generation. Both loaders can also try it once when the selected entry cannot be
+prepared, for example when its kernel or initramfs is missing. UEFI stops at
+`StartImage` and BIOS stops at the Linux entry point. A kernel that starts and
+hangs or panics requires manual recovery.
+
+A validated recovery document, `/boot/rustaller/boot.toml.previous`, accompanies
+a published update. An unreadable primary configuration uses this recovery
+document. A malformed user edit stops automatic publication. From rescue,
+mount the expected boot filesystem, verify the saved configuration and its
+referenced payloads, then restore the recovery file as `boot.toml`. After
+repairing the native kernel or initramfs, run these commands.
 
 ```console
 /usr/local/libexec/rustaller-boot-update check
