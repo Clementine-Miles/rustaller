@@ -75,7 +75,7 @@ Linux x86_64 hosts only. Automatic installation erases the selected disk.
 Rust embeds its matching worker and verifies official installation sources.
 New target systems use rustaller-boot schema 1; Btrfs swapfiles are unsupported.
 Without --network-mac, Rustaller inherits a verified source network policy.
-With --network-mac, omitted address families are disabled. Use --dns for static DNS.
+With --network-mac, omitted families get no addresses from the plan. Use --dns for static DNS.
 "rustaller reset" cancels installer-owned preparation before a handoff.
 "#;
 

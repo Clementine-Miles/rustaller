@@ -348,12 +348,26 @@ pub fn apply_network_policy<R: CommandRunner>(
             };
             if dhcp {
                 let client = if family.ipv6() { "udhcpc6" } else { "udhcpc" };
-                checked(
+                let lease = checked(
                     runner,
                     "timeout",
                     ["15", client, "-i", &interface, "-f", "-q", "-n"],
                     "initrd-configured-dhcp",
-                )?;
+                );
+                if let Err(error) = lease {
+                    // RA-driven policies may obtain an address without a
+                    // stateful DHCPv6 lease. Only accept independently
+                    // established addressing and routing for that policy.
+                    if !(family.ipv6()
+                        && network.accept_ra
+                        && check_family(runner, &interface, network, family)?)
+                    {
+                        return Err(error);
+                    }
+                    eprintln!(
+                        "Router advertisements satisfy the planned Live IPv6 address and route policy."
+                    );
+                }
             }
             if !wanted.is_empty() || dynamic {
                 wait_for_family(runner, &interface, network, family)?;

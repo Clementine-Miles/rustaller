@@ -202,6 +202,39 @@ fn scratch() -> Scratch {
 }
 
 #[test]
+fn combined_router_advertisement_policy_can_proceed_without_a_stateful_lease() {
+    let scratch = scratch();
+    let mut plan = manifest();
+    plan.network[0].accept_ra = true;
+    plan.network[0].dhcp6 = true;
+    let mut runner = NetworkRunner::new();
+    runner.timeout_status = 1;
+    apply_network_policy(
+        &mut runner,
+        &scratch.0,
+        &plan,
+        &NetworkConfig::default(),
+        &DnsConfig::default(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(runner.dhcp(), ["udhcpc6"]);
+
+    runner.v6_address = None;
+    assert!(
+        apply_network_policy(
+            &mut runner,
+            &scratch.0,
+            &plan,
+            &NetworkConfig::default(),
+            &DnsConfig::default(),
+            None,
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn static_dual_stack_sets_on_link_gateways_and_resolver_without_dhcp() {
     let scratch = scratch();
     let mut runner = NetworkRunner::new();
