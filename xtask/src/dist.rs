@@ -94,10 +94,11 @@ pub fn package(
         return Err("release LICENSE is empty".into());
     }
     let info = format!(
-        "{{\n  \"schema_version\": 1,\n  \"tag\": \"{tag}\",\n  \"package_version\": \"{}\",\n  \"runtime_version\": \"{}\",\n  \"plan_schema_version\": {},\n  \"target\": \"{}\",\n  \"installer_complete\": false,\n  \"tui\": {},\n  \"source_commit\": \"{}\",\n  \"source_dirty\": {},\n  \"host_bytes\": {},\n  \"worker_bytes\": {},\n  \"worker_sha256\": \"{}\",\n  \"boot_schema_version\": 1,\n  \"boot_artifact_sha256\": {{\n{boot_digests}\n  }}\n}}\n",
+        "{{\n  \"schema_version\": 1,\n  \"tag\": \"{tag}\",\n  \"package_version\": \"{}\",\n  \"runtime_version\": \"{}\",\n  \"plan_schema_version\": {},\n  \"default_install_profile\": \"{}\",\n  \"target\": \"{}\",\n  \"installer_complete\": false,\n  \"tui\": {},\n  \"source_commit\": \"{}\",\n  \"source_dirty\": {},\n  \"host_bytes\": {},\n  \"worker_bytes\": {},\n  \"worker_sha256\": \"{}\",\n  \"boot_schema_version\": 1,\n  \"boot_artifact_sha256\": {{\n{boot_digests}\n  }}\n}}\n",
         rustaller::PACKAGE_VERSION,
         rustaller::RUNTIME_VERSION,
         rustaller::model::CURRENT_SCHEMA_VERSION,
+        rustaller::config::InstallProfile::default().as_str(),
         crate::bundle::TARGET,
         artifacts.tui,
         source.commit,
@@ -107,7 +108,7 @@ pub fn package(
         sha256(&worker),
     );
     let notes = format!(
-        "# {tag} — development preview\n\nThis build contains real kexec handoff and disk-erasing installation actions. Full four-target BIOS/UEFI acceptance is pending; installer_complete remains false. Use disposable test machines with console access.\n\n- Linux x86_64 static musl entry binary; matching worker embedded.\n- TUI: {}.\n- Automatic targets: Alpine, Debian, Arch and Gentoo through Alpine Live. Source PID 1 must be systemd or openrc-init; automatic network capture currently requires an applied explicit flat systemd-networkd profile.\n- --inspect is read-only; an installation requires the complete identity-bound confirmation token.\n- The native ssh-keygen TUI tool writes local key files; back up the private key before erasing its disk.\n- rustaller-boot schema 1 target bootloader; FAT32 /boot plus XFS, ext4 or Btrfs root. BIOS/UEFI boot acceptance remains pending. Reset execution is unavailable.\n- Source commit: `{}`; uncommitted changes: {}.\n- Runtime compatibility: `{}`.\n- Keep this release as a draft/prerelease until acceptance is complete.\n\nDownload `{ENTRY_NAME}` and verify it against `SHA256SUMS`. Source and the GPL-3.0 license are provided by this repository.\n",
+        "# {tag} — development preview\n\nThis build contains kexec handoff and disk-erasing installation actions. Full four-target BIOS/UEFI acceptance is pending. Use disposable test machines with console access.\n\n- Linux x86_64 static musl entry binary with matching worker embedded.\n- TUI enabled: {}.\n- Automatic targets are Alpine, Debian, Arch and Gentoo through Alpine Live. Minimal is the default footprint. Source PID 1 must be systemd or openrc-init. Use a verified Ethernet policy or explicit MAC-bound addressing.\n- `--inspect` is read-only. An installation requires exact identity-bound confirmation.\n- `rustaller reset` cancels held preparation before handoff.\n- `rustaller-boot` uses FAT32 at /boot and supports XFS, ext4 and Btrfs roots. See the testing documentation for firmware coverage.\n- Source commit `{}`, uncommitted changes {}.\n- Runtime compatibility `{}`.\n\nDownload `{ENTRY_NAME}` and verify it against `SHA256SUMS`. Source and the GPL-3.0 license are provided by this repository.\n",
         artifacts.tui,
         source.commit,
         source.dirty,
@@ -261,6 +262,7 @@ mod tests {
         let metadata = fs::read_to_string(output.join("build-info.json")).unwrap();
         assert!(metadata.contains("\"installer_complete\": false"));
         assert!(metadata.contains("\"tui\": true"));
+        assert!(metadata.contains("\"default_install_profile\": \"minimal\""));
         let sums = fs::read_to_string(output.join("SHA256SUMS")).unwrap();
         assert_eq!(sums.lines().count(), 3);
         for line in sums.lines() {

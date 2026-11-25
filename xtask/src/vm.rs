@@ -14,12 +14,123 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const HELP: &str = "Usage: cargo xtask vm-acceptance ACTION [OPTIONS]\n\nActions:\n  smoke           BIOS/UEFI Alpine Live boot smoke, not an installation test\n  prepare-source  Provision a disposable Debian Cloud source for kexec tests\n  install         Reinstall disposable source overlays and verify target boots\n\nCommon options:\n  --tools PATH       Extracted Debian QEMU/OVMF/xorriso root\n  --accel MODE       tcg|kvm (default tcg; no automatic fallback)\n  --memory-mib N     Guest RAM in MiB (512-65536; default 3072)\n  --output PATH      New private result directory (must not exist)\n  --firmware MODE    bios|efi|both (default both)\n  --timeout SECONDS  Per-case deadline (default 1800)\n\nSmoke: --iso FILE --sha256 HEX\nSource/install: --base FILE --sha512 HEX --key FILE --public-key FILE\n  --disk-bus BUS     virtio-blk|virtio-scsi|sata|nvme|pvscsi (default virtio-blk)\nInstall: --installer STATIC_ELF --target alpine|debian|arch|gentoo|all\n  --filesystem FS   xfs|ext4|btrfs|all (default xfs)\n  --kernel CHOICE    Target kernel choice or all official families\n  --gentoo-init INIT openrc|systemd|both (default openrc; Gentoo only)\n  --kernel-update B  yes|no (default no); upgrade, regenerate, reboot, verify\n  --boot-size-mib N  FAT32 capacity (512-4096); consider 1024 for upgrades\n  --root-size-mib N  Optional bounded root partition for large sparse disks\n  --keep-disks B     yes|no (default no); retain successful guest overlays\n  --disk-size-gib N  Optional sparse overlay expansion (3072 tests BIOS/GPT)\n\nAll disk files and EFI variables are fresh disposable copies. No host devices,\nnetwork-policy changes, host reboot, or privileged mounts are used.\n";
+const HELP: &str = "Usage: cargo xtask vm-acceptance ACTION [OPTIONS]\n\nActions:\n  smoke           BIOS/UEFI Alpine Live boot smoke, not an installation test\n  prepare-source  Provision a disposable Debian Cloud source for kexec tests\n  install         Reinstall disposable source overlays and verify target boots\n\nCommon options:\n  --tools PATH       Extracted Debian QEMU/OVMF/xorriso root\n  --accel MODE       tcg|kvm (default tcg; no automatic fallback)\n  --memory-mib N     Guest RAM in MiB (512-65536; default 3072)\n  --output PATH      New private result directory (must not exist)\n  --firmware MODE    bios|efi|both (default both)\n  --timeout SECONDS  Per-case deadline (default 1800)\n\nSmoke: --iso FILE --sha256 HEX\nSource/install: --base FILE --sha512 HEX --key FILE --public-key FILE\n  --disk-bus BUS     virtio-blk|virtio-scsi|sata|nvme|pvscsi (default virtio-blk)\nInstall: --installer STATIC_ELF --target alpine|debian|arch|gentoo|all\n  --filesystem FS   xfs|ext4|btrfs|all (default xfs)\n  --kernel CHOICE    Target kernel choice or all official families\n  --gentoo-init INIT openrc|systemd|both (default openrc; Gentoo only)\n  --kernel-update B  yes|no (default no); upgrade, regenerate, reboot, verify\n  --ipv6-acceptance  off|local|external static dual-stack checks\n  --reset-check B   yes|no (default no); verify held cancellation before install\n  --boot-size-mib N  FAT32 capacity (512-4096); consider 1024 for upgrades\n  --root-size-mib N  Optional bounded root partition for large sparse disks\n  --keep-disks B     yes|no (default no); retain successful guest overlays\n  --disk-size-gib N  Optional sparse overlay expansion (3072 tests BIOS/GPT)\n\nAll disk files and EFI variables are fresh disposable copies. No host devices,\nnetwork-policy changes, host reboot, or privileged mounts are used.\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Firmware {
     Bios,
     Efi,
+}
+
+const VM_IPV6_ADDRESS: &str = "fd42:5253:544c:1::15/64";
+const VM_IPV6_GATEWAY: &str = "fd42:5253:544c:1::2";
+const VM_IPV6_PREFIX: &str = "fd42:5253:544c:1::/64";
+const EXTERNAL_IPV6_HOST: &str = "www.debian.org";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Ipv6Acceptance {
+    Off,
+    Local,
+    External,
+}
+
+struct LocalIpv6Endpoint {
+    server: Child,
+    port: u16,
+    cert: PathBuf,
+}
+
+impl LocalIpv6Endpoint {
+    fn start(output: &Path) -> Result<Self, String> {
+        let key = output.join("ipv6-local.key");
+        let cert = output.join("ipv6-local.pem");
+        private_file(&key)?;
+        let generate = Command::new("openssl")
+            .args([
+                "req",
+                "-new",
+                "-x509",
+                "-newkey",
+                "ec",
+                "-pkeyopt",
+                "ec_paramgen_curve:P-256",
+                "-nodes",
+                "-days",
+                "2",
+                "-subj",
+                "/CN=rustaller-vm-ipv6",
+                "-addext",
+                &format!("subjectAltName=IP:{VM_IPV6_GATEWAY}"),
+                "-keyout",
+            ])
+            .arg(&key)
+            .arg("-out")
+            .arg(&cert)
+            .status()
+            .map_err(|e| format!("cannot generate the disposable IPv6 TLS certificate: {e}"))?;
+        if !generate.success() {
+            return Err("cannot generate the disposable IPv6 TLS certificate".into());
+        }
+        let port = TcpListener::bind("[::1]:0")
+            .and_then(|socket| socket.local_addr())
+            .map_err(|e| format!("IPv6 loopback is required for local acceptance: {e}"))?
+            .port();
+        let server = Command::new("openssl")
+            .args([
+                "s_server",
+                "-www",
+                "-accept",
+                &format!("[::1]:{port}"),
+                "-cert",
+            ])
+            .arg(&cert)
+            .arg("-key")
+            .arg(&key)
+            .stdout(private_file(&output.join("ipv6-local-tls.log"))?)
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        let mut endpoint = Self { server, port, cert };
+        for _ in 0..30 {
+            if endpoint
+                .server
+                .try_wait()
+                .map_err(|e| e.to_string())?
+                .is_some()
+            {
+                break;
+            }
+            if TcpStream::connect_timeout(
+                &std::net::SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, port)),
+                Duration::from_millis(100),
+            )
+            .is_ok()
+            {
+                fs::remove_file(&key).map_err(|e| e.to_string())?;
+                return Ok(endpoint);
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        Err("the disposable IPv6 TLS endpoint did not start".into())
+    }
+}
+
+impl Drop for LocalIpv6Endpoint {
+    fn drop(&mut self) {
+        let _ = self.server.kill();
+        let _ = self.server.wait();
+    }
+}
+
+impl Ipv6Acceptance {
+    fn selected(value: Option<&String>) -> Result<Self, String> {
+        match value.map(String::as_str).unwrap_or("off") {
+            "off" => Ok(Self::Off),
+            "local" => Ok(Self::Local),
+            "external" => Ok(Self::External),
+            _ => Err("ipv6-acceptance must be off, local or external".into()),
+        }
+    }
 }
 impl Firmware {
     fn label(self) -> &'static str {
@@ -100,6 +211,9 @@ impl Options {
                     | "--kernel"
                     | "--gentoo-init"
                     | "--kernel-update"
+                    | "--ipv6-acceptance"
+                    | "--reset-check"
+                    | "--source-network-manager"
                     | "--boot-size-mib"
                     | "--root-size-mib"
                     | "--keep-disks"
@@ -484,7 +598,7 @@ fn prepare_source(
     let relay = Relay::start()?;
     let case = output.join("source");
     private_directory(&case)?;
-    let seed = create_seed(tools, &case, &public, &transport, &relay)?;
+    let seed = create_seed(tools, &case, &public, &transport, &relay, false)?;
     let disk = create_overlay(tools, &base, &case)?;
     let port = free_port()?;
     let mut guest = start_disk_guest(
@@ -496,6 +610,7 @@ fn prepare_source(
         port,
         "source",
         options.disk_bus()?,
+        false,
     )?;
     let ssh = Ssh {
         port,
@@ -580,6 +695,46 @@ fn install_matrix(
         _ => return Err("keep-disks must be yes or no".into()),
     };
     let kernel_update = options.kernel_update()?;
+    let source_nm = match options
+        .values
+        .get("--source-network-manager")
+        .map(String::as_str)
+    {
+        None | Some("networkd") => false,
+        Some("networkmanager") => true,
+        _ => return Err("source-network-manager must be networkd or networkmanager".into()),
+    };
+    let reset_check = match options.values.get("--reset-check").map(String::as_str) {
+        None | Some("no") => false,
+        Some("yes") => true,
+        _ => return Err("reset-check must be yes or no".into()),
+    };
+    let ipv6 = Ipv6Acceptance::selected(options.values.get("--ipv6-acceptance"))?;
+    let local_ipv6 = if ipv6 == Ipv6Acceptance::Local {
+        Some(LocalIpv6Endpoint::start(output)?)
+    } else {
+        None
+    };
+    if ipv6 == Ipv6Acceptance::External {
+        let mut curl = Command::new("curl");
+        curl.args([
+            "--disable",
+            "--ipv6",
+            "--noproxy",
+            "*",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--max-time",
+            "15",
+            "--output",
+            "/dev/null",
+            &format!("https://{EXTERNAL_IPV6_HOST}/"),
+        ]);
+        if !capture_timeout(curl, Duration::from_secs(20))?.success {
+            return Err("external IPv6 NOT VERIFIED: the VM host cannot reach the HTTPS endpoint directly over IPv6".into());
+        }
+    }
     let boot_size_mib = options.boot_size_mib()?;
     let root_size_mib = options
         .values
@@ -625,6 +780,10 @@ fn install_matrix(
                             &kernel,
                             init,
                             kernel_update,
+                            source_nm,
+                            reset_check,
+                            ipv6,
+                            local_ipv6.as_ref(),
                             boot_size_mib,
                             root_size_mib,
                             filesystem,
@@ -683,6 +842,10 @@ fn install_case(
     kernel: &str,
     init: &str,
     kernel_update: bool,
+    source_nm: bool,
+    reset_check: bool,
+    ipv6: Ipv6Acceptance,
+    local_ipv6: Option<&LocalIpv6Endpoint>,
     boot_size_mib: Option<u32>,
     root_size_mib: Option<u32>,
     filesystem: &str,
@@ -692,7 +855,7 @@ fn install_case(
     case: &Path,
     timeout: Duration,
 ) -> Result<(), String> {
-    let seed = create_seed(tools, case, public, transport, relay)?;
+    let seed = create_seed(tools, case, public, transport, relay, source_nm)?;
     let disk = create_overlay(tools, base, case)?;
     let large_disk = disk_size_gib
         .map(|v| {
@@ -713,7 +876,17 @@ fn install_case(
         )
         .as_bytes(),
     )?;
-    let mut guest = start_disk_guest(tools, case, &disk, &seed, mode, port, target, bus)?;
+    let mut guest = start_disk_guest(
+        tools,
+        case,
+        &disk,
+        &seed,
+        mode,
+        port,
+        target,
+        bus,
+        ipv6 != Ipv6Acceptance::Off,
+    )?;
     let source = Ssh {
         port,
         key: key.to_owned(),
@@ -783,7 +956,6 @@ fn install_case(
         format!("--target-disk={}", bus.device()),
         "--username=root".into(),
         "--ssh-key=/run/rustaller-vm/client.pub".into(),
-        "--minimal".into(),
         format!("--kernel={kernel}"),
         format!("--hostname=rustaller-{target}"),
         "--timezone=Etc/UTC".into(),
@@ -792,6 +964,18 @@ fn install_case(
         "--dns=10.0.2.3".into(),
         format!("--filesystem={filesystem}"),
     ];
+    if ipv6 != Ipv6Acceptance::Off {
+        arguments.extend([
+            "--network-mac=52:54:00:12:34:56".into(),
+            "--ipv4-address=10.0.2.15/24".into(),
+            "--ipv4-gateway=10.0.2.2".into(),
+            format!("--ipv6-address={VM_IPV6_ADDRESS}"),
+            format!("--ipv6-gateway={VM_IPV6_GATEWAY}"),
+            "--ipv6=enable".into(),
+            // The optional IPv6 probe uses native curl and certificate validation.
+            "--with-tools".into(),
+        ]);
+    }
     if let Some(size) = root_size_mib {
         arguments.push(format!("--root-size-mib={size}"));
     }
@@ -809,6 +993,21 @@ fn install_case(
         &case.join("source-state.log"),
         Duration::from_secs(30),
     )?;
+    if source_nm {
+        source.checked(
+            &[
+                "nmcli",
+                "-t",
+                "-f",
+                "UUID,TYPE,DEVICE",
+                "connection",
+                "show",
+                "--active",
+            ],
+            &case.join("source-networkmanager.log"),
+            Duration::from_secs(15),
+        )?;
+    }
     let mut inspect = arguments.clone();
     inspect.push("--inspect".into());
     let output = source.capture_owned(&inspect, Duration::from_secs(120))?;
@@ -839,6 +1038,9 @@ fn install_case(
         return Err(
             "inspection did not return one identity-bound target-disk confirmation token".into(),
         );
+    }
+    if reset_check {
+        verify_preparation_reset(&source, &arguments, token[0], bus.device(), case, deadline)?;
     }
     let reset_before = guest.resets.load(Ordering::Relaxed);
     let firmware_before = read_log(&case.join("firmware-debug.log")).len();
@@ -988,6 +1190,20 @@ fn install_case(
         &case.join("ca-chmod.log"),
         Duration::from_secs(20),
     )?;
+    if let Some(endpoint) = local_ipv6 {
+        destination.copy(
+            &endpoint.cert,
+            "/var/tmp/rustaller-vm/ipv6-local.pem",
+            &case.join("copy-ipv6-cert.log"),
+        )?;
+    }
+    verify_guest_ipv6(
+        &destination,
+        ipv6,
+        local_ipv6,
+        &case.join("target-ipv6.log"),
+        deadline,
+    )?;
     destination.checked(
         &[
             "/var/tmp/rustaller-vm/probe",
@@ -1066,6 +1282,13 @@ fn install_case(
             &case.join("post-update-probe.log"),
             remaining(deadline)?,
         )?;
+        verify_guest_ipv6(
+            &destination,
+            ipv6,
+            local_ipv6,
+            &case.join("post-update-ipv6.log"),
+            deadline,
+        )?;
         let firmware_log = read_log(&case.join("firmware-debug.log"));
         let check = validate_final_reboot(
             mode,
@@ -1086,9 +1309,164 @@ fn install_case(
     if let Some(error) = reset_failure {
         return Err(error);
     }
-    write_private(&case.join("accepted.txt"),format!("target={target}\nkernel_choice={kernel}\ninit={init}\nkernel_update_requested={kernel_update}\nfirmware={}\nraw_qmp_resets_after_dispatch={resets}\nos_requested_final_reboots=1\nSSH public-key authentication, native package update, kernel, hostname, {filesystem}/UUID fstab, rustaller-boot boot artifacts, DNS lookup, IPv4 route, filesystem-specific swap policy: PASS\nIPv6 Internet connectivity: NOT TESTED\n",mode.label()).as_bytes())?;
+    let ipv6_result = match ipv6 {
+        Ipv6Acceptance::Off => "IPv6 Internet connectivity: NOT TESTED",
+        Ipv6Acceptance::Local => {
+            "Static dual stack, AAAA, controlled IPv6 TCP/TLS and forwarded IPv6 SSH: PASS\nIPv6 Internet connectivity: NOT VERIFIED"
+        }
+        Ipv6Acceptance::External => {
+            "Static dual stack, AAAA and direct external IPv6 TCP/TLS: PASS\nForwarded IPv6 SSH: PASS"
+        }
+    };
+    write_private(&case.join("accepted.txt"),format!("target={target}\nkernel_choice={kernel}\ninit={init}\nkernel_update_requested={kernel_update}\nfirmware={}\nraw_qmp_resets_after_dispatch={resets}\nos_requested_final_reboots=1\nSSH public-key authentication, native package update, kernel, hostname, {filesystem}/UUID fstab, rustaller-boot boot artifacts, DNS lookup, IPv4 route, filesystem-specific swap policy: PASS\n{ipv6_result}\n",mode.label()).as_bytes())?;
     guest.stop();
     Ok(())
+}
+
+fn verify_preparation_reset(
+    source: &Ssh,
+    arguments: &[String],
+    confirmation: &str,
+    disk: &str,
+    case: &Path,
+    deadline: Instant,
+) -> Result<(), String> {
+    let boot = || {
+        source.capture(
+            &["cat", "/proc/sys/kernel/random/boot_id"],
+            Duration::from_secs(12),
+        )
+    };
+    let table = || {
+        source.capture(
+            &["lsblk", "-dnro", "PTUUID", "--", disk],
+            Duration::from_secs(12),
+        )
+    };
+    let (before_boot, before_table) = (boot()?, table()?);
+    if !before_boot.success || !before_table.success || before_table.stdout.trim_ascii().is_empty()
+    {
+        return Err("cannot record the original guest boot and partition identity".into());
+    }
+    let reset = [arguments[0].as_str(), "reset"];
+    source.checked(
+        &reset,
+        &case.join("reset-idle.log"),
+        Duration::from_secs(12),
+    )?;
+    let mut prepare = arguments.to_vec();
+    prepare.extend([
+        "--hold=0".into(),
+        "--confirm-erase".into(),
+        confirmation.into(),
+    ]);
+    let result =
+        source.capture_owned(&prepare, remaining(deadline)?.min(Duration::from_secs(900)))?;
+    write_private(&case.join("reset-prepare.log"), &result.stdout)?;
+    if !result.success
+        || !String::from_utf8_lossy(&result.stdout).contains("Handoff paused by --hold 0")
+    {
+        return Err("hold preparation did not complete; see reset-prepare.log".into());
+    }
+    let state = "/var/tmp/rustaller-handoff/state";
+    source.checked(
+        &["test", "-s", state],
+        &case.join("reset-staged-state.log"),
+        Duration::from_secs(12),
+    )?;
+    source.checked(
+        &reset,
+        &case.join("reset-cancelled.log"),
+        Duration::from_secs(20),
+    )?;
+    source.checked(
+        &reset,
+        &case.join("reset-repeat.log"),
+        Duration::from_secs(12),
+    )?;
+    source.checked(
+        &["test", "!", "-e", state],
+        &case.join("reset-cleared-state.log"),
+        Duration::from_secs(12),
+    )?;
+    let work = source.capture(
+        &[
+            "find",
+            "/var/tmp/rustaller-handoff",
+            "-maxdepth",
+            "1",
+            "-name",
+            "operation-*",
+        ],
+        Duration::from_secs(12),
+    )?;
+    let kexec = source.capture(
+        &["cat", "/sys/kernel/kexec_loaded"],
+        Duration::from_secs(12),
+    )?;
+    let (after_boot, after_table) = (boot()?, table()?);
+    if !work.success
+        || !work.stdout.is_empty()
+        || !kexec.success
+        || kexec.stdout.trim_ascii() != b"0"
+        || !after_boot.success
+        || after_boot.stdout != before_boot.stdout
+        || !after_table.success
+        || after_table.stdout != before_table.stdout
+    {
+        return Err(
+            "reset did not preserve the original guest boot, disk and clean staging state".into(),
+        );
+    }
+    write_private(&case.join("reset-accepted.txt"),
+        b"PASS: idle reset, --hold 0, cancellation and repeated reset. Root SSH, boot ID and partition-table ID unchanged, kexec unloaded and staging removed.\n")
+}
+
+fn verify_guest_ipv6(
+    guest: &Ssh,
+    ipv6: Ipv6Acceptance,
+    local: Option<&LocalIpv6Endpoint>,
+    log: &Path,
+    deadline: Instant,
+) -> Result<(), String> {
+    if ipv6 == Ipv6Acceptance::Off {
+        return Ok(());
+    }
+    let (url, ca) = match local {
+        Some(endpoint) => (
+            format!("https://[{VM_IPV6_GATEWAY}]:{}/", endpoint.port),
+            "/var/tmp/rustaller-vm/ipv6-local.pem",
+        ),
+        None => (format!("https://{EXTERNAL_IPV6_HOST}/"), "-"),
+    };
+    guest.checked(
+        &[
+            "/var/tmp/rustaller-vm/probe",
+            "ipv6",
+            VM_IPV6_ADDRESS,
+            VM_IPV6_GATEWAY,
+            EXTERNAL_IPV6_HOST,
+            &url,
+            ca,
+            "22",
+        ],
+        log,
+        remaining(deadline)?.min(Duration::from_secs(50)),
+    )?;
+    let address = VM_IPV6_ADDRESS
+        .split_once('/')
+        .ok_or("invalid fixture address")?
+        .0;
+    let connection = guest.ipv6_ssh_connection(address)?;
+    let mut evidence = OpenOptions::new()
+        .append(true)
+        .open(log)
+        .map_err(|e| e.to_string())?;
+    writeln!(
+        evidence,
+        "Public-key SSH via an IPv6 target socket: {connection}"
+    )
+    .map_err(|e| e.to_string())
 }
 
 struct Transport {
@@ -1219,6 +1597,7 @@ fn create_seed(
     public: &str,
     transport: &Transport,
     relay: &Relay,
+    networkmanager: bool,
 ) -> Result<PathBuf, String> {
     let seed = case.join("seed");
     private_directory(&seed)?;
@@ -1239,7 +1618,12 @@ fn create_seed(
     // The prepared image boots with one explicit networkd owner on the next
     // run. No live interface migration is required during source provisioning.
     cloud.push_str("  - path: /etc/systemd/network/05-rustaller-source.network\n    permissions: '0644'\n    content: |\n      [Match]\n      MACAddress=52:54:00:12:34:56\n      [Network]\n      DHCP=no\n      IPv6AcceptRA=no\n      Address=10.0.2.15/24\n      Gateway=10.0.2.2\n      DNS=10.0.2.3\n");
-    cloud.push_str("runcmd:\n  - [systemctl, mask, networking.service, NetworkManager.service]\n  - [systemctl, enable, systemd-networkd.service]\n  - [sh, -c, 'if systemctl is-active --quiet systemd-networkd; then networkctl reload && networkctl reconfigure $(ls /sys/class/net | grep -vx lo) && /usr/lib/systemd/systemd-networkd-wait-online --timeout=60; fi']\n");
+    if networkmanager {
+        cloud.push_str("  - path: /etc/NetworkManager/system-connections/rustaller-source.nmconnection\n    permissions: '0600'\n    content: |\n      [connection]\n      id=rustaller-source\n      uuid=78b9acff-61f4-4e31-ae93-37e341c68e5c\n      type=ethernet\n      [ethernet]\n      mac-address=52:54:00:12:34:56\n      [ipv4]\n      method=manual\n      address1=10.0.2.15/24,10.0.2.2\n      dns=10.0.2.3;\n      [ipv6]\n      method=disabled\n");
+        cloud.push_str("runcmd:\n  - [systemctl, mask, --now, networking.service]\n  - [systemctl, stop, systemd-networkd.service, systemd-networkd.socket]\n  - [systemctl, unmask, NetworkManager.service]\n  - [systemctl, enable, --now, NetworkManager.service]\n  - [nmcli, --wait, '30', connection, up, rustaller-source]\n");
+    } else {
+        cloud.push_str("runcmd:\n  - [systemctl, mask, networking.service, NetworkManager.service]\n  - [systemctl, enable, systemd-networkd.service]\n  - [sh, -c, 'if systemctl is-active --quiet systemd-networkd; then networkctl reload && networkctl reconfigure $(ls /sys/class/net | grep -vx lo) && /usr/lib/systemd/systemd-networkd-wait-online --timeout=60; fi']\n");
+    }
     if let Some(proxy) = relay.guest_url() {
         cloud.push_str(&format!(
             "apt:\n  http_proxy: {}\n  https_proxy: {}\n",
@@ -1248,6 +1632,9 @@ fn create_seed(
         ));
     }
     cloud.push_str("package_update: true\npackage_upgrade: false\npackages:\n  - curl\n  - ca-certificates\n  - gnupg\n  - cpio\n  - kexec-tools\n  - fdisk\n  - util-linux\n  - openssh-client\n  - gzip\n  - tar\n");
+    if networkmanager {
+        cloud.push_str("  - network-manager\n");
+    }
     write_private(&seed.join("user-data"), cloud.as_bytes())?;
     let id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1311,6 +1698,7 @@ fn start_disk_guest(
     port: u16,
     target: &str,
     bus: DiskBus,
+    ipv6: bool,
 ) -> Result<Guest, String> {
     let mut command = tools.qemu();
     configure_firmware(&mut command, tools, case, firmware)?;
@@ -1326,13 +1714,16 @@ fn start_disk_guest(
         "file={},format=raw,if=ide,index=2,media=cdrom,readonly=on",
         seed.display()
     ));
-    command
-        .arg("-netdev")
-        .arg(format!("user,id=net0,hostfwd=tcp:127.0.0.1:{port}-:22"))
-        .args([
-            "-device",
-            "virtio-net-pci,netdev=net0,mac=52:54:00:12:34:56,romfile=",
-        ]);
+    let mut network = format!("user,id=net0,hostfwd=tcp:127.0.0.1:{port}-:22");
+    if ipv6 {
+        network.push_str(&format!(
+            ",ipv4=on,ipv6=on,ipv6-net={VM_IPV6_PREFIX},ipv6-host={VM_IPV6_GATEWAY}"
+        ));
+    }
+    command.arg("-netdev").arg(network).args([
+        "-device",
+        "virtio-net-pci,netdev=net0,mac=52:54:00:12:34:56,romfile=",
+    ]);
     Guest::start(command, case)
 }
 fn check_base(tools: &Tools, base: &Path, output: &Path) -> Result<(), String> {
@@ -1535,6 +1926,50 @@ impl Ssh {
             );
         command.stdin(Stdio::null());
         command
+    }
+    fn ipv6_ssh_connection(&self, address: &str) -> Result<String, String> {
+        // This libslirp hostfwd accepts IPv4 only. Open a direct-tcpip stream
+        // inside the guest to its IPv6 address, then authenticate a separate
+        // SSH session over that stream with the existing disposable client key.
+        let mut connector = Command::new("ssh");
+        self.common(&mut connector);
+        connector.args([
+            "-W",
+            &format!("[{address}]:22"),
+            "-p",
+            &self.port.to_string(),
+            "root@127.0.0.1",
+        ]);
+        let proxy = connector
+            .get_args()
+            .map(|arg| quote(&arg.to_string_lossy()))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut ssh = Command::new("ssh");
+        self.common(&mut ssh);
+        ssh.args([
+            "-6",
+            "-o",
+            &format!("ProxyCommand=ssh {proxy}"),
+            "-o",
+            &format!("HostKeyAlias=[127.0.0.1]:{}", self.port),
+            &format!("root@{address}"),
+            "printenv SSH_CONNECTION",
+        ])
+        .stdin(Stdio::null());
+        let result = capture_timeout(ssh, Duration::from_secs(16))?;
+        let output = String::from_utf8_lossy(&result.stdout);
+        let fields: Vec<_> = output.split_whitespace().collect();
+        if !result.success
+            || fields.len() != 4
+            || fields[0].parse::<std::net::Ipv6Addr>().is_err()
+            || fields[1].parse::<u16>().is_err()
+            || fields[2].parse::<std::net::Ipv6Addr>().ok() != address.parse().ok()
+            || fields[3] != "22"
+        {
+            return Err("public-key SSH did not report the expected target IPv6 socket".into());
+        }
+        Ok(fields.join(" "))
     }
     fn capture_owned(&self, args: &[String], timeout: Duration) -> Result<Captured, String> {
         capture_timeout(self.command_owned(args), timeout)

@@ -1,10 +1,11 @@
 //! Standalone static guest probe used only by the disposable VM harness.
 //! It is not linked into either production binary.
-use std::fs;
-use std::net::ToSocketAddrs;
+use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6, TcpStream, ToSocketAddrs};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 use std::process::{Command, ExitCode};
+use std::time::Duration;
+use std::{fs, io::Read};
 
 fn main() -> ExitCode {
     match run() {
@@ -17,6 +18,11 @@ fn main() -> ExitCode {
 }
 fn run() -> Result<(), String> {
     let args: Vec<_> = std::env::args().skip(1).collect();
+    if let [mode, address, gateway, dns, url, ca, ssh_port] = args.as_slice()
+        && mode == "ipv6"
+    {
+        return verify_ipv6(address, gateway, dns, url, ca, ssh_port);
+    }
     if args.len() != 7
         || !matches!(args[0].as_str(), "alpine" | "debian" | "arch" | "gentoo")
         || !matches!(args[1].as_str(), "bios" | "efi")
@@ -259,6 +265,123 @@ fn run() -> Result<(), String> {
         native_kernel_update(target, selected_kernel, &transport)?;
     }
     println!("RUSTALLER_VM_ACCEPTANCE_PASS target={target} firmware={firmware}");
+    Ok(())
+}
+
+fn verify_ipv6(
+    expected: &str,
+    gateway: &str,
+    dns: &str,
+    url: &str,
+    ca: &str,
+    ssh_port: &str,
+) -> Result<(), String> {
+    let ip: Ipv6Addr = expected
+        .split_once('/')
+        .ok_or("IPv6 acceptance address requires a prefix")?
+        .0
+        .parse()
+        .map_err(|_| "invalid IPv6 acceptance address")?;
+    let ssh_port: u16 = ssh_port
+        .parse()
+        .map_err(|_| "invalid acceptance SSH port")?;
+    let addresses = run_capture(
+        "ip",
+        &["-o", "-6", "address", "show", "scope", "global"],
+        &[],
+    )?;
+    let rows: Vec<_> = addresses
+        .lines()
+        .map(|line| line.split_whitespace().collect::<Vec<_>>())
+        .collect();
+    let [row] = rows.as_slice() else {
+        return Err(format!(
+            "expected exactly one global-scope IPv6 address, observed {}: {addresses}",
+            rows.len()
+        ));
+    };
+    if row.get(3) != Some(&expected) || row.contains(&"tentative") || row.contains(&"dadfailed") {
+        return Err(format!(
+            "IPv6 address, prefix or DAD state differs: {addresses}"
+        ));
+    }
+    let interface = row.get(1).ok_or("IPv6 interface missing in ip output")?;
+    let routes = run_capture("ip", &["-6", "route", "show", "default"], &[])?;
+    let mut routes = routes.lines();
+    let route = routes.next().ok_or("no IPv6 default route")?;
+    let fields: Vec<_> = route.split_whitespace().collect();
+    if routes.next().is_some()
+        || !fields.windows(2).any(|two| two == ["via", gateway])
+        || !fields.windows(2).any(|two| two == ["dev", interface])
+    {
+        return Err(format!("unexpected IPv6 default route: {route}"));
+    }
+    println!("IPv6 interface {interface}, address {expected}, route {route}");
+    let aaaa: Vec<_> = (dns, 443)
+        .to_socket_addrs()
+        .map_err(|e| format!("guest resolver could not resolve {dns}: {e}"))?
+        .filter(|address| address.is_ipv6())
+        .collect();
+    if aaaa.is_empty() {
+        return Err(format!("guest resolver returned no AAAA record for {dns}"));
+    }
+    println!("AAAA {dns} {}", aaaa[0].ip());
+
+    let mut args = vec![
+        "--disable",
+        "--ipv6",
+        "--noproxy",
+        "*",
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--connect-timeout",
+        "10",
+        "--max-time",
+        "25",
+        "--output",
+        "/dev/null",
+        "--write-out",
+        "%{remote_ip} %{local_ip} %{ssl_verify_result} %{http_code}",
+    ];
+    if ca != "-" {
+        args.extend(["--cacert", ca]);
+    }
+    args.push(url);
+    let result = run_capture("curl", &args, &[])?;
+    let mut fields = result.split_whitespace();
+    let remote: Ipv6Addr = fields
+        .next()
+        .ok_or("missing HTTPS peer IP")?
+        .parse()
+        .map_err(|_| "HTTPS did not use an IPv6 socket")?;
+    let local: Ipv6Addr = fields
+        .next()
+        .ok_or("missing HTTPS local IP")?
+        .parse()
+        .map_err(|_| "HTTPS did not bind an IPv6 address")?;
+    if local != ip || fields.next() != Some("0") {
+        return Err(format!(
+            "HTTPS TLS verification or local IPv6 address differs: {result}"
+        ));
+    }
+    let http = fields.next().ok_or("HTTPS HTTP status missing")?;
+    println!("IPv6 TCP/TLS {local} -> {remote}, certificate verified, HTTP {http}");
+
+    let mut ssh = TcpStream::connect_timeout(
+        &SocketAddr::V6(SocketAddrV6::new(ip, ssh_port, 0, 0)),
+        Duration::from_secs(5),
+    )
+    .map_err(|e| format!("guest SSH IPv6 listener is unavailable: {e}"))?;
+    ssh.set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(|e| e.to_string())?;
+    let mut banner = [0; 4];
+    ssh.read_exact(&mut banner)
+        .map_err(|e| format!("could not read IPv6 SSH banner: {e}"))?;
+    if &banner != b"SSH-" {
+        return Err("unexpected IPv6 SSH listener banner".into());
+    }
+    println!("SSH listener [{ip}]:{ssh_port} returned a valid SSH banner over IPv6");
     Ok(())
 }
 fn config_path() -> &'static str {

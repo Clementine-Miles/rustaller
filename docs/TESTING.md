@@ -152,6 +152,33 @@ rebuild/reboot evidence only. Neither upgrade-hook correctness nor a new kernel
 version is inferred from a mock command succeeding. The standalone probe also
 verifies the selected kernel package/family and Gentoo init/profile/64-bit ABI.
 
+### Static dual-stack and reset acceptance
+
+Use the existing disposable source image, checksum and test key from the
+installation command above. Add `--ipv6-acceptance local --kernel-update yes
+--reset-check yes` to verify held cancellation, install a static dual-stack
+target and run the IPv6 checks again after native regeneration and reboot.
+The case installs the optional native curl tool. QEMU/SLIRP creates an isolated
+ULA subnet and a local OpenSSL HTTPS endpoint with a disposable certificate.
+The guest validates the address, prefix, DAD state, default route and AAAA
+resolution. HTTPS must report both an IPv6 source and peer and a verified
+certificate. No proxy or IPv4 fallback participates in the probe.
+
+The harness also authenticates SSH over an IPv6 target socket using SSH
+forwarding through its IPv4 management channel. This verifies the installed
+daemon's IPv6 listener, selected port and key policy. External inbound
+reachability is outside this SLIRP topology.
+
+`--ipv6-acceptance external` requires direct, working IPv6 from the QEMU host to
+the documented HTTPS endpoint `www.debian.org`. It tests the actual installed
+guest path with IPv6 forced and proxies disabled. A local PASS records external
+IPv6 as unverified. The case covers static IPv6, including a default route.
+It does not establish SLAAC, DHCPv6 or IPv6 resolver transport.
+
+`--source-network-manager networkmanager` installs NetworkManager on the
+disposable Debian source and applies a static Ethernet profile before the
+installer captures the network policy.
+
 The `smoke --iso` input is the official Alpine Live test image, not an installer
 feature. Its stock boot files and source-image bootloader remain harness inputs;
 new target installations use rustaller-boot.
