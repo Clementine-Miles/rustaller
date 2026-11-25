@@ -146,6 +146,7 @@ pub fn run_from_files<R: CommandRunner>(runner: &mut R) -> Result<(), InitrdNetw
         &options.network,
         &options.dns,
         dns_seed.as_ref(),
+        options.explicit_network.is_some(),
     )
 }
 
@@ -260,6 +261,7 @@ pub fn apply_network_policy<R: CommandRunner>(
     policy: &NetworkConfig,
     dns: &DnsConfig,
     dns_seed: Option<&DnsConfig>,
+    explicit: bool,
 ) -> Result<(), InitrdNetworkError> {
     manifest
         .validate()
@@ -276,7 +278,8 @@ pub fn apply_network_policy<R: CommandRunner>(
     for network in &manifest.network {
         let interface = wait_for_interface(runner, &network.mac)?;
         reject_wireless(root, &interface)?;
-        configure_ipv6(root, &interface, policy, network)?;
+        let live_ipv6 = requires_live_ipv6(network, policy.ipv6, explicit);
+        configure_ipv6(root, &interface, policy, network, live_ipv6)?;
         if let Some(mtu) = policy.mtu {
             checked(
                 runner,
@@ -293,7 +296,7 @@ pub fn apply_network_policy<R: CommandRunner>(
         )?;
 
         for family in [AddressFamily::Ipv4, AddressFamily::Ipv6] {
-            if family.ipv6() && policy.ipv6 == Ipv6Policy::Disable {
+            if family.ipv6() && !live_ipv6 {
                 continue;
             }
             let (dynamic, wanted, gateway) = family_policy(network, family);
@@ -410,15 +413,31 @@ fn family_policy(
     }
 }
 
+fn requires_live_ipv6(network: &NetworkInterface, policy: Ipv6Policy, explicit: bool) -> bool {
+    if policy == Ipv6Policy::Disable {
+        return false;
+    }
+    // An inherited IPv4 uplink may advertise support for automatic IPv6
+    // even when no IPv6 service is present. Require configured explicit IPv6
+    // and any observed IPv6 path, but leave an idle inherited family to the
+    // target's native network manager.
+    explicit
+        || policy == Ipv6Policy::Enable
+        || !network.ipv6_addresses.is_empty()
+        || network.ipv6_gateway.is_some()
+        || network.ipv4_addresses.is_empty()
+}
+
 fn configure_ipv6(
     root: &Path,
     interface: &str,
     policy: &NetworkConfig,
     network: &NetworkInterface,
+    live_ipv6: bool,
 ) -> Result<(), InitrdNetworkError> {
     let directory = root.join("proc/sys/net/ipv6/conf").join(interface);
     if !directory.is_dir() {
-        if policy.ipv6 != Ipv6Policy::Disable
+        if live_ipv6
             && (policy.ipv6 == Ipv6Policy::Enable
                 || network.accept_ra
                 || network.dhcp6
@@ -431,7 +450,7 @@ fn configure_ipv6(
         return Ok(());
     }
     let enabled = policy.ipv6 != Ipv6Policy::Disable;
-    let ra = enabled && network.accept_ra;
+    let ra = live_ipv6 && network.accept_ra;
     for (name, value) in [
         ("disable_ipv6", !enabled),
         ("accept_ra", ra),
@@ -568,8 +587,11 @@ pub(crate) fn verify_live_network<R: CommandRunner>(
             .is_some_and(|(flags, _)| flags.split(',').any(|flag| flag == "LOWER_UP"));
         if !carrier_up
             || !check_family(runner, &interface, network, AddressFamily::Ipv4)?
-            || (plan.system.network.ipv6 != Ipv6Policy::Disable
-                && !check_family(runner, &interface, network, AddressFamily::Ipv6)?)
+            || (requires_live_ipv6(
+                network,
+                plan.system.network.ipv6,
+                plan.system.explicit_network.is_some(),
+            ) && !check_family(runner, &interface, network, AddressFamily::Ipv6)?)
         {
             return Err(InitrdNetworkError::Configuration(
                 "planned link, address or route changed before disk erase",

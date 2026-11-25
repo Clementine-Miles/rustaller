@@ -216,6 +216,7 @@ fn combined_router_advertisement_policy_can_proceed_without_a_stateful_lease() {
         &NetworkConfig::default(),
         &DnsConfig::default(),
         None,
+        false,
     )
     .unwrap();
     assert_eq!(runner.dhcp(), ["udhcpc6"]);
@@ -229,6 +230,44 @@ fn combined_router_advertisement_policy_can_proceed_without_a_stateful_lease() {
             &NetworkConfig::default(),
             &DnsConfig::default(),
             None,
+            false,
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn idle_inherited_ipv6_does_not_block_an_observed_ipv4_uplink() {
+    let scratch = scratch();
+    let mut plan = manifest();
+    let interface = &mut plan.network[0];
+    interface.ipv6_addresses.clear();
+    interface.ipv6_gateway = None;
+    interface.accept_ra = true;
+    interface.dhcp6 = true;
+    let mut runner = NetworkRunner::new();
+    runner.v6_address = None;
+    apply_network_policy(
+        &mut runner,
+        &scratch.0,
+        &plan,
+        &NetworkConfig::default(),
+        &DnsConfig::default(),
+        None,
+        false,
+    )
+    .unwrap();
+    assert!(runner.dhcp().is_empty());
+
+    assert!(
+        apply_network_policy(
+            &mut runner,
+            &scratch.0,
+            &plan,
+            &NetworkConfig::default(),
+            &DnsConfig::default(),
+            None,
+            true,
         )
         .is_err()
     );
@@ -247,7 +286,16 @@ fn static_dual_stack_sets_on_link_gateways_and_resolver_without_dhcp() {
         servers: vec!["2001:db8::53".parse().unwrap()],
         search_domains: vec!["example.test".into()],
     };
-    apply_network_policy(&mut runner, &scratch.0, &manifest(), &policy, &dns, None).unwrap();
+    apply_network_policy(
+        &mut runner,
+        &scratch.0,
+        &manifest(),
+        &policy,
+        &dns,
+        None,
+        false,
+    )
+    .unwrap();
     for args in [
         vec!["link", "set", "dev", "eth0", "mtu", "1450"],
         vec!["-4", "addr", "replace", "198.51.100.8/24", "dev", "eth0"],
@@ -282,6 +330,7 @@ fn dhcp_and_ra_follow_the_plan_and_dynamic_observations_are_never_replayed() {
         &NetworkConfig::default(),
         &DnsConfig::default(),
         None,
+        false,
     )
     .unwrap();
     assert_eq!(runner.dhcp(), ["udhcpc"]);
@@ -304,6 +353,7 @@ fn dhcp_and_ra_follow_the_plan_and_dynamic_observations_are_never_replayed() {
         &NetworkConfig::default(),
         &DnsConfig::default(),
         None,
+        false,
     )
     .unwrap();
     assert_eq!(runner.dhcp(), ["udhcpc", "udhcpc6"]);
@@ -326,6 +376,7 @@ fn dhcp_and_ra_follow_the_plan_and_dynamic_observations_are_never_replayed() {
         &policy,
         &DnsConfig::default(),
         None,
+        false,
     )
     .unwrap();
     assert_eq!(runner.dhcp(), ["udhcpc"]);
@@ -348,7 +399,8 @@ fn missing_live_address_never_replaces_resolver_or_flushes_interfaces() {
             &manifest(),
             &NetworkConfig::default(),
             &DnsConfig::default(),
-            None
+            None,
+            false,
         )
         .is_err()
     );
@@ -373,6 +425,7 @@ fn wireless_interface_cannot_enter_the_wired_live_policy() {
         &NetworkConfig::default(),
         &DnsConfig::default(),
         None,
+        false,
     )
     .unwrap_err();
     assert!(error.to_string().contains("wireless"));

@@ -72,6 +72,9 @@ Duplicate canonical addresses/MACs/names and malformed prefixes fail validation.
 Temporary IPv6 addresses are not made persistent; tentative/DAD-failed addresses
 stop capture. Mixed static and automatic addressing within a family requires a
 representation the current manifest does not provide and is refused.
+An inherited IPv4 uplink with no observed IPv6 service can continue through
+Live. The intended automatic IPv6 policy remains in the target configuration.
+Explicit IPv6 or an inherited active IPv6 path must pass Live verification.
 
 Systemd targets use networkd files matching MAC addresses, so interface renaming
 does not affect matching. Static default gateways use on-link routing for provider
