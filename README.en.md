@@ -28,8 +28,9 @@ distribution kernels, SSH/accounts, DNS/network policy and a target-only swapfil
 The automatic path requires kexec and performs one final reboot; failure retains
 Live rescue. New systems use [rustaller-boot](docs/BOOT.md) with FAT32 at `/boot` and a root
 partition; large BIOS disks use a GPT stage2 exception. Btrfs uses `@` with
-optional zstd; Btrfs swapfiles are rejected. The TUI compares detected and planned
-systems. Reset infrastructure is retained; execution remains unavailable.
+optional zstd. The TUI compares detected and planned systems. The default
+installation profile is Minimal. Run `rustaller reset` to cancel a prepared
+handoff and keep the source system running.
 
 Host inspection includes guest-visible CPU/ISA levels, memory/swap, storage,
 virtualization, firmware and networking without benchmarks or third-party scripts.
@@ -40,8 +41,10 @@ Native regeneration/reboot passed at the tested kernel versions. Transitions to
 newer kernel versions, additional kernel/init combinations and multi-host coverage
 still require further real VM acceptance; see the testing limits below.
 
-Source network capture currently requires an applied explicit flat networkd
-profile; unsupported managers and routing stop preparation before erasure.
+Source networking supports verified Ethernet configurations from networkd,
+NetworkManager, ifupdown and dhcpcd. An explicit MAC-bound address policy is
+available in the CLI and TUI. Wi-Fi handoff requires a supported reassociation
+path. [Network configuration and limits](docs/CONFIGURATION.md)
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Installation and requirements](docs/INSTALLATION.md)

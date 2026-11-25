@@ -324,6 +324,11 @@ pub fn emerge_package_set_for_plan(
         plan.username.as_deref().unwrap_or("root"),
         firmware_packages,
     );
+    if plan.system.profile == InstallProfile::Minimal {
+        // Optional scheduler tuning is not needed for boot, Portage or remote
+        // administration. Keep the native stage3 toolchain and dependencies.
+        packages.retain(|package| package != "sys-block/io-scheduler-udev-rules");
+    }
     packages.extend(configuration.extra_packages.into_iter().map(str::to_owned));
     packages.extend(
         ["sys-kernel/dracut", "sys-kernel/installkernel"]

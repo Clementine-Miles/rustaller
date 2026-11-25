@@ -1,7 +1,6 @@
 use rustaller::command::{SwapSafeRunner, SystemRunner};
 use rustaller::worker::args::{WorkerAction, parse_worker_args};
 use rustaller::worker::firstboot::{cleanup_firstboot, run_firstboot};
-use rustaller::worker::initrd_network::run_initrd_network_with_proxy;
 use std::path::Path;
 
 fn main() {
@@ -15,7 +14,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let action = parse_worker_args(std::env::args().skip(1))?;
     let Some(action) = action else {
         println!(
-            "Usage: rustaller-worker <live-install PLAN MANIFEST|firstboot-fix|cachyos-firstboot|cleanup-openrc|initrd-network>\n\nRuntime version: {}\nInternal helper for the Rust rustaller installer.",
+            "Usage: rustaller-worker <live-install PLAN MANIFEST|reset|firstboot-fix|cachyos-firstboot|cleanup-openrc|initrd-network>\n\nRuntime version: {}\nInternal helper for the Rust rustaller installer.",
             rustaller::RUNTIME_VERSION
         );
         return Ok(());
@@ -23,6 +22,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut runner = SwapSafeRunner::new(SystemRunner);
     match action {
+        WorkerAction::Reset => {
+            println!("{}", rustaller::worker::install::cancel_live(&mut runner)?)
+        }
         WorkerAction::LiveModules => rustaller::worker::install::prepare_live_modules(&mut runner)?,
         WorkerAction::LiveInstall { plan, manifest } => {
             rustaller::worker::install::run_from_files(
@@ -36,22 +38,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             rustaller::targets::cachyos::run_firstboot_update(&mut runner, Path::new("/"))?
         }
         WorkerAction::CleanupOpenRc => cleanup_firstboot(&mut runner, Path::new("/"))?,
-        WorkerAction::InitrdNetwork(config) => {
-            let proxy = ["https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"]
-                .into_iter()
-                .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()));
-            match run_initrd_network_with_proxy(
-                &mut runner,
-                Path::new("/"),
-                &config,
-                proxy.as_deref(),
-            )? {
-                Some(result) => println!(
-                    "Configured {} (IPv4 internet: {}, IPv6 internet: {})",
-                    result.interface, result.ipv4_has_internet, result.ipv6_has_internet
-                ),
-                None => println!("Not found network card: {}", config.mac_addr()),
-            }
+        WorkerAction::InitrdNetwork => {
+            rustaller::worker::initrd_network::run_from_files(&mut runner)?;
         }
     }
     Ok(())

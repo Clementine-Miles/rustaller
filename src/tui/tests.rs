@@ -866,8 +866,8 @@ fn minimal_and_dns_submenus_match_cli_for_all_four_targets() {
         choose(&mut wizard, index);
         credentials(&mut wizard);
         open(&mut wizard, Page::Installation);
+        assert_eq!(wizard.draft().profile, InstallProfile::Minimal);
         press(&mut wizard, KeyCode::Enter);
-        press(&mut wizard, KeyCode::Down);
         press(&mut wizard, KeyCode::Enter);
         assert_eq!(wizard.draft().profile, InstallProfile::Minimal);
         for _ in 0..3 {
@@ -926,8 +926,11 @@ fn inactive_dns_and_minimal_overrides_are_not_submitted_or_exposed_for_rescue() 
     set(&mut wizard, Field::DnsSearch, "invalid/domain");
     wizard.draft_mut().keep_docs = true;
     wizard.draft_mut().keep_package_cache = true;
+    wizard.draft_mut().profile = InstallProfile::Standard;
     let plan = wizard.build_plan().unwrap();
-    assert!(plan.system.is_default());
+    assert!(!plan.system.keep_docs);
+    assert!(!plan.system.keep_package_cache);
+    assert!(plan.system.dns.servers.is_empty());
     wizard.draft_mut().dns_mode = DnsMode::Static;
     assert!(wizard.build_plan().is_err());
     {
@@ -937,6 +940,33 @@ fn inactive_dns_and_minimal_overrides_are_not_submitted_or_exposed_for_rescue() 
             Action::Open(Page::Installation | Page::Network)
         )));
     }
+}
+
+#[test]
+fn explicit_network_tui_builds_the_same_dual_stack_policy_as_cli() {
+    let mut wizard = wizard();
+    choose(&mut wizard, 1);
+    credentials(&mut wizard);
+    open(&mut wizard, Page::Network);
+    open(&mut wizard, Page::ExplicitNetwork);
+    set(&mut wizard, Field::NetworkMac, "52:54:00:12:34:56");
+    set(&mut wizard, Field::Ipv6Address, "2001:db8::15/64");
+    set(&mut wizard, Field::Ipv6Gateway, "fe80::1");
+    focus(&mut wizard, |action| matches!(action, Action::ToggleDhcp4));
+    press(&mut wizard, KeyCode::Enter);
+    assert_same_plan(
+        &wizard,
+        &[
+            "debian",
+            "--username=root",
+            "--password=test-password",
+            "--ssh-port=22",
+            "--network-mac=52:54:00:12:34:56",
+            "--dhcp4",
+            "--ipv6-address=2001:db8::15/64",
+            "--ipv6-gateway=fe80::1",
+        ],
+    );
 }
 
 #[test]

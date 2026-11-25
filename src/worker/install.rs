@@ -4,6 +4,7 @@ use crate::command::{CommandError, CommandRunner, CommandSpec, OutputMode, run_c
 use crate::deployment::{DeploymentError, DeploymentManifest, DiskIdentity, read_manifest};
 use crate::fsutil::effective_uid;
 use crate::host::handoff::read_disk_identity;
+use crate::host::lifecycle::{LifecycleError, LiveBoundary};
 use crate::plan_file::PrivatePlanFile;
 use crate::shared::storage::{DiskLayout, PartitionEnvironment, create_partitions};
 use crate::targets::install::{self, InstallError};
@@ -28,9 +29,11 @@ pub enum LiveInstallError {
     Filesystem(io::Error),
     Deployment(DeploymentError),
     Preflight(LivePreflightError),
+    Network(super::initrd_network::InitrdNetworkError),
     Command(CommandError),
     Target(InstallError),
     Storage(crate::shared::storage::StorageError),
+    Lifecycle(LifecycleError),
 }
 impl std::fmt::Display for LiveInstallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -39,9 +42,11 @@ impl std::fmt::Display for LiveInstallError {
             Self::Filesystem(e) => write!(f, "Live installation filesystem error: {e}"),
             Self::Deployment(e) => e.fmt(f),
             Self::Preflight(e) => e.fmt(f),
+            Self::Network(e) => e.fmt(f),
             Self::Command(e) => e.fmt(f),
             Self::Target(e) => e.fmt(f),
             Self::Storage(e) => e.fmt(f),
+            Self::Lifecycle(e) => e.fmt(f),
         }
     }
 }
@@ -74,6 +79,11 @@ impl From<InstallError> for LiveInstallError {
 impl From<crate::shared::storage::StorageError> for LiveInstallError {
     fn from(e: crate::shared::storage::StorageError) -> Self {
         Self::Storage(e)
+    }
+}
+impl From<LifecycleError> for LiveInstallError {
+    fn from(e: LifecycleError) -> Self {
+        Self::Lifecycle(e)
     }
 }
 
@@ -123,6 +133,8 @@ pub fn run_from_files<R: CommandRunner>(
         crate::RUNTIME_VERSION,
     )?;
     install::validate_install_options(&plan, &manifest)?;
+    let boundary = LiveBoundary::open()?;
+    let ready = boundary.begin()?;
     announce(&format!(
         "RUSTALLER_LIVE_START target={} firmware={}",
         plan.plan().target,
@@ -131,6 +143,10 @@ pub fn run_from_files<R: CommandRunner>(
     // openssh is in the verified overlay APK world, so recovery must become
     // available before any long package/stage3 download can fail.
     install::start_recovery_ssh(runner, &plan)?;
+    if !ready {
+        announce("Installation cancelled in Alpine Live. The disk was left intact.");
+        return Ok(InstallOutcome::Rescue);
+    }
     let work = Path::new("/run/rustaller");
     DirBuilder::new().mode(0o700).create(work)?;
     let _lock = InstallLock::create(work)?;
@@ -140,6 +156,8 @@ pub fn run_from_files<R: CommandRunner>(
         announce("Alpine Live rescue is ready. No disk changes were made.");
         return Ok(InstallOutcome::Rescue);
     }
+    super::initrd_network::verify_live_network(runner, plan.plan(), &manifest)
+        .map_err(LiveInstallError::Network)?;
     let disk = select_bound_disk(runner, &manifest.disk)?;
     verify_unmounted_disk(runner, &disk.device)?;
     crate::host::preflight::validate_virtualization(Path::new("/"))
@@ -194,6 +212,10 @@ pub fn run_from_files<R: CommandRunner>(
             .is_dir()
             .then(|| PathBuf::from("/dev/disk")),
     };
+    if !boundary.start_erasure()? {
+        announce("Installation cancelled before the disk erasure boundary.");
+        return Ok(InstallOutcome::Rescue);
+    }
     create_partitions(runner, &layout, &environment)?;
     if let Err(error) = crate::shared::storage::mount_target(runner, &layout, root) {
         let _ = unmount_target(runner, root);
@@ -210,6 +232,7 @@ pub fn run_from_files<R: CommandRunner>(
     }
     unmount_target(runner, root)?;
     checked(runner, "sync", [] as [&str; 0], "live-final-sync")?;
+    boundary.installed()?;
     announce(&format!(
         "RUSTALLER_INSTALL_COMPLETE target={} firmware={}",
         rebound.plan().target,
@@ -221,6 +244,36 @@ pub fn run_from_files<R: CommandRunner>(
     }
     checked(runner, "reboot", [] as [&str; 0], "live-one-final-reboot")?;
     Ok(InstallOutcome::Installed)
+}
+
+/// Commit the cancellation before checking the old disk, so the installer
+/// cannot race a manual inspection to the destructive boundary.
+pub fn cancel_live<R: CommandRunner>(runner: &mut R) -> Result<&'static str, LifecycleError> {
+    LiveBoundary::open()?.cancel()?;
+    let verified = (|| -> Result<(), LiveInstallError> {
+        let manifest = read_manifest(Path::new("/configs/deployment.manifest"))?;
+        if manifest.disk.partition_table_id.is_empty() {
+            return Err(LiveInstallError::Invalid(
+                "the source had no recorded partition table ID",
+            ));
+        }
+        let disk = select_bound_disk(runner, &manifest.disk)?;
+        verify_unmounted_disk(runner, &disk.device)?;
+        let firmware = crate::host::preflight::inspect_firmware(Path::new("/"))
+            .map_err(LiveInstallError::Invalid)?;
+        if firmware != manifest.boot_mode {
+            return Err(LiveInstallError::Invalid("source firmware mode changed"));
+        }
+        Ok(())
+    })();
+    if verified.is_err() {
+        return Err(LifecycleError::Unsafe(
+            "Alpine Live cancellation recorded. The original disk, partition table and firmware could not all be verified. Check the original boot path at the console before rebooting.",
+        ));
+    }
+    Ok(
+        "Alpine Live installation cancelled before disk erasure. The original disk, partition table ID and firmware mode match. Verify the original firmware boot path at the console and reboot manually to return.",
+    )
 }
 
 /// The signed modloop is embedded in the private RAM overlay. Alpine's stock

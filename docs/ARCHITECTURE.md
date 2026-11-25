@@ -39,14 +39,22 @@ flowchart TD
 
 `host` observes the original machine and prepares the handoff; it does not
 partition its disks directly. Source PID 1 must be systemd or openrc-init.
-Automatic network policy capture currently requires an active, explicit flat
-systemd-networkd profile; other source network managers are refused. The OpenRC
-shutdown adapter remains tested in isolation, but does not by itself make OpenRC
-source networking supported. Kexec is required; failure does not select a
-different reboot workflow.
+The host selects a verified Ethernet owner per link or uses an explicit
+MAC-bound plan. NetworkManager, networkd, ifupdown and dhcpcd adapters keep
+manager evidence separate from observed addresses and routes. The resulting
+manifest supplies Live and native target configuration. Kexec is required.
 `worker` admits only the private Alpine Live environment and binds the selected
 disk to its stable recorded identity before destructive actions. The target is
-mounted separately, normally at `/os`.
+mounted separately, normally at `/os`. The host lifecycle record locks staged
+preparation and handoff transitions. In Live, a separate RAM record arbitrates
+cancellation and the first destructive disk operation.
+
+Offline `rustaller --inspect` collects local facts without making an install
+plan or exposing disk identity tokens. Optional procfs, sysfs and bounded
+command probes may report unavailable data. The report groups system load,
+CPU/ISA, kernel security, memory and NUMA, storage, network observations and
+firmware. Default output redacts stable device identifiers and sensitive
+kernel arguments. The TUI uses the same cached report. [Inspection reference](https://github.com/su-haris/simple-network-speedtest/blob/master/speed.sh)
 
 `targets` owns native distribution bootstrap, package trust, accounts, kernel
 payloads, initramfs and boot configuration. Debian uses debootstrap minbase and systemd;
@@ -111,8 +119,10 @@ missing procfs fields or unavailable affinity/OS-state checks never raise it.
 `InstallPlan` holds credentials and typed `SystemConfig`/`PostInstallConfig`.
 `DeploymentManifest` separately records disk identity and validated source
 network facts. Handoff encoding is bounded and rejects incompatible versions.
-Plan schema 10 removes the Live HTTP logging port. Its matching worker rejects
-older plan bodies before decoding any fields.
+Plan schema 11 includes optional explicit Ethernet policy. Schema 10 is
+migrated in memory with the stored profile and init fields intact. The
+embedded worker matches the host runtime, and older incompatible plan bodies
+are rejected.
 
 - `host/network.rs`: observe source addresses, applied policy and supported routing;
   `host/handoff.rs` retains authenticated installation preparation and kexec.

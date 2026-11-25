@@ -13,6 +13,11 @@ pub(super) enum Field {
     Timezone,
     Disk,
     Frpc,
+    NetworkMac,
+    Ipv4Address,
+    Ipv4Gateway,
+    Ipv6Address,
+    Ipv6Gateway,
     DnsServers,
     DnsSearch,
     Mtu,
@@ -46,6 +51,11 @@ impl Field {
             Self::Timezone => "Timezone",
             Self::Disk => "Target disk",
             Self::Frpc => "frpc configuration file / URL",
+            Self::NetworkMac => "Explicit Ethernet MAC",
+            Self::Ipv4Address => "Static IPv4 address/prefix",
+            Self::Ipv4Gateway => "IPv4 gateway",
+            Self::Ipv6Address => "Static IPv6 address/prefix",
+            Self::Ipv6Gateway => "IPv6 gateway",
             Self::DnsServers => "DNS servers (comma-separated)",
             Self::DnsSearch => "DNS search domains (comma-separated)",
             Self::Mtu => "Network interface MTU",
@@ -85,6 +95,11 @@ impl Field {
             Self::Timezone => "--timezone",
             Self::Disk => "--target-disk",
             Self::Frpc => "--frpc-config",
+            Self::NetworkMac => "--network-mac",
+            Self::Ipv4Address => "--ipv4-address",
+            Self::Ipv4Gateway => "--ipv4-gateway",
+            Self::Ipv6Address => "--ipv6-address",
+            Self::Ipv6Gateway => "--ipv6-gateway",
             Self::DnsServers => "--dns",
             Self::DnsSearch => "--dns-search",
             Self::Mtu => "--mtu",
@@ -127,6 +142,19 @@ impl Field {
             }
             Self::Frpc => {
                 "Optional file path or URL. This editor does not read or download the configuration."
+            }
+            Self::NetworkMac => {
+                "Blank inherits source policy. Set a NIC MAC to supply an explicit policy for that interface."
+            }
+            Self::Ipv4Address => {
+                "Address and prefix, such as 192.0.2.10/24. Leave blank when using DHCPv4."
+            }
+            Self::Ipv4Gateway => "Optional default gateway for the static IPv4 address.",
+            Self::Ipv6Address => {
+                "Address and prefix, such as 2001:db8::10/64. Leave blank when using DHCPv6 or router advertisements."
+            }
+            Self::Ipv6Gateway => {
+                "Optional default gateway for the static IPv6 address. Link-local is accepted on the selected interface."
             }
 
             Self::DnsServers => {
@@ -172,6 +200,13 @@ impl Field {
         }
     }
 }
+pub(super) const ADDRESS_FIELDS: &[Field] = &[
+    Field::NetworkMac,
+    Field::Ipv4Address,
+    Field::Ipv4Gateway,
+    Field::Ipv6Address,
+    Field::Ipv6Gateway,
+];
 pub(super) const TCP_FIELDS: &[Field] = &[
     Field::TcpBuffer,
     Field::Somaxconn,

@@ -1,4 +1,4 @@
-use super::fields::{Field, TCP_FIELDS};
+use super::fields::{ADDRESS_FIELDS, Field, TCP_FIELDS};
 use super::state::{
     Action, Authentication, CHOICES, DnsProvider, EditSlot, Entry, Page, Route, Setting, Wizard,
     boot_label, hold_label, optional_label, yes_no,
@@ -185,9 +185,35 @@ impl Wizard {
                 }
             }
             Page::Network => {
-                for page in [Page::Dns, Page::Tcp, Page::IpStack, Page::Mtu] {
+                for page in [
+                    Page::ExplicitNetwork,
+                    Page::Dns,
+                    Page::Tcp,
+                    Page::IpStack,
+                    Page::Mtu,
+                ] {
                     add(format!("{}  ›", page.title()), Action::Open(page));
                 }
+            }
+            Page::ExplicitNetwork => {
+                for field in ADDRESS_FIELDS {
+                    add(
+                        format!("{}: {}", field.label(), draft.display(*field)),
+                        Action::Edit(EditSlot::Field(*field)),
+                    );
+                }
+                add(
+                    format!("DHCPv4: {}", yes_no(draft.explicit_dhcp4)),
+                    Action::ToggleDhcp4,
+                );
+                add(
+                    format!("DHCPv6: {}", yes_no(draft.explicit_dhcp6)),
+                    Action::ToggleDhcp6,
+                );
+                add(
+                    format!("Router advertisements: {}", yes_no(draft.explicit_ra)),
+                    Action::ToggleRouterAdvertisements,
+                );
             }
             Page::Dns => {
                 add(

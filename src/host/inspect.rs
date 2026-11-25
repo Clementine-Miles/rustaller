@@ -4,7 +4,12 @@ use crate::{
     deployment::DeploymentManifest,
     model::{BootMode, InstallPlan},
 };
-use std::{collections::BTreeMap, fs, io::Read, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    io::Read,
+    path::Path,
+};
 #[path = "inspect_cpu.rs"]
 pub mod cpu;
 #[derive(Clone, Default)]
@@ -64,7 +69,7 @@ fn line(value: &str) -> String {
         .trim()
         .to_owned()
 }
-fn fact(runner: &mut impl CommandRunner, program: &str, args: &[&str]) -> String {
+fn optional_fact(runner: &mut impl CommandRunner, program: &str, args: &[&str]) -> Option<String> {
     capture_checked(
         runner,
         &CommandSpec::new(program, args)
@@ -76,9 +81,13 @@ fn fact(runner: &mut impl CommandRunner, program: &str, args: &[&str]) -> String
     .filter(|v| v.len() <= 65536)
     .and_then(|v| String::from_utf8(v).ok())
     .map(|s| clean(s.trim()))
-    .filter(|v| !v.is_empty())
-    .unwrap_or_else(|| UNKNOWN.into())
 }
+fn fact(runner: &mut impl CommandRunner, program: &str, args: &[&str]) -> String {
+    optional_fact(runner, program, args)
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| UNKNOWN.into())
+}
+
 fn names(root: &Path, name: &str) -> Vec<String> {
     let mut result = fs::read_dir(root.join(name))
         .ok()
@@ -129,6 +138,12 @@ pub struct SystemFacts {
     pub uptime_seconds: Option<u64>,
     pub pid1: String,
     pub libc: String,
+    pub service_manager: String,
+    pub load_average: Option<[f64; 3]>,
+    pub tasks_running: Option<u64>,
+    pub tasks_total: Option<u64>,
+    /// Only recognized safe arguments retain values. Other values are redacted.
+    pub kernel_command_line: String,
 }
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct MemoryFacts {
@@ -140,6 +155,26 @@ pub struct MemoryFacts {
     pub swap_used: Option<u64>,
     pub zram: Vec<ZramFacts>,
     pub balloon_drivers: Vec<String>,
+    pub hugepages: HugePageFacts,
+    pub numa_nodes: Vec<NumaNodeFacts>,
+    pub transparent_hugepages: String,
+}
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct HugePageFacts {
+    pub total: Option<u64>,
+    pub free: Option<u64>,
+    pub reserved: Option<u64>,
+    pub surplus: Option<u64>,
+    pub page_size: Option<u64>,
+    pub anonymous_bytes: Option<u64>,
+    pub shared_bytes: Option<u64>,
+}
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct NumaNodeFacts {
+    pub name: String,
+    pub cpus: String,
+    pub total: Option<u64>,
+    pub free: Option<u64>,
 }
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ZramFacts {
@@ -179,6 +214,15 @@ pub struct StorageFacts {
     pub mounts: Vec<MountFacts>,
     pub utilization: String,
     pub raid: String,
+    pub nvme: Vec<NvmeFacts>,
+}
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct NvmeFacts {
+    pub name: String,
+    pub model: String,
+    pub firmware: String,
+    pub state: String,
+    pub transport: String,
 }
 impl StorageFacts {
     pub fn mounted_partition(&self, path: &str) -> Option<&DiskFacts> {
@@ -224,6 +268,12 @@ pub struct InterfaceFacts {
     pub state: String,
     pub speed_mbps: Option<u64>,
     pub policy: String,
+    pub driver: String,
+    pub link_type: String,
+    pub wireless: bool,
+    pub qdisc: Vec<String>,
+    pub ipv6_disabled: Option<bool>,
+    pub accept_ra: Option<u64>,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RouteFacts {
@@ -238,6 +288,52 @@ pub struct NetworkFacts {
     pub defaults: Vec<RouteFacts>,
     pub dns: Vec<String>,
     pub ssh_policy: Vec<String>,
+    /// Observed process names only; installation ownership validation is separate.
+    pub observed_managers: Vec<String>,
+    pub congestion_control: String,
+    pub available_congestion_controls: String,
+    pub default_qdisc: String,
+    pub ipv6_disabled: Option<bool>,
+    pub ipv6_forwarding: Option<bool>,
+    pub firewall: FirewallFacts,
+}
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct FirewallFacts {
+    pub nftables_table_count: Option<usize>,
+    pub ipv4_policies: BTreeMap<String, String>,
+    pub ipv6_policies: BTreeMap<String, String>,
+}
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SecurityFacts {
+    pub lockdown: String,
+    pub active_lsms: String,
+    pub selinux: String,
+    pub apparmor: String,
+    pub tainted: Option<u64>,
+    pub dmesg_restrict: Option<bool>,
+    pub kptr_restrict: Option<u64>,
+    pub unprivileged_bpf_disabled: Option<u64>,
+    pub kexec_disabled: Option<bool>,
+    pub vulnerabilities: Vec<(String, String)>,
+}
+/// Public diagnostics hide hardware identifiers. Raw typed inventory stays local
+/// for disk selection; it is never uploaded by inspection.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum InspectionPrivacy {
+    #[default]
+    Redacted,
+    ShowIdentifiers,
+}
+impl InspectionPrivacy {
+    fn identifier(self, value: &str) -> &str {
+        if value.is_empty() || value == UNKNOWN {
+            UNKNOWN
+        } else if self == Self::Redacted {
+            "[redacted]"
+        } else {
+            value
+        }
+    }
 }
 #[derive(Clone, Debug)]
 pub struct FirmwareFacts {
@@ -245,6 +341,12 @@ pub struct FirmwareFacts {
     pub bitness: String,
     pub secure_boot: String,
     pub vendor: String,
+    pub version: String,
+    pub release_date: String,
+    pub setup_mode: String,
+    pub efivarfs_mounted: Option<bool>,
+    pub variable_store_readable: Option<bool>,
+    pub tpm_devices: usize,
 }
 #[derive(Clone, Debug)]
 pub struct VirtualizationFacts {
@@ -264,6 +366,259 @@ pub struct HostInspection {
     pub storage: StorageFacts,
     pub firmware: FirmwareFacts,
     pub network: NetworkFacts,
+    pub security: SecurityFacts,
+}
+
+fn boolean(root: &Path, name: &str) -> Option<bool> {
+    number(root, name).filter(|v| *v <= 1).map(|v| v == 1)
+}
+fn process_names(root: &Path) -> BTreeSet<String> {
+    names(root, "proc")
+        .into_iter()
+        .filter(|n| n.bytes().all(|b| b.is_ascii_digit()))
+        .map(|pid| line(&read(root, &format!("proc/{pid}/comm"))))
+        .filter(|name| name != UNKNOWN)
+        .collect()
+}
+fn service_manager(root: &Path) -> String {
+    let pid1 = read(root, "proc/1/comm");
+    match pid1.trim() {
+        "systemd" => "systemd (PID 1)".into(),
+        "runit" => "runit (PID 1)".into(),
+        "s6-svscan" | "s6-linux-init" => "s6 (PID 1)".into(),
+        "dinit" => "dinit (PID 1)".into(),
+        _ if root.join("run/openrc/softlevel").is_file() => format!(
+            "OpenRC (runtime runlevel {})",
+            line(&read(root, "run/openrc/softlevel"))
+        ),
+        _ => "Unknown (PID 1 name alone does not identify a service manager)".into(),
+    }
+}
+fn load_average(text: &str) -> (Option<[f64; 3]>, Option<u64>, Option<u64>) {
+    let words = text.split_whitespace().collect::<Vec<_>>();
+    let values = (0..3)
+        .map(|i| {
+            words
+                .get(i)?
+                .parse::<f64>()
+                .ok()
+                .filter(|v| v.is_finite() && *v >= 0.0)
+        })
+        .collect::<Option<Vec<_>>>();
+    let load = values.map(|v| [v[0], v[1], v[2]]);
+    let tasks = words
+        .get(3)
+        .and_then(|s| s.split_once('/'))
+        .and_then(|(r, t)| {
+            let r = r.parse::<u64>().ok()?;
+            let t = t.parse::<u64>().ok()?;
+            (r <= t && t > 0).then_some((r, t))
+        });
+    (load, tasks.map(|(r, _)| r), tasks.map(|(_, t)| t))
+}
+fn safe_word(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_.,:+/-".contains(&b))
+}
+fn redacted_command_line(text: &str) -> String {
+    if text == UNKNOWN {
+        return UNKNOWN.into();
+    }
+    let mut tokens = Vec::new();
+    let mut token = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    for c in text.chars().take(65537) {
+        if escaped {
+            token.push(c);
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+        } else if quote == Some(c) {
+            quote = None;
+        } else if quote.is_none() && matches!(c, '\'' | '"') {
+            quote = Some(c);
+        } else if c.is_whitespace() && quote.is_none() {
+            if !token.is_empty() {
+                tokens.push(std::mem::take(&mut token));
+            }
+        } else {
+            token.push(c);
+        }
+        if tokens.len() >= 256 || token.len() > 8192 {
+            return "[redacted oversized command line]".into();
+        }
+    }
+    if quote.is_some() || escaped || text.chars().count() > 65536 {
+        return "[redacted malformed command line]".into();
+    }
+    if !token.is_empty() {
+        tokens.push(token);
+    }
+    tokens
+        .into_iter()
+        .map(|token| {
+            if matches!(
+                token.as_str(),
+                "ro" | "rw"
+                    | "quiet"
+                    | "splash"
+                    | "debug"
+                    | "nosmt"
+                    | "noapic"
+                    | "nolapic"
+                    | "nopti"
+                    | "noibrs"
+                    | "noibpb"
+                    | "nospectre_v1"
+                    | "nospectre_v2"
+            ) {
+                return token;
+            }
+            if let Some((key, value)) = token.split_once('=') {
+                let safe = matches!(
+                    key,
+                    "console"
+                        | "loglevel"
+                        | "panic"
+                        | "rootfstype"
+                        | "mitigations"
+                        | "nosmt"
+                        | "spectre_v2"
+                        | "pti"
+                        | "audit"
+                        | "selinux"
+                        | "enforcing"
+                        | "apparmor"
+                        | "security"
+                        | "lsm"
+                        | "lockdown"
+                        | "iommu"
+                        | "amd_iommu"
+                        | "intel_iommu"
+                        | "ipv6.disable"
+                        | "systemd.unified_cgroup_hierarchy"
+                        | "cgroup_no_v1"
+                        | "transparent_hugepage"
+                );
+                if safe && safe_word(value) {
+                    format!("{key}={value}")
+                } else if safe_word(key) {
+                    format!("{key}=[redacted]")
+                } else {
+                    "[redacted]".into()
+                }
+            } else {
+                "[redacted]".into()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+fn bracketed_policy(value: &str) -> String {
+    value
+        .split_whitespace()
+        .find_map(|v| v.strip_prefix('[').and_then(|v| v.strip_suffix(']')))
+        .filter(|v| safe_word(v))
+        .map(str::to_owned)
+        .unwrap_or_else(|| UNKNOWN.into())
+}
+fn security(root: &Path) -> SecurityFacts {
+    let vulnerabilities = names(root, "sys/devices/system/cpu/vulnerabilities")
+        .into_iter()
+        .take(64)
+        .map(|name| {
+            let status = line(&read(
+                root,
+                &format!("sys/devices/system/cpu/vulnerabilities/{name}"),
+            ));
+            (name, status)
+        })
+        .collect();
+    let selinux = match boolean(root, "sys/fs/selinux/enforce") {
+        Some(true) => "Enforcing",
+        Some(false) => "Permissive",
+        None => UNKNOWN,
+    }
+    .into();
+    let apparmor = match read(root, "sys/module/apparmor/parameters/enabled").trim() {
+        "Y" => "Enabled",
+        "N" => "Disabled",
+        _ => UNKNOWN,
+    }
+    .into();
+    SecurityFacts {
+        lockdown: bracketed_policy(&read(root, "sys/kernel/security/lockdown")),
+        active_lsms: line(&read(root, "sys/kernel/security/lsm")),
+        selinux,
+        apparmor,
+        tainted: number(root, "proc/sys/kernel/tainted"),
+        dmesg_restrict: boolean(root, "proc/sys/kernel/dmesg_restrict"),
+        kptr_restrict: number(root, "proc/sys/kernel/kptr_restrict").filter(|v| *v <= 2),
+        unprivileged_bpf_disabled: number(root, "proc/sys/kernel/unprivileged_bpf_disabled")
+            .filter(|v| *v <= 2),
+        kexec_disabled: boolean(root, "proc/sys/kernel/kexec_load_disabled"),
+        vulnerabilities,
+    }
+}
+fn numa(root: &Path) -> Vec<NumaNodeFacts> {
+    names(root, "sys/devices/system/node")
+        .into_iter()
+        .filter(|name| {
+            name.strip_prefix("node")
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        })
+        .map(|name| {
+            let text = read(root, &format!("sys/devices/system/node/{name}/meminfo"));
+            let kb = |key| {
+                text.lines().find_map(|v| {
+                    let words = v.split_whitespace().collect::<Vec<_>>();
+                    let i = words.iter().position(|word| *word == key)?;
+                    if words.get(i + 2) != Some(&"kB") {
+                        return None;
+                    }
+                    words.get(i + 1)?.parse::<u64>().ok()?.checked_mul(1024)
+                })
+            };
+            let cpus = line(&read(
+                root,
+                &format!("sys/devices/system/node/{name}/cpulist"),
+            ));
+            let cpus = if cpus
+                .bytes()
+                .all(|b| b.is_ascii_digit() || b",-".contains(&b))
+            {
+                cpus
+            } else {
+                UNKNOWN.into()
+            };
+            NumaNodeFacts {
+                name,
+                cpus,
+                total: kb("MemTotal:"),
+                free: kb("MemFree:"),
+            }
+        })
+        .collect()
+}
+fn nvme(root: &Path) -> Vec<NvmeFacts> {
+    names(root, "sys/class/nvme")
+        .into_iter()
+        .filter(|name| {
+            name.strip_prefix("nvme")
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        })
+        .map(|name| NvmeFacts {
+            model: line(&read(root, &format!("sys/class/nvme/{name}/model"))),
+            firmware: line(&read(root, &format!("sys/class/nvme/{name}/firmware_rev"))),
+            state: line(&read(root, &format!("sys/class/nvme/{name}/state"))),
+            transport: line(&read(root, &format!("sys/class/nvme/{name}/transport"))),
+            name,
+        })
+        .collect()
 }
 
 fn memory(root: &Path) -> MemoryFacts {
@@ -284,7 +639,31 @@ fn memory(root: &Path) -> MemoryFacts {
         .copied()
         .filter(|n| total.is_none_or(|t| *n <= t));
     let swap_total = fields.get("SwapTotal").copied();
+    let meminfo = read(root, "proc/meminfo");
+    let count = |key| {
+        meminfo.lines().find_map(|v| {
+            let (name, value) = v.split_once(':')?;
+            if name != key {
+                return None;
+            }
+            value.trim().parse::<u64>().ok()
+        })
+    };
     let mut result = MemoryFacts {
+        hugepages: HugePageFacts {
+            total: count("HugePages_Total"),
+            free: count("HugePages_Free"),
+            reserved: count("HugePages_Rsvd"),
+            surplus: count("HugePages_Surp"),
+            page_size: fields.get("Hugepagesize").copied(),
+            anonymous_bytes: fields.get("AnonHugePages").copied(),
+            shared_bytes: fields.get("ShmemHugePages").copied(),
+        },
+        numa_nodes: numa(root),
+        transparent_hugepages: bracketed_policy(&read(
+            root,
+            "sys/kernel/mm/transparent_hugepage/enabled",
+        )),
         total,
         available,
         used: total.zip(available).map(|(t, a)| t - a),
@@ -340,6 +719,11 @@ fn mount_options(value: &str) -> String {
                 "token",
                 "key",
                 "keyfile",
+                "uuid",
+                "partuuid",
+                "serial",
+                "wwn",
+                "fsid",
             ]
             .iter()
             .any(|s| key == *s || key.ends_with(&format!("_{s}")))
@@ -388,9 +772,11 @@ fn pairs(text: &str) -> Option<BTreeMap<String, String>> {
     let mut result = BTreeMap::new();
     while !remaining.is_empty() {
         let (key, rest) = remaining.split_once("=\"")?;
-        if !key
-            .bytes()
-            .all(|b| b.is_ascii_uppercase() || b"_-".contains(&b))
+        if key.is_empty()
+            || key.len() > 64
+            || !key
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b"_-".contains(&b))
         {
             return None;
         }
@@ -488,6 +874,7 @@ pub fn storage(runner: &mut impl CommandRunner, root: &Path) -> StorageFacts {
         }
     }
     StorageFacts {
+        nvme: nvme(root),
         devices,
         mounts: mounts(&read(root, "proc/self/mountinfo")),
         utilization: fact(runner, "df", &["-P", "-B1", "/", "/boot"]),
@@ -536,6 +923,102 @@ fn routes(text: &str, ipv6: bool) -> Vec<RouteFacts> {
         })
         .collect()
 }
+fn driver(root: &Path, name: &str) -> String {
+    fs::read_link(root.join(format!("sys/class/net/{name}/device/driver")))
+        .ok()
+        .and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()))
+        .filter(|v| safe_name(v))
+        .unwrap_or_else(|| UNKNOWN.into())
+}
+fn link_type(root: &Path, name: &str) -> String {
+    let base = root.join(format!("sys/class/net/{name}"));
+    if base.join("wireless").is_dir() || base.join("phy80211").exists() {
+        return "Wireless".into();
+    }
+    if base.join("bridge").is_dir() {
+        return "Bridge".into();
+    }
+    if base.join("bonding").is_dir() {
+        return "Bond".into();
+    }
+    match number(root, &format!("sys/class/net/{name}/type")) {
+        Some(1) => "Ethernet (virtual/physical not inferred)".into(),
+        Some(772) => "Loopback".into(),
+        Some(512) => "PPP".into(),
+        Some(768) => "IP tunnel".into(),
+        Some(776) => "IPv6 tunnel".into(),
+        Some(n) => format!("Linux ARPHRD {n}"),
+        None => UNKNOWN.into(),
+    }
+}
+fn qdiscs(text: &str) -> BTreeMap<String, Vec<String>> {
+    let mut result: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for v in text.lines().take(1024) {
+        let w = v.split_whitespace().collect::<Vec<_>>();
+        if w.first() != Some(&"qdisc") {
+            continue;
+        }
+        let Some(kind) = w.get(1).filter(|v| safe_name(v)) else {
+            continue;
+        };
+        let Some(name) = w
+            .iter()
+            .position(|v| *v == "dev")
+            .and_then(|i| w.get(i + 1))
+            .filter(|v| safe_name(v))
+        else {
+            continue;
+        };
+        let q = result.entry((*name).into()).or_default();
+        if q.len() < 16 && !q.iter().any(|v| v == kind) {
+            q.push((*kind).into());
+        }
+    }
+    result
+}
+fn firewall_policies(text: &str) -> BTreeMap<String, String> {
+    text.lines()
+        .take(1024)
+        .filter_map(|v| {
+            let w = v.split_whitespace().collect::<Vec<_>>();
+            if w.len() != 3
+                || w[0] != "-P"
+                || !matches!(w[1], "INPUT" | "FORWARD" | "OUTPUT")
+                || !matches!(w[2], "ACCEPT" | "DROP")
+            {
+                return None;
+            }
+            Some((w[1].into(), w[2].into()))
+        })
+        .collect()
+}
+fn firewall(runner: &mut impl CommandRunner) -> FirewallFacts {
+    let tables = optional_fact(runner, "nft", &["list", "tables"]).and_then(|text| {
+        text.lines()
+            .take(1025)
+            .map(|v| {
+                let words = v.split_whitespace().collect::<Vec<_>>();
+                (words.len() == 3
+                    && words[0] == "table"
+                    && matches!(
+                        words[1],
+                        "ip" | "ip6" | "inet" | "arp" | "bridge" | "netdev"
+                    ))
+                .then_some(())
+            })
+            .collect::<Option<Vec<_>>>()
+            .filter(|v| v.len() <= 1024)
+            .map(|v| v.len())
+    });
+    let ipv4_policies = firewall_policies(&fact(runner, "iptables", &["-S"]));
+    let ipv6_policies = firewall_policies(&fact(runner, "ip6tables", &["-S"]));
+    FirewallFacts {
+        nftables_table_count: tables,
+        ipv4_policies,
+        ipv6_policies,
+    }
+}
+
 fn network(runner: &mut impl CommandRunner, root: &Path) -> NetworkFacts {
     let listing = fact(runner, "ip", &["-o", "address", "show"]);
     let mut interface_names = names(root, "sys/class/net");
@@ -574,11 +1057,22 @@ fn network(runner: &mut impl CommandRunner, root: &Path) -> NetworkFacts {
             interface_names.push(name.into());
         }
     }
-    let interfaces = interface_names
+    let mut interfaces: Vec<InterfaceFacts> = interface_names
         .into_iter()
         .map(|name| {
             let base = format!("sys/class/net/{name}");
             InterfaceFacts {
+                driver: driver(root, &name),
+                link_type: link_type(root, &name),
+                wireless: root.join(format!("sys/class/net/{name}/wireless")).is_dir()
+                    || root.join(format!("sys/class/net/{name}/phy80211")).exists(),
+                ipv6_disabled: boolean(
+                    root,
+                    &format!("proc/sys/net/ipv6/conf/{name}/disable_ipv6"),
+                ),
+                accept_ra: number(root, &format!("proc/sys/net/ipv6/conf/{name}/accept_ra"))
+                    .filter(|v| *v <= 2),
+                qdisc: Vec::new(),
                 mac: line(&read(root, &format!("{base}/address"))),
                 addresses: addresses.remove(&name).unwrap_or_default(),
                 mtu: number(root, &format!("{base}/mtu")),
@@ -623,13 +1117,55 @@ fn network(runner: &mut impl CommandRunner, root: &Path) -> NetworkFacts {
         .map(line)
         .take(8)
         .collect();
+    let qdiscs = qdiscs(&fact(runner, "tc", &["qdisc", "show"]));
+    for interface in &mut interfaces {
+        interface.qdisc = qdiscs.get(&interface.name).cloned().unwrap_or_default();
+    }
+    let observed_managers = process_names(root)
+        .into_iter()
+        .filter(|name| {
+            matches!(
+                name.as_str(),
+                "systemd-network"
+                    | "systemd-networkd"
+                    | "NetworkManager"
+                    | "dhcpcd"
+                    | "dhclient"
+                    | "connmand"
+                    | "wickedd"
+                    | "networking"
+            )
+        })
+        .collect();
     NetworkFacts {
         interfaces,
         defaults,
         dns,
         ssh_policy,
+        observed_managers,
+        congestion_control: line(&read(root, "proc/sys/net/ipv4/tcp_congestion_control")),
+        available_congestion_controls: line(&read(
+            root,
+            "proc/sys/net/ipv4/tcp_available_congestion_control",
+        )),
+        default_qdisc: line(&read(root, "proc/sys/net/core/default_qdisc")),
+        ipv6_disabled: boolean(root, "proc/sys/net/ipv6/conf/all/disable_ipv6"),
+        ipv6_forwarding: boolean(root, "proc/sys/net/ipv6/conf/all/forwarding"),
+        firewall: firewall(runner),
     }
 }
+fn efi_boolean(root: &Path, name: &str) -> String {
+    let path = root.join(format!(
+        "sys/firmware/efi/efivars/{name}-8be4df61-93ca-11d2-aa0d-00e098032b8c"
+    ));
+    let mut bytes = [0u8; 6];
+    match fs::File::open(path).and_then(|mut f| f.read(&mut bytes)) {
+        Ok(5) if bytes[4] == 0 => "Disabled".into(),
+        Ok(5) if bytes[4] == 1 => "Enabled".into(),
+        _ => UNKNOWN.into(),
+    }
+}
+
 fn firmware(root: &Path, container: bool) -> FirmwareFacts {
     let efi = fs::symlink_metadata(root.join("sys/firmware/efi"));
     // Containers may expose an empty or filtered sysfs firmware directory.
@@ -650,24 +1186,40 @@ fn firmware(root: &Path, container: bool) -> FirmwareFacts {
     } else {
         UNKNOWN.into()
     };
-    let secure_boot = if mode != "UEFI" {
-        if mode == "BIOS" {
-            "Not applicable"
-        } else {
-            UNKNOWN
-        }
-        .into()
+    let secure_boot = if mode == "UEFI" {
+        efi_boolean(root, "SecureBoot")
+    } else if mode == "BIOS" {
+        "Not applicable".into()
     } else {
-        let path =
-            root.join("sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c");
-        let mut bytes = [0u8; 6];
-        match fs::File::open(path).and_then(|mut f| f.read(&mut bytes)) {
-            Ok(5) if bytes[4] == 0 => "Disabled".into(),
-            Ok(5) if bytes[4] == 1 => "Enabled".into(),
-            _ => UNKNOWN.into(),
-        }
+        UNKNOWN.into()
     };
+    let setup_mode = if mode == "UEFI" {
+        efi_boolean(root, "SetupMode")
+    } else if mode == "BIOS" {
+        "Not applicable".into()
+    } else {
+        UNKNOWN.into()
+    };
+    let mounts = read(root, "proc/self/mountinfo");
+    let efivarfs_mounted = if mode == "UEFI" && mounts != UNKNOWN {
+        Some(mounts.lines().any(|line| {
+            line.split_once(" - ").is_some_and(|(left, right)| {
+                left.split_whitespace().nth(4) == Some("/sys/firmware/efi/efivars")
+                    && right.split_whitespace().next() == Some("efivarfs")
+            })
+        }))
+    } else {
+        None
+    };
+    let variable_store_readable = efivarfs_mounted
+        .map(|mounted| mounted && fs::read_dir(root.join("sys/firmware/efi/efivars")).is_ok());
     FirmwareFacts {
+        version: line(&read(root, "sys/class/dmi/id/bios_version")),
+        release_date: line(&read(root, "sys/class/dmi/id/bios_date")),
+        setup_mode,
+        efivarfs_mounted,
+        variable_store_readable,
+        tpm_devices: names(root, "sys/class/tpm").len(),
         mode: mode.into(),
         bitness,
         secure_boot,
@@ -782,6 +1334,7 @@ pub fn collect(runner: &mut impl CommandRunner, root: &Path) -> HostInspection {
         .next()
         .and_then(|n| n.split('.').next())
         .and_then(|n| n.parse().ok());
+    let (load_average, tasks_running, tasks_total) = load_average(&read(root, "proc/loadavg"));
     let virtualization = virtualization(root, &detected);
     let firmware = firmware(root, virtualization.container);
     HostInspection {
@@ -795,6 +1348,11 @@ pub fn collect(runner: &mut impl CommandRunner, root: &Path) -> HostInspection {
             uptime_seconds,
             pid1: line(&read(root, "proc/1/comm")),
             libc,
+            service_manager: service_manager(root),
+            load_average,
+            tasks_running,
+            tasks_total,
+            kernel_command_line: redacted_command_line(&read(root, "proc/cmdline")),
         },
         cpu: cpu::inspect(root),
         virtualization,
@@ -802,45 +1360,123 @@ pub fn collect(runner: &mut impl CommandRunner, root: &Path) -> HostInspection {
         storage: storage(runner, root),
         firmware,
         network: network(runner, root),
+        security: security(root),
+    }
+}
+fn value<T: std::fmt::Display>(value: Option<T>) -> String {
+    value
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| UNKNOWN.into())
+}
+fn yes_no(value: Option<bool>) -> &'static str {
+    match value {
+        Some(true) => "yes",
+        Some(false) => "no",
+        None => UNKNOWN,
+    }
+}
+fn policy_summary(policies: &BTreeMap<String, String>) -> String {
+    if policies.is_empty() {
+        return "Unavailable".into();
+    }
+    policies
+        .iter()
+        .map(|(chain, policy)| format!("{chain}={policy}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+fn private_source(source: &str, privacy: InspectionPrivacy) -> String {
+    if source.contains('@') && (source.starts_with("//") || source.contains("://")) {
+        return "[network mount credentials redacted]".into();
+    }
+    if privacy == InspectionPrivacy::Redacted
+        && (source.starts_with("/dev/disk/by-")
+            || source.starts_with("/dev/mapper/luks-")
+            || source.starts_with("UUID=")
+            || source.starts_with("PARTUUID="))
+    {
+        "[stable device identifier redacted]".into()
+    } else {
+        source.into()
     }
 }
 impl HostInspection {
-    pub fn render_current(&self) -> String {
-        let s = &self.system;
-        let mut result = format!(
-            "[System]\nOS: {}\nKernel: {}\nCPU Architecture: {}\nHostname: {}\nUptime: {}\nInit / PID 1: {}\nlibc: {}\n\n[CPU and ISA]\n{}\n[Virtualization]\nEnvironment: {}\nDMI manufacturer/product: {} / {}\nPhysical host CPU: Unverifiable; capabilities are guest-visible\n\n[Memory]\nRAM total / available / used: {} / {} / {}\nSwap total / used: {} / {}\nBalloon indicators: {}\n",
-            s.distribution,
-            s.kernel,
-            s.architecture,
-            s.hostname,
-            s.uptime_seconds
-                .map(|v| format!(
-                    "{}d {}h {}m",
-                    v / 86400,
-                    (v % 86400) / 3600,
-                    (v % 3600) / 60
-                ))
-                .unwrap_or_else(|| UNKNOWN.into()),
-            s.pid1,
-            s.libc,
-            self.cpu.render(),
-            self.virtualization.environment,
-            self.virtualization.manufacturer,
-            self.virtualization.product,
-            display_bytes(self.memory.total),
-            display_bytes(self.memory.available),
+    pub fn render_summary(&self) -> String {
+        format!(
+            "[Summary]\n{}; kernel {}; service manager {}\nCPU: {} logical / {} allowed; {}\nRAM: {} used / {}; swap {} used / {}\nDefault-route interfaces: {}\n",
+            self.system.distribution,
+            self.system.kernel,
+            self.system.service_manager,
+            value(self.cpu.logical_cpus),
+            value(self.cpu.schedulable_cpus),
+            self.cpu
+                .isa_level
+                .map(cpu::IsaLevel::as_str)
+                .unwrap_or(UNKNOWN),
             display_bytes(self.memory.used),
-            display_bytes(self.memory.swap_total),
+            display_bytes(self.memory.total),
             display_bytes(self.memory.swap_used),
-            if self.memory.balloon_drivers.is_empty() {
-                "No loaded known balloon driver detected (availability unknown)".into()
+            display_bytes(self.memory.swap_total),
+            if self.network.defaults.is_empty() {
+                UNKNOWN.into()
             } else {
-                format!(
-                    "{} loaded; active reclamation unknown",
-                    self.memory.balloon_drivers.join(", ")
-                )
+                self.network
+                    .defaults
+                    .iter()
+                    .map(|r| r.interface.as_str())
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             }
-        );
+        )
+    }
+    pub fn render_current(&self) -> String {
+        self.render_current_with_privacy(InspectionPrivacy::Redacted)
+    }
+    /// Only explicit local callers can request unredacted MAC and disk identities.
+    /// Credentials and unsafe kernel arguments remain redacted in either mode.
+    pub fn render_current_with_privacy(&self, privacy: InspectionPrivacy) -> String {
+        let s = &self.system;
+        let mut result = self.render_summary();
+        if privacy == InspectionPrivacy::Redacted {
+            result.push_str("Privacy: MAC and stable disk identifiers are redacted.\n");
+        }
+        result.push_str(&format!("\n[System]\nOS: {}\nKernel: {}\nCPU Architecture: {}\nHostname: {}\nUptime: {}\nInit / PID 1: {}\nService manager: {}\nlibc: {}\nLoad averages (1/5/15 min): {}\nTasks running / total: {} / {}\nKernel command line (filtered): {}\n",
+            s.distribution,s.kernel,s.architecture,s.hostname,
+            s.uptime_seconds.map(|v|format!("{}d {}h {}m",v/86400,(v%86400)/3600,(v%3600)/60)).unwrap_or_else(||UNKNOWN.into()),
+            s.pid1,s.service_manager,s.libc,
+            s.load_average.map(|v|format!("{:.2} / {:.2} / {:.2}",v[0],v[1],v[2])).unwrap_or_else(||UNKNOWN.into()),
+            value(s.tasks_running),value(s.tasks_total),s.kernel_command_line));
+        let security = &self.security;
+        result.push_str(&format!("\n[Security]\nLockdown: {}\nActive LSMs: {}\nSELinux: {}; AppArmor: {}\nKernel taint flags: {}\ndmesg restricted: {}; kernel pointer restriction: {}\nUnprivileged BPF policy: {}; kexec disabled: {}\n",
+            security.lockdown,security.active_lsms,security.selinux,security.apparmor,value(security.tainted),yes_no(security.dmesg_restrict),value(security.kptr_restrict),value(security.unprivileged_bpf_disabled),yes_no(security.kexec_disabled)));
+        if security.vulnerabilities.is_empty() {
+            result.push_str("CPU vulnerability/mitigation status: Unavailable\n");
+        }
+        for (name, status) in &security.vulnerabilities {
+            result.push_str(&format!("{name}: {status}\n"));
+        }
+        result.push_str("Security facts are kernel observations; no security audit or active probes were performed.\n");
+        result.push_str(&format!("\n[CPU and ISA]\n{}\n[Virtualization]\nEnvironment: {}\nDMI manufacturer/product: {} / {}\nPhysical host CPU: Unverifiable; capabilities are guest-visible\n\n[Memory]\nRAM total / available / used: {} / {} / {}\nSwap total / used: {} / {}\nBalloon indicators: {}\n",
+            self.cpu.render(),self.virtualization.environment,self.virtualization.manufacturer,self.virtualization.product,
+            display_bytes(self.memory.total),display_bytes(self.memory.available),display_bytes(self.memory.used),display_bytes(self.memory.swap_total),display_bytes(self.memory.swap_used),
+            if self.memory.balloon_drivers.is_empty() {"No loaded known balloon driver detected (availability unknown)".into()} else {format!("{} loaded; active reclamation unknown",self.memory.balloon_drivers.join(", "))}));
+        let huge = &self.memory.hugepages;
+        result.push_str(&format!("Huge pages total/free/reserved/surplus: {} / {} / {} / {}\nHuge page size: {}; anonymous/shared huge pages: {} / {}\nTransparent huge pages: {}\n",
+            value(huge.total),value(huge.free),value(huge.reserved),value(huge.surplus),display_bytes(huge.page_size),display_bytes(huge.anonymous_bytes),display_bytes(huge.shared_bytes),self.memory.transparent_hugepages));
+        if self.memory.numa_nodes.is_empty() {
+            result.push_str("NUMA nodes: Unavailable\n");
+        }
+        for node in &self.memory.numa_nodes {
+            result.push_str(&format!(
+                "NUMA {}: CPUs {}; total/free {} / {}\n",
+                node.name,
+                node.cpus,
+                display_bytes(node.total),
+                display_bytes(node.free)
+            ));
+        }
         if self.memory.zram.is_empty() {
             result.push_str("zram: No devices detected\n");
         }
@@ -859,9 +1495,8 @@ impl HostInspection {
         }
         for d in &self.storage.devices {
             result.push_str(&format!("/dev/{} ({}): {}; model {}\nIdentity: {}; transport {}; parent {}\nSectors logical/physical: {}/{}; table {}; FS {}\nRotational: {}; discard max: {} bytes\n",
-                d.name, nonempty(&d.kind),display_bytes(d.bytes),nonempty(&d.model),nonempty(&d.identity),nonempty(&d.transport),nonempty(&d.parent),
-                d.logical_sector.map(|v|v.to_string()).unwrap_or_else(|| UNKNOWN.into()),d.physical_sector.map(|v|v.to_string()).unwrap_or_else(|| UNKNOWN.into()),nonempty(&d.partition_table),nonempty(&d.filesystem),
-                d.rotational.map(|v| if v {"yes"} else {"no"}).unwrap_or(UNKNOWN),d.discard_max.map(|v|v.to_string()).unwrap_or_else(|| UNKNOWN.into())));
+                d.name,nonempty(&d.kind),display_bytes(d.bytes),nonempty(&d.model),privacy.identifier(&d.identity),nonempty(&d.transport),nonempty(&d.parent),
+                value(d.logical_sector),value(d.physical_sector),nonempty(&d.partition_table),nonempty(&d.filesystem),yes_no(d.rotational),value(d.discard_max)));
             if !d.slaves.is_empty() || !d.holders.is_empty() {
                 result.push_str(&format!(
                     "Relationships: slaves {:?}; holders {:?}\n",
@@ -869,39 +1504,53 @@ impl HostInspection {
                 ));
             }
         }
+        for controller in &self.storage.nvme {
+            result.push_str(&format!(
+                "NVMe {}: {}; firmware {}; state {}; transport {} (sysfs; no device probe)\n",
+                controller.name,
+                controller.model,
+                controller.firmware,
+                controller.state,
+                controller.transport
+            ));
+        }
         if self.storage.mounts.is_empty() {
             result.push_str("Current root/boot mounts: Unavailable\n");
         }
         for m in &self.storage.mounts {
             result.push_str(&format!(
                 "Mount {}: {} {}; options {}\n",
-                m.path, m.source, m.filesystem, m.options
+                m.path,
+                private_source(&m.source, privacy),
+                m.filesystem,
+                m.options
             ));
         }
-        result.push_str(&format!("Disk utilization (bytes):\n{}\nRAID status:\n{}\n\n[Firmware]\nBoot mode: {}\nUEFI bitness: {}\nSecure Boot: {}\nFirmware vendor: {}\nCurrent bootloader: Unknown (not inferred from files)\n\n[Network]\n",
-            self.storage.utilization,nonempty(&self.storage.raid),self.firmware.mode,self.firmware.bitness,self.firmware.secure_boot,self.firmware.vendor));
+        // df can use a stable device symlink as its source; redact that field too.
+        let utilization = self
+            .storage
+            .utilization
+            .lines()
+            .map(|line| {
+                let Some((source, rest)) = line.split_once(char::is_whitespace) else {
+                    return line.to_owned();
+                };
+                format!("{} {}", private_source(source, privacy), rest.trim_start())
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let f = &self.firmware;
+        result.push_str(&format!("Disk utilization (bytes):\n{}\nRAID status:\n{}\n\n[Firmware]\nBoot mode: {}\nUEFI bitness: {}\nSecure Boot: {}\nUEFI setup mode: {}\nFirmware vendor/version/date: {} / {} / {}\nefivarfs mounted / store readable: {} / {}\nTPM devices detected: {}\nCurrent bootloader: Unknown (not inferred from files)\n\n[Network]\n",
+            utilization,nonempty(&self.storage.raid),f.mode,f.bitness,f.secure_boot,f.setup_mode,f.vendor,f.version,f.release_date,yes_no(f.efivarfs_mounted),yes_no(f.variable_store_readable),f.tpm_devices));
         if self.network.interfaces.is_empty() {
             result.push_str("Interfaces: Unavailable\n");
         }
         for n in &self.network.interfaces {
-            result.push_str(&format!(
-                "{}: MAC {}; MTU {}; state {}; speed {}\nAddresses: {}\nAddress policy: {}\n",
-                n.name,
-                n.mac,
-                n.mtu
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| UNKNOWN.into()),
-                n.state,
-                n.speed_mbps
-                    .map(|v| format!("{v} Mbit/s"))
-                    .unwrap_or_else(|| "Unavailable".into()),
-                if n.addresses.is_empty() {
-                    UNKNOWN.into()
-                } else {
-                    n.addresses.join(", ")
-                },
-                n.policy
-            ));
+            result.push_str(&format!("{}: MAC {}; MTU {}; state {}; speed {}\nLink type: {}; driver {}; wireless {}\nAddresses: {}\nAddress policy: {}\nIPv6 disabled: {}; accept_ra {}; qdisc {}\n",
+            n.name,privacy.identifier(&n.mac),value(n.mtu),n.state,n.speed_mbps.map(|v|format!("{v} Mbit/s")).unwrap_or_else(||"Unavailable".into()),
+            n.link_type,n.driver,if n.wireless {"detected"} else {"not detected"},
+            if n.addresses.is_empty() {UNKNOWN.into()} else {n.addresses.join(", ")},n.policy,
+            yes_no(n.ipv6_disabled),value(n.accept_ra),if n.qdisc.is_empty() {"Unavailable".into()} else {n.qdisc.join(", ")}));
         }
         if self.network.defaults.is_empty() {
             result.push_str("Default routes / interfaces: Unavailable\n");
@@ -912,16 +1561,18 @@ impl HostInspection {
                 if r.ipv6 { 6 } else { 4 },
                 r.gateway,
                 r.interface,
-                r.metric
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| UNKNOWN.into())
+                value(r.metric)
             ));
         }
-        result.push_str(&format!("DNS: {}\nSSH policy: {}\n\n[Installation compatibility]\n{}\nDiagnostics do not authorize installation; strict preflight and disk identity checks remain required.\n",
-            if self.network.dns.is_empty() { UNKNOWN.into() } else { self.network.dns.join("; ") }, if self.network.ssh_policy.is_empty() { UNKNOWN.into() } else { self.network.ssh_policy.join("; ") },self.virtualization.compatibility));
+        let net = &self.network;
+        result.push_str(&format!("Observed network manager processes: {} (ownership unverified)\nTCP congestion control: {}; available {}\nDefault qdisc: {}\nIPv6 globally disabled / forwarding: {} / {}\nDNS/search configuration: {}\nSSH policy: {}\nNftables tables: {}; IPv4 default policies: {}; IPv6 default policies: {}\nFirewall summary omits rule contents; effective filtering is unverified.\nConnectivity, NAT, public IP, ASN/provider/location: Not tested (no online lookup).\n\n[Installation compatibility]\n{}\nDiagnostics do not authorize installation; strict preflight and disk identity checks remain required.\n",
+            if net.observed_managers.is_empty() {"Unavailable".into()} else {net.observed_managers.join(", ")},net.congestion_control,net.available_congestion_controls,net.default_qdisc,yes_no(net.ipv6_disabled),yes_no(net.ipv6_forwarding),
+            if net.dns.is_empty() {UNKNOWN.into()} else {net.dns.join("; ")},if net.ssh_policy.is_empty() {UNKNOWN.into()} else {net.ssh_policy.join("; ")},
+            value(net.firewall.nftables_table_count),policy_summary(&net.firewall.ipv4_policies),policy_summary(&net.firewall.ipv6_policies),self.virtualization.compatibility));
         result
     }
 }
+
 pub fn report(
     runner: &mut impl CommandRunner,
     root: &Path,
@@ -936,14 +1587,19 @@ pub fn report(
             .iter_mut()
             .find(|n| n.name == nic.name)
         {
-            interface.policy = format!(
-                "validated source policy: DHCPv4={}; DHCPv6={}; RA={}",
-                nic.dhcp4, nic.dhcp6, nic.accept_ra
-            );
+            if plan.system.explicit_network.is_none() {
+                interface.policy = format!(
+                    "validated source policy: DHCPv4={}; DHCPv6={}; RA={}",
+                    nic.dhcp4, nic.dhcp6, nic.accept_ra
+                );
+            } else {
+                interface.policy =
+                    "Unknown; explicit installation policy is shown in TARGET SYSTEM".into();
+            }
         }
     }
     let mut current = observed.render_current();
-    current.push_str(&format!("Selected disk (recorded preflight identity): {} ({} bytes)\nSerial: {} WWN: {} PTUUID: {}\n",manifest.disk.device,manifest.disk.size_bytes,manifest.disk.serial,manifest.disk.wwn,manifest.disk.partition_table_id));
+    current.push_str(&format!("Selected disk (recorded preflight identity): {} ({} bytes)\nStable disk identifiers: [redacted]; installation confirmation is checked separately.\n",manifest.disk.device,manifest.disk.size_bytes));
     if plan.hold == Some(1) {
         return PreflightReport {
             current,
@@ -972,6 +1628,159 @@ pub fn report(
             }
         ),
     }
+}
+
+fn family_policy(
+    dynamic: bool,
+    ra: bool,
+    addresses: &[String],
+    v6: bool,
+    disabled: bool,
+) -> String {
+    if disabled {
+        return "disabled".into();
+    }
+    match (dynamic, ra, !addresses.is_empty()) {
+        (true, true, _) => "SLAAC + DHCPv6".into(),
+        (true, false, _) => if v6 { "DHCPv6" } else { "DHCPv4" }.into(),
+        (false, true, _) => "SLAAC / router advertisements".into(),
+        (false, false, true) => "static".into(),
+        _ => "disabled (no address policy)".into(),
+    }
+}
+fn planned_interface(
+    name: &str,
+    addresses4: &[String],
+    gateway4: Option<&str>,
+    addresses6: &[String],
+    gateway6: Option<&str>,
+    dynamic: [bool; 3],
+    disable6: bool,
+) -> String {
+    let [dhcp4, dhcp6, ra] = dynamic;
+    let addresses = |values: &[String], automatic, disabled| {
+        if disabled {
+            "not configured".into()
+        } else if automatic {
+            if values.is_empty() {
+                "assigned at runtime".into()
+            } else {
+                format!(
+                    "observed snapshot {}; reassigned at runtime",
+                    values.join(", ")
+                )
+            }
+        } else if values.is_empty() {
+            "not configured".into()
+        } else {
+            values.join(", ")
+        }
+    };
+    let gateway = |value: Option<&str>, automatic, disabled| {
+        if disabled {
+            "not configured".into()
+        } else if automatic {
+            value
+                .map(|v| format!("observed snapshot {v}; learned at runtime"))
+                .unwrap_or_else(|| "learned at runtime".into())
+        } else {
+            value.unwrap_or("none specified").to_owned()
+        }
+    };
+    format!(
+        "Interface: {name}; MAC [redacted]\n  IPv4: {}; addresses {}; gateway {}\n  IPv6: {}; addresses {}; gateway {}\n",
+        family_policy(dhcp4, false, addresses4, false, false),
+        addresses(addresses4, dhcp4, false),
+        gateway(gateway4, dhcp4, false),
+        family_policy(dhcp6, ra, addresses6, true, disable6),
+        addresses(addresses6, dhcp6 || ra, disable6),
+        gateway(gateway6, dhcp6 || ra, disable6)
+    )
+}
+/// Effective address policies are rendered from the same typed fields used by
+/// target network configuration. Dynamic leases remain snapshots, never pinned.
+pub fn planned_network(plan: &InstallPlan, manifest: Option<&DeploymentManifest>) -> String {
+    let disable6 = plan.system.network.ipv6 == crate::config::Ipv6Policy::Disable;
+    let mut text = String::new();
+    if let Some(explicit) = &plan.system.explicit_network {
+        text.push_str("Network policy origin: explicit user configuration\n");
+        let name = manifest
+            .and_then(|m| {
+                m.network
+                    .iter()
+                    .find(|n| n.mac.eq_ignore_ascii_case(&explicit.mac))
+            })
+            .map(|n| n.name.as_str())
+            .unwrap_or("MAC-selected interface (name unverified)");
+        text.push_str(&planned_interface(
+            name,
+            &explicit
+                .ipv4_address
+                .clone()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            explicit.ipv4_gateway.as_deref(),
+            &explicit
+                .ipv6_address
+                .clone()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            explicit.ipv6_gateway.as_deref(),
+            [explicit.dhcp4, explicit.dhcp6, explicit.accept_ra],
+            disable6,
+        ));
+        if manifest.is_none() {
+            text.push_str(
+                "Explicit interface binding and installation compatibility: unverified\n",
+            );
+        }
+    } else if let Some(manifest) = manifest {
+        text.push_str("Network policy origin: inherited validated source policy\n");
+        for nic in &manifest.network {
+            text.push_str(&planned_interface(
+                &nic.name,
+                &nic.ipv4_addresses,
+                nic.ipv4_gateway.as_deref(),
+                &nic.ipv6_addresses,
+                nic.ipv6_gateway.as_deref(),
+                [nic.dhcp4, nic.dhcp6, nic.accept_ra],
+                disable6,
+            ));
+        }
+        if manifest.network.is_empty() {
+            text.push_str("Per-interface policies: Unknown (inventory unavailable)\n");
+        }
+    } else {
+        text.push_str("Network policy origin: inherited; source policy unverified\nPer-interface IPv4/IPv6 addressing and gateways: Unknown\n");
+    }
+    text.push_str(&format!(
+        "Effective MTU: {}\n",
+        plan.system
+            .network
+            .mtu
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "target defaults (source MTU not inherited)".into())
+    ));
+    if plan.system.dns.mode == crate::config::DnsMode::Static {
+        text.push_str(&format!(
+            "Effective DNS: static {}; search {}\n",
+            plan.system
+                .dns
+                .servers
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+            if plan.system.dns.search_domains.is_empty() {
+                "none".into()
+            } else {
+                plan.system.dns.search_domains.join(", ")
+            }
+        ));
+    } else {
+        text.push_str("Effective DNS: automatic acquisition via selected network manager; search domains learned at runtime\n");
+    }
+    text
 }
 
 fn planned_count(plan: &InstallPlan, manifest: &DeploymentManifest) -> Option<usize> {
@@ -1004,7 +1813,9 @@ pub fn planned_target(plan: &InstallPlan, manifest: Option<&DeploymentManifest>)
     let firmware = manifest
         .map(|m| format!("{} (detected)", m.boot_mode.as_str()))
         .unwrap_or_else(|| "Unknown (unverified)".into());
-    let network = if manifest.is_some() {
+    let network = if plan.system.explicit_network.is_some() {
+        "explicit user policy"
+    } else if manifest.is_some() {
         "inherited validated source policy"
     } else {
         "source policy unverified"
@@ -1113,6 +1924,7 @@ pub fn planned_target(plan: &InstallPlan, manifest: Option<&DeploymentManifest>)
         plan.system.keep_package_cache
     );
 
+    let target = format!("{target}{}", planned_network(plan, manifest));
     if plan.system.root_filesystem == crate::config::RootFilesystem::Btrfs {
         format!(
             "{target}Warning: FAT32 /boot is outside root snapshots; restore matching kernel/initramfs separately.\n"
@@ -1318,5 +2130,185 @@ mod tests {
         assert_eq!(facts.firmware.bitness, UNKNOWN);
         assert_eq!(facts.firmware.secure_boot, UNKNOWN);
         assert!(!facts.render_current().contains("Boot mode: BIOS"));
+    }
+    #[test]
+    fn kernel_command_line_redacts_unknown_values_and_quoted_credentials() {
+        let cmdline = "root=UUID=private-id rootfstype=btrfs ro quiet console=ttyS0,115200n8 secret=\"private password\" access_token=abc123 rd.luks.key=/secret.key init=\"/bin/sh -c hidden-command\"";
+        let text = redacted_command_line(cmdline);
+        assert!(text.contains("rootfstype=btrfs ro quiet console=ttyS0,115200n8"));
+        for secret in [
+            "private-id",
+            "private password",
+            "abc123",
+            "/secret.key",
+            "hidden-command",
+        ] {
+            assert!(!text.contains(secret), "leaked {secret}");
+        }
+        assert!(text.contains("access_token=[redacted]"));
+        assert!(redacted_command_line("unknown='unclosed").contains("malformed"));
+        assert_eq!(redacted_command_line("standalone-secret"), "[redacted]");
+    }
+    #[test]
+    fn load_and_service_manager_are_optional_and_not_inferred_from_installed_packages() {
+        assert_eq!(
+            load_average("1.50 0.25 2.0 3/120 15"),
+            (Some([1.5, 0.25, 2.0]), Some(3), Some(120))
+        );
+        assert_eq!(load_average("nan -1 inf 8/2 15"), (None, None, None));
+        assert_eq!(load_average("broken"), (None, None, None));
+        let root = Scratch::new("inspect-service-manager");
+        root.write("proc/1/comm", "init\n");
+        fs::create_dir_all(root.0.join("etc/init.d")).unwrap();
+        assert!(service_manager(&root.0).starts_with("Unknown"));
+        root.write("run/openrc/softlevel", "default\n");
+        assert_eq!(
+            service_manager(&root.0),
+            "OpenRC (runtime runlevel default)"
+        );
+    }
+    #[test]
+    fn hugepages_numa_and_thp_use_kernel_counts_and_reject_overflow() {
+        let root = Scratch::new("inspect-huge-nodes");
+        root.write("proc/meminfo","MemTotal: 8192 kB\nMemAvailable: 4096 kB\nHugePages_Total: 4\nHugePages_Free: 2\nHugePages_Rsvd: 1\nHugePages_Surp: 0\nHugepagesize: 2048 kB\nAnonHugePages: 4096 kB\nShmemHugePages: 0 kB\n");
+        root.write(
+            "sys/devices/system/node/node0/meminfo",
+            "Node 0 MemTotal: 8192 kB\nNode 0 MemFree: 1024 kB\n",
+        );
+        root.write("sys/devices/system/node/node0/cpulist", "0-3\n");
+        root.write(
+            "sys/kernel/mm/transparent_hugepage/enabled",
+            "always [madvise] never\n",
+        );
+        let memory = memory(&root.0);
+        assert_eq!(memory.hugepages.total, Some(4));
+        assert_eq!(memory.hugepages.page_size, Some(2 * 1024 * 1024));
+        assert_eq!(memory.hugepages.anonymous_bytes, Some(4 * 1024 * 1024));
+        assert_eq!(memory.transparent_hugepages, "madvise");
+        assert_eq!(memory.numa_nodes[0].cpus, "0-3");
+        assert_eq!(memory.numa_nodes[0].total, Some(8192 * 1024));
+        root.write(
+            "sys/devices/system/node/node0/meminfo",
+            "Node 0 MemTotal: 18446744073709551615 kB\n",
+        );
+        assert_eq!(numa(&root.0)[0].total, None);
+    }
+    #[test]
+    fn security_reports_kernel_observations_without_probing_or_assuming_missing_means_disabled() {
+        let root = Scratch::new("inspect-security");
+        root.write(
+            "sys/kernel/security/lockdown",
+            "none [integrity] confidentiality\n",
+        );
+        root.write(
+            "sys/kernel/security/lsm",
+            "lockdown,capability,yama,apparmor\n",
+        );
+        root.write(
+            "sys/devices/system/cpu/vulnerabilities/spectre_v2",
+            "Mitigation: Enhanced IBRS\n",
+        );
+        root.write("proc/sys/kernel/tainted", "512\n");
+        root.write("proc/sys/kernel/kexec_load_disabled", "1\n");
+        root.write("sys/module/apparmor/parameters/enabled", "Y\n");
+        let facts = security(&root.0);
+        assert_eq!(facts.lockdown, "integrity");
+        assert_eq!(facts.tainted, Some(512));
+        assert_eq!(facts.kexec_disabled, Some(true));
+        assert_eq!(facts.selinux, UNKNOWN);
+        assert_eq!(facts.apparmor, "Enabled");
+        assert_eq!(
+            facts.vulnerabilities,
+            [("spectre_v2".into(), "Mitigation: Enhanced IBRS".into())]
+        );
+    }
+    #[test]
+    fn network_diagnostics_only_render_qdisc_kinds_and_firewall_policies() {
+        assert_eq!(
+            qdiscs(
+                "qdisc fq_codel 0: dev eth0 root refcnt 2 limit 10240p\nqdisc mq 0: dev eth1 root\nmalformed"
+            )["eth0"],
+            ["fq_codel"]
+        );
+        assert!(qdiscs("qdisc broken 0: dev ../../bad root").is_empty());
+        let mut runner = MockRunner::new([
+            output("table inet filter\ntable ip nat\n"),
+            output(
+                "-P INPUT DROP\n-P FORWARD DROP\n-P OUTPUT ACCEPT\n-A INPUT -m comment --comment private-firewall-comment -j ACCEPT\n",
+            ),
+            output("-P INPUT ACCEPT\n"),
+        ]);
+        let facts = firewall(&mut runner);
+        assert_eq!(facts.nftables_table_count, Some(2));
+        assert_eq!(facts.ipv4_policies["INPUT"], "DROP");
+        assert!(!policy_summary(&facts.ipv4_policies).contains("private"));
+        assert_eq!(runner.calls()[0].args, ["list", "tables"]);
+        assert_eq!(runner.calls()[1].args, ["-S"]);
+        let mut runner = MockRunner::new([output(""), output(""), output("")]);
+        assert_eq!(firewall(&mut runner).nftables_table_count, Some(0));
+    }
+    #[test]
+    fn default_report_masks_mac_stable_ids_and_keeps_raw_inventory_local() {
+        let root = Scratch::new("inspect-private");
+        root.write("sys/class/net/eth0/address", "52:54:00:12:34:56\n");
+        let mut runner = MockRunner::empty();
+        let mut facts = collect(&mut runner, &root.0);
+        facts.storage.devices.push(DiskFacts {
+            name: "vda".into(),
+            kind: "disk".into(),
+            identity: "SERIAL-PRIVATE / UUID-PRIVATE".into(),
+            ..DiskFacts::default()
+        });
+        facts.storage.mounts.push(MountFacts {
+            path: "/".into(),
+            source: "/dev/disk/by-uuid/UUID-PRIVATE".into(),
+            filesystem: "ext4".into(),
+            options: "rw".into(),
+        });
+        let shared = facts.render_current();
+        for secret in ["52:54:00:12:34:56", "SERIAL-PRIVATE", "UUID-PRIVATE"] {
+            assert!(!shared.contains(secret), "shared report leaked {secret}");
+        }
+        assert!(shared.contains("[redacted]"));
+        let full = facts.render_current_with_privacy(InspectionPrivacy::ShowIdentifiers);
+        assert!(full.contains("52:54:00:12:34:56"));
+        assert!(full.contains("SERIAL-PRIVATE"));
+        assert_eq!(facts.network.interfaces[0].mac, "52:54:00:12:34:56");
+        assert_eq!(
+            private_source(
+                "//user:password@example/share",
+                InspectionPrivacy::ShowIdentifiers
+            ),
+            "[network mount credentials redacted]"
+        );
+    }
+    #[test]
+    fn nvme_sysfs_and_firmware_version_do_not_read_serials_or_efi_key_databases() {
+        let root = Scratch::new("inspect-nvme-firmware");
+        root.write("sys/class/nvme/nvme0/model", "Fixture NVMe\n");
+        root.write("sys/class/nvme/nvme0/firmware_rev", "1.2\n");
+        root.write("sys/class/nvme/nvme0/serial", "private-nvme-serial\n");
+        root.write("sys/class/nvme/nvme0/state", "live\n");
+        root.write("sys/class/nvme/nvme0/transport", "pcie\n");
+        root.write("sys/class/dmi/id/bios_version", "Fixture 1.0\n");
+        root.write("sys/class/dmi/id/bios_date", "11/24/2026\n");
+        fs::create_dir_all(root.0.join("sys/firmware/efi/efivars")).unwrap();
+        root.write(
+            "proc/self/mountinfo",
+            "30 20 0:5 / /sys/firmware/efi/efivars ro - efivarfs efivarfs ro\n",
+        );
+        root.write(
+            "sys/firmware/efi/efivars/PK-private-key",
+            "private-key-database",
+        );
+        let facts = nvme(&root.0);
+        assert_eq!(facts[0].model, "Fixture NVMe");
+        assert_eq!(facts[0].firmware, "1.2");
+        let firmware = firmware(&root.0, false);
+        assert_eq!(firmware.version, "Fixture 1.0");
+        assert_eq!(firmware.efivarfs_mounted, Some(true));
+        assert_eq!(firmware.variable_store_readable, Some(true));
+        assert_eq!(firmware.secure_boot, UNKNOWN);
+        assert!(!format!("{facts:?} {firmware:?}").contains("private"));
     }
 }

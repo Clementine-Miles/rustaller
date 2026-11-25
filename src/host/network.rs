@@ -1,15 +1,130 @@
 //! Read-only source network observation. Live and target networking are separate.
 use super::handoff::{HandoffError, MAX_TEXT, capture, spec};
 use crate::command::{CommandRunner, OutputMode};
-use crate::deployment::NetworkInterface;
+use crate::deployment::{NetworkInterface, parse_interface_address, valid_interface_name};
 use crate::fsutil::effective_uid;
 use crate::worker::initrd_network::{AddressFamily, gateway_from_route_output};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::io::Read;
+use std::net::{IpAddr, Ipv4Addr};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Component, Path};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NetworkOwner {
+    Networkd,
+    NetworkManager,
+    Ifupdown,
+    Dhcpcd,
+}
+
+#[derive(Debug)]
+struct SourcePolicy {
+    owner: NetworkOwner,
+    dhcp4: bool,
+    dhcp6: bool,
+    accept_ra: bool,
+    // None means the adapter verified policy but has no exact static
+    // configuration to compare. Some(empty) explicitly disables addresses.
+    static_addresses: [Option<Vec<String>>; 2],
+    static_gateways: [Option<Option<String>>; 2],
+}
+
+impl SourcePolicy {
+    fn new(owner: NetworkOwner, [dhcp4, dhcp6, accept_ra]: [bool; 3]) -> Self {
+        Self {
+            owner,
+            dhcp4,
+            dhcp6,
+            accept_ra,
+            static_addresses: [None, None],
+            static_gateways: [None, None],
+        }
+    }
+
+    fn check_observations(
+        &self,
+        observed: [&[String]; 2],
+        raw: [&str; 2],
+        gateways: [&Option<String>; 2],
+    ) -> Result<(), HandoffError> {
+        for (i, automatic) in [self.dhcp4, self.dhcp6 || self.accept_ra]
+            .into_iter()
+            .enumerate()
+        {
+            let dynamic = |line: &str| line.split_whitespace().any(|part| part == "dynamic");
+            let lines = raw[i]
+                .lines()
+                .filter(|line| !line.split_whitespace().any(|part| part == "temporary"));
+            // Linux DHCPv4 clients can use addresses with infinite kernel
+            // lifetimes. Legacy IPv4 ownership comes from applied state or a
+            // matching active lease, not from the kernel's dynamic marker.
+            if (self.owner == NetworkOwner::Networkd || !automatic || i == 1)
+                && lines.clone().any(|line| automatic != dynamic(line))
+                || self.static_addresses[i].as_ref().is_some_and(|configured| {
+                    configured.len() != observed[i].len()
+                        || !configured
+                            .iter()
+                            .all(|address| observed[i].contains(address))
+                })
+                || self.static_gateways[i]
+                    .as_ref()
+                    .is_some_and(|gateway| gateway != gateways[i])
+            {
+                return Err(network_error(
+                    "observed addresses or gateways disagree with the applied source profile; use explicit networking",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+struct SourceLink<'a> {
+    index: &'a str,
+    name: &'a str,
+    mac: &'a str,
+    supported: bool,
+}
+
+fn source_links(output: &str) -> impl Iterator<Item = SourceLink<'_>> {
+    output.lines().filter_map(|line| {
+        let fields: Vec<_> = line.split_whitespace().collect();
+        let qualified_name = fields.get(1)?.trim_end_matches(':');
+        let name = qualified_name.split('@').next()?;
+        let hw = fields.iter().position(|word| *word == "link/ether")?;
+        let supported = !qualified_name.contains('@')
+            && !fields.iter().any(|word| {
+                matches!(
+                    *word,
+                    "master"
+                        | "vrf"
+                        | "bridge"
+                        | "bond"
+                        | "vlan"
+                        | "vxlan"
+                        | "veth"
+                        | "macvlan"
+                        | "ipvlan"
+                        | "tun"
+                        | "wireguard"
+                )
+            });
+        Some(SourceLink {
+            index: fields[0].trim_end_matches(':'),
+            name,
+            mac: fields.get(hw + 1)?,
+            supported,
+        })
+    })
+}
+
+fn network_error(reason: &'static str) -> HandoffError {
+    HandoffError::Invalid(reason)
+}
+
 pub fn collect_network<R: CommandRunner>(
     runner: &mut R,
 ) -> Result<Vec<NetworkInterface>, HandoffError> {
@@ -20,56 +135,20 @@ fn collect_network_at<R: CommandRunner>(
     runner: &mut R,
     root: &Path,
 ) -> Result<Vec<NetworkInterface>, HandoffError> {
-    let active = capture(runner, &spec("systemctl", ["is-active", "systemd-networkd.service"], "handoff-network-owner"))
-        .map_err(|_| HandoffError::Invalid("applied network policy capture requires active systemd-networkd; other source network managers are unsupported"))?;
-    if active.trim() != "active" {
-        return Err(HandoffError::Invalid(
-            "source systemd-networkd is not active",
-        ));
-    }
-    let other = runner.run(
-        &spec(
-            "systemctl",
-            ["is-active", "NetworkManager.service"],
-            "handoff-network-owner",
-        )
-        .stdout_mode(OutputMode::Capture)
-        .stderr_mode(OutputMode::Capture),
-    )?;
-    if !matches!(other.status, Some(3 | 4)) {
-        return Err(HandoffError::Invalid(
-            "cannot exclude competing NetworkManager ownership; use one supported active source network manager",
-        ));
-    }
+    let networkd = service_active(runner, "systemd-networkd.service")?;
+    let nm = active_nm_connections(runner, root)?;
     let links = capture(
         runner,
         &spec("ip", ["-o", "-d", "link", "show"], "handoff-network-links"),
     )?;
     let mut result = Vec::new();
-    for line in links.lines() {
-        let fields: Vec<_> = line.split_whitespace().collect();
-        let Some(name) = fields.get(1).map(|value| {
-            value
-                .trim_end_matches(':')
-                .split('@')
-                .next()
-                .unwrap_or_default()
-        }) else {
-            continue;
-        };
-        let Some(index) = fields.iter().position(|value| *value == "link/ether") else {
-            continue;
-        };
-        if name == "lo" {
-            continue;
-        }
-        if !crate::deployment::valid_interface_name(name) {
+    let mut legacy_dhcp4 = BTreeSet::new();
+    for link in source_links(&links) {
+        let name = link.name;
+        if !valid_interface_name(name) {
             return Err(HandoffError::Invalid("unsupported interface name"));
         }
-        let mac = fields
-            .get(index + 1)
-            .ok_or(HandoffError::Invalid("missing interface MAC"))?
-            .to_string();
+        let mac = link.mac.to_owned();
         let v4 = capture(
             runner,
             &spec(
@@ -91,47 +170,32 @@ fn collect_network_at<R: CommandRunner>(
         if ipv4_addresses.is_empty() && ipv6_addresses.is_empty() {
             continue;
         }
-        if fields.contains(&"master")
-            || fields.iter().any(|word| {
-                matches!(
-                    *word,
-                    "vrf"
-                        | "bridge"
-                        | "bond"
-                        | "vlan"
-                        | "vxlan"
-                        | "veth"
-                        | "macvlan"
-                        | "ipvlan"
-                        | "tun"
-                        | "wireguard"
-                )
-            })
-            || fields[1].contains('@')
-        {
+        if !link.supported {
             return Err(HandoffError::Invalid(
                 "addressed bridges, bonds, VRFs, VLANs and virtual links cannot be inherited",
             ));
         }
-        let index = fields[0]
-            .trim_end_matches(':')
-            .parse::<u32>()
-            .map_err(|_| HandoffError::Invalid("invalid interface index"))?;
-        let [dhcp4, dhcp6, accept_ra] = source_network_policy(root, index)?;
-        // Observations are a Live bootstrap snapshot, not policy. The current
-        // manifest cannot represent static addresses mixed with automatic ones.
-        for (automatic, output) in [(dhcp4, &v4), (dhcp6 || accept_ra, &v6)] {
-            for line in output
-                .lines()
-                .filter(|line| !line.split_whitespace().any(|v| v == "temporary"))
-            {
-                if automatic != line.split_whitespace().any(|v| v == "dynamic") {
-                    return Err(HandoffError::Invalid(
-                        "observed addresses disagree with the applied profile, or mix static and automatic addressing",
-                    ));
-                }
-            }
+        if wireless_link(root, name) || nm.get(name).is_some_and(|profile| profile.wireless) {
+            return Err(wireless_requirement(
+                runner,
+                root,
+                name,
+                nm.contains_key(name),
+            ));
         }
+        let index = link
+            .index
+            .parse::<u32>()
+            .map_err(|_| network_error("invalid interface index"))?;
+        let policy = applied_policy(
+            runner,
+            root,
+            name,
+            index,
+            networkd,
+            nm.get(name),
+            &ipv4_addresses,
+        )?;
         let route4 = capture(
             runner,
             &spec(
@@ -148,16 +212,26 @@ fn collect_network_at<R: CommandRunner>(
                 "handoff-ipv6-gateway",
             ),
         )?;
+        let ipv4_gateway = parse_default_gateway(&route4, AddressFamily::Ipv4)?;
+        let ipv6_gateway = parse_default_gateway(&route6, AddressFamily::Ipv6)?;
+        policy.check_observations(
+            [&ipv4_addresses, &ipv6_addresses],
+            [&v4, &v6],
+            [&ipv4_gateway, &ipv6_gateway],
+        )?;
+        if matches!(policy.owner, NetworkOwner::Ifupdown | NetworkOwner::Dhcpcd) && policy.dhcp4 {
+            legacy_dhcp4.insert(name);
+        }
         result.push(NetworkInterface {
             name: name.into(),
             mac,
             ipv4_addresses,
             ipv6_addresses,
-            ipv4_gateway: parse_default_gateway(&route4, AddressFamily::Ipv4)?,
-            ipv6_gateway: parse_default_gateway(&route6, AddressFamily::Ipv6)?,
-            dhcp4,
-            dhcp6,
-            accept_ra,
+            ipv4_gateway,
+            ipv6_gateway,
+            dhcp4: policy.dhcp4,
+            dhcp6: policy.dhcp6,
+            accept_ra: policy.accept_ra,
         });
     }
     if result.is_empty() || result.len() > 16 {
@@ -183,17 +257,866 @@ fn collect_network_at<R: CommandRunner>(
                 "handoff-routing-tables",
             ),
         )?;
-        validate_inherited_routes(&rules, &routes, family, &result)?;
+        validate_inherited_routes(&rules, &routes, family, &result, &legacy_dhcp4)?;
     }
     Ok(result)
 }
 
-/// Only an applied, flat networkd profile currently supplies authoritative
-/// automatic-address policy. Unknown managers and drop-ins fail before erase.
+/// Select a real, currently visible interface. The explicit policy owns
+/// addresses/routes and therefore does not import the host's route tables.
+pub fn collect_explicit_network<R: CommandRunner>(
+    runner: &mut R,
+    explicit: &crate::config::ExplicitNetwork,
+) -> Result<Vec<NetworkInterface>, HandoffError> {
+    explicit.validate().map_err(network_error)?;
+    let links = capture(
+        runner,
+        &spec("ip", ["-o", "-d", "link", "show"], "handoff-network-links"),
+    )?;
+    let mut selected =
+        source_links(&links).filter(|link| link.mac.eq_ignore_ascii_case(&explicit.mac));
+    let link = selected
+        .next()
+        .ok_or_else(|| network_error("explicit network MAC is not present"))?;
+    if selected.next().is_some() || !link.supported || !valid_interface_name(link.name) {
+        return Err(network_error(
+            "explicit network MAC is ambiguous or belongs to an unsupported link",
+        ));
+    }
+    if wireless_link(Path::new("/"), link.name) {
+        return Err(wireless_requirement(
+            runner,
+            Path::new("/"),
+            link.name,
+            false,
+        ));
+    }
+    Ok(vec![NetworkInterface {
+        name: link.name.into(),
+        mac: link.mac.to_ascii_lowercase(),
+        ipv4_addresses: explicit.ipv4_address.iter().cloned().collect(),
+        ipv4_gateway: explicit.ipv4_gateway.clone(),
+        ipv6_addresses: explicit.ipv6_address.iter().cloned().collect(),
+        ipv6_gateway: explicit.ipv6_gateway.clone(),
+        dhcp4: explicit.dhcp4,
+        dhcp6: explicit.dhcp6,
+        accept_ra: explicit.accept_ra,
+    }])
+}
+
+fn local_output<R: CommandRunner, const N: usize>(
+    runner: &mut R,
+    program: &str,
+    args: [&str; N],
+) -> Result<Option<crate::command::CommandOutput>, HandoffError> {
+    let command = spec(program, args, "handoff-network-owner")
+        .env("LC_ALL", "C")
+        .stdout_mode(OutputMode::Capture)
+        .stderr_mode(OutputMode::Capture)
+        .inspection_limits();
+    match runner.run(&command) {
+        Ok(output) if output.stdout.len() <= MAX_TEXT => Ok(Some(output)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+        Ok(_) => Err(network_error("oversized network manager response")),
+    }
+}
+
+fn service_active<R: CommandRunner>(runner: &mut R, unit: &str) -> Result<bool, HandoffError> {
+    match local_output(runner, "systemctl", ["is-active", unit])? {
+        Some(result) if result.status == Some(0) && result.stdout == b"active\n" => Ok(true),
+        Some(result) if matches!(result.status, Some(1 | 3 | 4)) => Ok(false),
+        None => Ok(false),
+        _ => Err(network_error(
+            "cannot determine running source network services",
+        )),
+    }
+}
+
+fn applied_policy<R: CommandRunner>(
+    runner: &mut R,
+    root: &Path,
+    name: &str,
+    index: u32,
+    networkd: bool,
+    nm: Option<&NmConnection>,
+    ipv4: &[String],
+) -> Result<SourcePolicy, HandoffError> {
+    let conflict = || {
+        network_error(
+            "more than one source manager can configure this interface; use explicit networking",
+        )
+    };
+    let networkd = networkd && networkd_owns_link(root, index)?;
+    let ifupdown = ifupdown_policy(root, name)?;
+    let dhcpcd = active_dhcpcd(root, name)?;
+    if usize::from(networkd) + usize::from(nm.is_some()) + usize::from(ifupdown.is_some()) > 1 {
+        return Err(conflict());
+    }
+    if let Some(lease_client) = dhcpcd {
+        if networkd
+            || nm.is_some()
+            || ifupdown
+                .as_ref()
+                .is_some_and(|policy| lease_client.global || !policy.dhcp4)
+        {
+            return Err(conflict());
+        }
+        let policy = dhcpcd_policy(runner, root, name, ipv4, lease_client)?;
+        if let Some(ifupdown) = ifupdown {
+            if [policy.dhcp4, policy.dhcp6, policy.accept_ra]
+                != [ifupdown.dhcp4, ifupdown.dhcp6, ifupdown.accept_ra]
+            {
+                return Err(conflict());
+            }
+            return Ok(ifupdown);
+        }
+        return Ok(policy);
+    }
+    if let Some(nm) = nm {
+        return nm_policy(runner, name, &nm.uuid);
+    }
+    if networkd {
+        return source_network_policy(root, index)
+            .map(|flags| SourcePolicy::new(NetworkOwner::Networkd, flags));
+    }
+    if let Some(ifupdown) = ifupdown {
+        return Ok(ifupdown);
+    }
+    Err(network_error(
+        "no supported applied profile owns this Ethernet interface; use explicit networking",
+    ))
+}
+
+fn networkd_owns_link(root: &Path, index: u32) -> Result<bool, HandoffError> {
+    let netif = root.join("run/systemd/netif");
+    let path = netif.join("links").join(index.to_string());
+    let owner = match fs::symlink_metadata(&netif) {
+        Ok(metadata) if metadata.is_dir() => metadata.uid(),
+        Ok(_) => return Err(network_error("unsafe networkd state directory")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    crate::shared::configure::validate_planned_parent(&path)
+        .map_err(|_| network_error("unsafe networkd state directory"))?;
+    let text = match read_network_file(&path, owner) {
+        Ok(text) => text,
+        Err(HandoffError::Filesystem(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(false);
+        }
+        Err(error) => return Err(error),
+    };
+    match text
+        .lines()
+        .find_map(|line| line.strip_prefix("ADMIN_STATE="))
+    {
+        Some("configured") => Ok(true),
+        Some("unmanaged") => Ok(false),
+        _ => Err(network_error(
+            "networkd is still configuring an addressed interface",
+        )),
+    }
+}
+
+fn ifupdown_policy(root: &Path, name: &str) -> Result<Option<SourcePolicy>, HandoffError> {
+    let invalid =
+        || network_error("unsupported or stale ifupdown configuration; use explicit networking");
+    let mut state_path = None;
+    for relative in ["run/network/ifstate", "run/ifstate"] {
+        let path = root.join(relative);
+        if let Some(state) = optional_network_file(&path)? {
+            for line in state.lines() {
+                let mut words = line.split_whitespace();
+                let Some(first) = words.next() else { continue };
+                let (physical, logical) = first.split_once('=').unwrap_or((first, first));
+                if physical == name
+                    && (logical != name || state_path.replace(path.clone()).is_some())
+                {
+                    return Err(invalid());
+                }
+            }
+        }
+    }
+    let Some(state_path) = state_path else {
+        return Ok(None);
+    };
+    let path = root.join("etc/network/interfaces");
+    let mut text = optional_network_file(&path)?.ok_or_else(invalid)?;
+    let mut newest = fs::metadata(&path)?.modified()?;
+    // Handle the distro's standard flat include directory. Other globs and
+    // recursive includes cannot be interpreted without running a manager.
+    let includes = text.lines().any(|line| {
+        matches!(
+            line.split_whitespace().next(),
+            Some("source" | "source-directory")
+        )
+    });
+    if includes {
+        let mut remaining = String::new();
+        let mut sources = None;
+        for line in text.lines() {
+            let words: Vec<_> = line.split_whitespace().collect();
+            match words.as_slice() {
+                ["source", "/etc/network/interfaces.d/*"]
+                | ["source-directory", "/etc/network/interfaces.d"] => {
+                    if sources.replace(words[0]).is_some() {
+                        return Err(invalid());
+                    }
+                }
+                [directive, ..] if matches!(*directive, "source" | "source-directory") => {
+                    return Err(invalid());
+                }
+                _ => {
+                    remaining.push_str(line);
+                    remaining.push('\n');
+                }
+            }
+        }
+        let directory = root.join("etc/network/interfaces.d");
+        if directory.exists() {
+            crate::shared::configure::validate_directory_tree(&directory).map_err(|_| invalid())?;
+            let entries = fs::read_dir(&directory)?
+                .take(65)
+                .collect::<Result<Vec<_>, _>>()?;
+            if entries.len() > 64 {
+                return Err(invalid());
+            }
+            for entry in entries {
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else {
+                    return Err(invalid());
+                };
+                if name.starts_with('.')
+                    || (sources == Some("source-directory")
+                        && !name
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b)))
+                {
+                    continue;
+                }
+                let path = entry.path();
+                let contents = optional_network_file(&path)?.ok_or_else(invalid)?;
+                newest = newest.max(fs::metadata(path)?.modified()?);
+                remaining.push('\n');
+                remaining.push_str(&contents);
+                if remaining.len() > MAX_TEXT {
+                    return Err(invalid());
+                }
+            }
+        }
+        text = remaining;
+    }
+    if newest > fs::metadata(state_path)?.modified()? {
+        return Err(invalid());
+    }
+    parse_ifupdown_profile(&text, name).map(Some)
+}
+
+#[derive(Default)]
+struct IfupdownFamily {
+    method: Option<&'static str>,
+    addresses: Vec<String>,
+    gateway: Option<String>,
+    netmask: Option<u8>,
+}
+
+fn parse_ifupdown_profile(text: &str, device: &str) -> Result<SourcePolicy, HandoffError> {
+    let invalid = || {
+        network_error(
+            "unsupported ifupdown address policy or custom interface hooks; use explicit networking",
+        )
+    };
+    let mut families = [IfupdownFamily::default(), IfupdownFamily::default()];
+    let mut section = None;
+    let mut native_ra = None;
+    let mut native_dhcp = None;
+    let mut seen_native = false;
+    for line in text.lines() {
+        let words: Vec<_> = line
+            .split_whitespace()
+            .take_while(|word| !word.starts_with('#'))
+            .collect();
+        match words.as_slice() {
+            [] => continue,
+            [directive, ..] if matches!(*directive, "source" | "source-directory" | "mapping") => {
+                return Err(invalid());
+            }
+            [directive, ..] if *directive == "auto" || directive.starts_with("allow-") => {
+                section = None;
+                continue;
+            }
+            ["iface", name, tail @ ..] => {
+                section = None;
+                if *name != device {
+                    continue;
+                }
+                let (family, method) = match tail {
+                    [] if !seen_native && families.iter().all(|f| f.method.is_none()) => {
+                        seen_native = true;
+                        section = Some(2);
+                        continue;
+                    }
+                    [family, method] if !seen_native => (*family, *method),
+                    _ => return Err(invalid()),
+                };
+                let index = match family {
+                    "inet" => 0,
+                    "inet6" => 1,
+                    _ => return Err(invalid()),
+                };
+                let method = match method {
+                    "dhcp" => "dhcp",
+                    "static" => "static",
+                    "manual" => "manual",
+                    "auto" if index == 1 => "ra",
+                    _ => return Err(invalid()),
+                };
+                if families[index].method.replace(method).is_some() {
+                    return Err(invalid());
+                }
+                section = Some(index);
+                continue;
+            }
+            _ => {}
+        }
+        let Some(index) = section else { continue };
+        match words.as_slice() {
+            ["address", address] => {
+                let index = if index == 2 {
+                    usize::from(address.contains(':'))
+                } else {
+                    index
+                };
+                families[index].addresses.push((*address).into());
+            }
+            ["gateway", gateway] => {
+                let index = if index == 2 {
+                    usize::from(gateway.contains(':'))
+                } else {
+                    index
+                };
+                if families[index].gateway.replace((*gateway).into()).is_some() {
+                    return Err(invalid());
+                }
+            }
+            ["netmask", mask] if index == 0 => {
+                let mask = u32::from(mask.parse::<Ipv4Addr>().map_err(|_| invalid())?);
+                let bits = mask.leading_ones();
+                if mask != u32::MAX.checked_shl(32 - bits).unwrap_or(0)
+                    || families[0].netmask.replace(bits as u8).is_some()
+                {
+                    return Err(invalid());
+                }
+            }
+            ["use", "static" | "ipv6"] if index == 2 => {}
+            ["use", "dhcp"] if index == 2 && native_dhcp.is_none() => {
+                native_dhcp = Some([true, false]);
+            }
+            ["dhcp-opts", "-4"] if index == 2 && native_dhcp.is_some() => {}
+            ["dhcp-opts", "-6", "--noipv6rs", "--ia_na"] if index == 2 && native_dhcp.is_some() => {
+                native_dhcp = Some([false, true]);
+            }
+            ["ipv6-accept-ra", value] if index == 2 && native_ra.is_none() => {
+                native_ra = Some(match *value {
+                    "0" => false,
+                    "1" => true,
+                    _ => return Err(invalid()),
+                });
+            }
+            ["mtu" | "dns-nameservers" | "dns-search", ..] => {}
+            _ => return Err(invalid()),
+        }
+    }
+    let [dhcp4, dhcp6] = native_dhcp.unwrap_or([
+        families[0].method == Some("dhcp"),
+        families[1].method == Some("dhcp"),
+    ]);
+    let accept_ra = native_ra.unwrap_or(families[1].method == Some("ra"));
+    if !seen_native && families.iter().all(|f| f.method.is_none()) {
+        return Err(invalid());
+    }
+    let mut policy = SourcePolicy::new(NetworkOwner::Ifupdown, [dhcp4, dhcp6, accept_ra]);
+    for (i, family) in families.into_iter().enumerate() {
+        let automatic = [dhcp4, dhcp6 || accept_ra][i];
+        if automatic {
+            if !family.addresses.is_empty() || family.gateway.is_some() || family.netmask.is_some()
+            {
+                return Err(invalid());
+            }
+            continue;
+        }
+        let addresses = family
+            .addresses
+            .iter()
+            .map(|address| {
+                let cidr = if !address.contains('/') {
+                    format!("{address}/{}", family.netmask.ok_or_else(invalid)?)
+                } else {
+                    address.clone()
+                };
+                let (ip, prefix) = parse_interface_address(&cidr, i == 1).map_err(|_| invalid())?;
+                Ok(format!("{ip}/{prefix}"))
+            })
+            .collect::<Result<Vec<_>, HandoffError>>()?;
+        if (family.method == Some("static") && addresses.is_empty())
+            || (family.gateway.is_some() && addresses.is_empty())
+            || (matches!(family.method, None | Some("manual"))
+                && !seen_native
+                && !addresses.is_empty())
+        {
+            return Err(invalid());
+        }
+        policy.static_addresses[i] = Some(addresses);
+        policy.static_gateways[i] = Some(configured_gateway(
+            family.gateway.as_deref().unwrap_or(""),
+            i == 1,
+        )?);
+    }
+    Ok(policy)
+}
+
+#[derive(Clone, Copy)]
+struct DhcpcdOwner {
+    global: bool,
+    ipv4_only: bool,
+}
+
+fn active_dhcpcd(root: &Path, name: &str) -> Result<Option<DhcpcdOwner>, HandoffError> {
+    let invalid =
+        || network_error("unsupported or competing dhcpcd runtime state; use explicit networking");
+    let mut owner = None;
+    for dir in ["run", "run/dhcpcd"] {
+        for (file, global, ipv4_only) in [
+            ("dhcpcd.pid".to_owned(), true, false),
+            (format!("dhcpcd.{name}.pid"), false, false),
+            (format!("dhcpcd.{name}-4.pid"), false, true),
+            (format!("dhcpcd.{name}-6.pid"), false, false),
+        ] {
+            let Some(raw_pid) = optional_network_file(&root.join(dir).join(&file))? else {
+                continue;
+            };
+            let pid = raw_pid
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|pid| *pid > 1)
+                .ok_or_else(invalid)?;
+            let proc = root.join("proc").join(pid.to_string());
+            let exe = match fs::read_link(proc.join("exe")) {
+                Ok(exe) => exe,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                    return Err(invalid());
+                }
+                Err(error) => return Err(error.into()),
+            };
+            if exe.file_name() != Some(OsStr::new("dhcpcd")) {
+                continue;
+            }
+            if file.ends_with("-6.pid") {
+                return Err(invalid());
+            }
+            if owner.replace(DhcpcdOwner { global, ipv4_only }).is_some() {
+                return Err(invalid());
+            }
+        }
+    }
+    Ok(owner)
+}
+
+fn dhcpcd_policy<R: CommandRunner>(
+    runner: &mut R,
+    root: &Path,
+    name: &str,
+    addresses: &[String],
+    owner: DhcpcdOwner,
+) -> Result<SourcePolicy, HandoffError> {
+    let invalid = || {
+        network_error("dhcpcd policy or active lease cannot be verified; use explicit networking")
+    };
+    let config = optional_network_file(&root.join("etc/dhcpcd.conf"))?.unwrap_or_default();
+    let mut noipv6 = owner.ipv4_only;
+    let mut nora = false;
+    let mut nodhcp6 = false;
+    let mut applicable = true;
+    for line in config.lines() {
+        let words: Vec<_> = line
+            .split_whitespace()
+            .take_while(|word| !word.starts_with('#'))
+            .collect();
+        match words.as_slice() {
+            [] => {}
+            ["interface", interface] => applicable = *interface == name,
+            [
+                "include" | "profile" | "ssid" | "allowinterfaces" | "denyinterfaces",
+                ..,
+            ] => return Err(invalid()),
+            _ if !applicable => {}
+            ["noipv6" | "ipv4only"] => noipv6 = true,
+            ["noipv6rs"] => nora = true,
+            ["nodhcp6"] => nodhcp6 = true,
+            [
+                "hostname" | "persistent" | "rapid_commit" | "require" | "option" | "slaac"
+                | "nohook" | "timeout" | "waitip",
+                ..,
+            ] => {}
+            _ => return Err(invalid()),
+        }
+    }
+    let lease = local_output(runner, "dhcpcd", ["-4", "--dumplease", name])?
+        .filter(|output| output.status == Some(0))
+        .ok_or_else(invalid)?;
+    let text = std::str::from_utf8(&lease.stdout).map_err(|_| invalid())?;
+    if !lease_matches_ipv4(text, addresses) {
+        return Err(invalid());
+    }
+    // Automatic IPv6 without RA cannot be recovered unambiguously from a
+    // legacy daemon's lease view. Accept the normal RA-driven policy.
+    if !noipv6 && nora && !nodhcp6 {
+        return Err(invalid());
+    }
+    Ok(SourcePolicy::new(
+        NetworkOwner::Dhcpcd,
+        [true, !noipv6 && !nodhcp6, !noipv6 && !nora],
+    ))
+}
+
+fn lease_matches_ipv4(text: &str, addresses: &[String]) -> bool {
+    let mut ips = text.lines().filter_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        matches!(key, "ip_address" | "new_ip_address").then_some(value.trim_matches(['\'', '"']))
+    });
+    let Some(lease) = ips.next().and_then(|value| value.parse::<Ipv4Addr>().ok()) else {
+        return false;
+    };
+    ips.next().is_none()
+        && addresses.len() == 1
+        && parse_interface_address(&addresses[0], false)
+            .is_ok_and(|(ip, _)| ip == IpAddr::V4(lease))
+}
+
+struct NmConnection {
+    uuid: String,
+    wireless: bool,
+}
+
+fn active_nm_connections<R: CommandRunner>(
+    runner: &mut R,
+    root: &Path,
+) -> Result<BTreeMap<String, NmConnection>, HandoffError> {
+    let response = local_output(
+        runner,
+        "nmcli",
+        [
+            "--terse",
+            "--escape",
+            "no",
+            "--fields",
+            "UUID,TYPE,DEVICE",
+            "connection",
+            "show",
+            "--active",
+        ],
+    )?;
+    match response {
+        Some(output) if output.status == Some(0) => parse_nm_active(
+            &String::from_utf8(output.stdout)
+                .map_err(|_| network_error("invalid active NetworkManager connection response"))?,
+        ),
+        Some(output) if output.status == Some(8) => Ok(BTreeMap::new()),
+        // Running nmcli can fail without an initialized system bus. Only a
+        // successful independent service check permits treating it as inactive.
+        _ if !service_active(runner, "NetworkManager.service")?
+            && !root.join("run/NetworkManager/NetworkManager.pid").exists() =>
+        {
+            Ok(BTreeMap::new())
+        }
+        _ => Err(network_error(
+            "cannot read active NetworkManager connections; use explicit networking",
+        )),
+    }
+}
+
+fn parse_nm_active(text: &str) -> Result<BTreeMap<String, NmConnection>, HandoffError> {
+    let invalid = || {
+        network_error(
+            "NetworkManager has an unsupported, incomplete or competing active connection; use explicit networking",
+        )
+    };
+    let mut profiles = BTreeMap::new();
+    for line in text.lines() {
+        // Only the first two colons delimit fields. A Linux device name may
+        // contain a colon. Active IDs and secrets are never requested.
+        let mut fields = line.splitn(3, ':');
+        let uuid = fields.next().ok_or_else(invalid)?;
+        let kind = fields.next().ok_or_else(invalid)?;
+        let name = fields.next().ok_or_else(invalid)?;
+        if kind == "loopback" && name == "lo" {
+            continue;
+        }
+        let wireless = match kind {
+            "ethernet" | "802-3-ethernet" => false,
+            "wifi" | "802-11-wireless" => true,
+            _ => return Err(invalid()),
+        };
+        if !valid_interface_name(name)
+            || uuid.len() != 36
+            || !uuid.bytes().enumerate().all(|(i, b)| {
+                if [8, 13, 18, 23].contains(&i) {
+                    b == b'-'
+                } else {
+                    b.is_ascii_hexdigit()
+                }
+            })
+            || profiles
+                .insert(
+                    name.into(),
+                    NmConnection {
+                        uuid: uuid.into(),
+                        wireless,
+                    },
+                )
+                .is_some()
+        {
+            return Err(invalid());
+        }
+    }
+    Ok(profiles)
+}
+
+const NM_FIELDS: &str = "connection.interface-name,connection.master,802-3-ethernet.cloned-mac-address,ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.routes,ipv4.routing-rules,ipv4.route-table,ipv4.dhcp-client-id,ipv6.method,ipv6.addresses,ipv6.gateway,ipv6.routes,ipv6.routing-rules,ipv6.route-table,ipv6.dhcp-duid";
+
+fn nm_policy<R: CommandRunner>(
+    runner: &mut R,
+    name: &str,
+    uuid: &str,
+) -> Result<SourcePolicy, HandoffError> {
+    let command = spec(
+        "nmcli",
+        [
+            "--terse",
+            "--escape",
+            "no",
+            "--fields",
+            NM_FIELDS,
+            "connection",
+            "show",
+            "--active",
+            "uuid",
+            uuid,
+        ],
+        "handoff-networkmanager-profile",
+    )
+    .env("LC_ALL", "C")
+    .inspection_limits();
+    let output = capture(runner, &command).map_err(|_| {
+        network_error("cannot read active NetworkManager Ethernet profile; use explicit networking")
+    })?;
+    parse_nm_profile(&output, name)
+}
+
+fn parse_nm_profile(text: &str, device: &str) -> Result<SourcePolicy, HandoffError> {
+    let invalid = || {
+        network_error(
+            "unsupported NetworkManager profile settings or mixed address policies; use explicit networking",
+        )
+    };
+    let mut fields = BTreeMap::new();
+    for line in text.lines() {
+        let (setting, value) = line.split_once(':').ok_or_else(invalid)?;
+        if !NM_FIELDS.split(',').any(|name| name == setting)
+            || fields.insert(setting, value.trim()).is_some()
+        {
+            return Err(invalid());
+        }
+    }
+    let field = |name| match fields.get(name).copied() {
+        Some("--") => Ok(""),
+        Some(v) => Ok(v),
+        None => Err(invalid()),
+    };
+    if !matches!(field("connection.interface-name")?, "" | "--")
+        && field("connection.interface-name")? != device
+        || !field("connection.master")?.is_empty()
+        || !matches!(
+            field("802-3-ethernet.cloned-mac-address")?,
+            "" | "preserve" | "permanent"
+        )
+        || [
+            "ipv4.routes",
+            "ipv4.routing-rules",
+            "ipv4.dhcp-client-id",
+            "ipv6.routes",
+            "ipv6.routing-rules",
+            "ipv6.dhcp-duid",
+        ]
+        .into_iter()
+        .any(|key| !field(key).is_ok_and(str::is_empty))
+        || ["ipv4.route-table", "ipv6.route-table"]
+            .into_iter()
+            .any(|key| {
+                !matches!(
+                    field(key),
+                    Ok("" | "0" | "0 (unspec)" | "254" | "254 (main)")
+                )
+            })
+    {
+        return Err(invalid());
+    }
+    let method4 = field("ipv4.method")?;
+    let method6 = field("ipv6.method")?;
+    if !matches!(method4, "auto" | "manual" | "disabled")
+        || !matches!(method6, "auto" | "dhcp" | "manual" | "disabled")
+    {
+        return Err(invalid());
+    }
+    // NM's 'auto' follows RA, including its DHCPv6 managed/other flags.
+    let mut policy = SourcePolicy::new(
+        NetworkOwner::NetworkManager,
+        [
+            method4 == "auto",
+            matches!(method6, "auto" | "dhcp"),
+            method6 == "auto",
+        ],
+    );
+    for (i, (method, field_address, field_gateway)) in [
+        (method4, "ipv4.addresses", "ipv4.gateway"),
+        (method6, "ipv6.addresses", "ipv6.gateway"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let addresses = field(field_address)?;
+        let gateway = field(field_gateway)?;
+        if method == "manual" {
+            if addresses.is_empty() {
+                return Err(invalid());
+            }
+            let addresses = addresses
+                .split(',')
+                .map(|addr| {
+                    let (ip, prefix) =
+                        parse_interface_address(addr.trim(), i == 1).map_err(|_| invalid())?;
+                    Ok(format!("{ip}/{prefix}"))
+                })
+                .collect::<Result<Vec<_>, HandoffError>>()?;
+            policy.static_addresses[i] = Some(addresses);
+            policy.static_gateways[i] = Some(configured_gateway(gateway, i == 1)?);
+        } else if !addresses.is_empty() || !gateway.is_empty() {
+            return Err(invalid());
+        } else if method == "disabled" {
+            policy.static_addresses[i] = Some(vec![]);
+            policy.static_gateways[i] = Some(None);
+        }
+    }
+    Ok(policy)
+}
+
+fn configured_gateway(text: &str, ipv6: bool) -> Result<Option<String>, HandoffError> {
+    if text.is_empty() {
+        return Ok(None);
+    }
+    match text.parse::<IpAddr>() {
+        Ok(ip)
+            if ip.is_ipv6() == ipv6
+                && !ip.is_unspecified()
+                && !ip.is_multicast()
+                && !ip.is_loopback() =>
+        {
+            Ok(Some(ip.to_string()))
+        }
+        _ => Err(network_error("invalid gateway in source network profile")),
+    }
+}
+
+fn wireless_link(root: &Path, name: &str) -> bool {
+    let sys = root.join("sys/class/net").join(name);
+    sys.join("wireless").is_dir() || sys.join("phy80211").exists()
+}
+
+fn wireless_requirement<R: CommandRunner>(
+    runner: &mut R,
+    root: &Path,
+    name: &str,
+    network_manager: bool,
+) -> HandoffError {
+    // iwctl is a read-only client here. Request device state, ignore the SSID
+    // and never query the profile directory or any saved credentials.
+    let connected = local_output(runner, "iwctl", ["station", name, "show"])
+        .ok()
+        .flatten()
+        .filter(|response| response.status == Some(0))
+        .is_some_and(|response| {
+            String::from_utf8_lossy(&response.stdout)
+                .lines()
+                .any(|line| {
+                    let mut words = line.split_whitespace();
+                    words.next() == Some("State") && words.next() == Some("connected")
+                })
+        });
+    let configured_by_iwd = iwd_ip_configuration(root).ok().flatten();
+    network_error(match (network_manager, connected, configured_by_iwd) {
+        (true, true, Some(false)) => {
+            "NetworkManager owns addressing and iwd reports the station associated; Wi-Fi cannot be re-established in Live without verified firmware and private credentials"
+        }
+        (true, true, Some(true)) => {
+            "NetworkManager and iwd may both configure addressing on this station; use supported wired networking"
+        }
+        (_, true, Some(true)) => {
+            "iwd owns the Wi-Fi association and is configured for addressing; Live requires verified firmware and private credentials before reinstalling over Wi-Fi"
+        }
+        (_, true, Some(false)) => {
+            "iwd reports the station associated and does not configure addressing; Live requires verified firmware and private credentials before reinstalling over Wi-Fi"
+        }
+        _ => {
+            "source Wi-Fi cannot be inherited without verified Live firmware, association and private credentials; use a supported wired interface"
+        }
+    })
+}
+
+fn iwd_ip_configuration(root: &Path) -> Result<Option<bool>, HandoffError> {
+    let Some(text) = optional_network_file(&root.join("etc/iwd/main.conf"))? else {
+        return Ok(Some(false)); // iwd's documented default
+    };
+    let mut general = false;
+    let mut result = None;
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('[') {
+            general = line == "[General]";
+        } else if general
+            && let Some((key, value)) = line.split_once('=')
+            && key.trim() == "EnableNetworkConfiguration"
+        {
+            if result.is_some() {
+                return Ok(None);
+            }
+            result = match value.trim() {
+                "true" => Some(true),
+                "false" => Some(false),
+                _ => return Ok(None),
+            };
+        }
+    }
+    Ok(Some(result.unwrap_or(false)))
+}
+
+fn optional_network_file(path: &Path) -> Result<Option<String>, HandoffError> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+        Ok(_) => {
+            crate::shared::configure::validate_planned_parent(path)
+                .map_err(|_| network_error("unsafe source network policy directory"))?;
+            read_network_file(path, effective_uid()).map(Some)
+        }
+    }
+}
+
+/// An applied, flat networkd profile supplies authoritative automatic policy.
 fn source_network_policy(root: &Path, index: u32) -> Result<[bool; 3], HandoffError> {
     let unknown = || {
         HandoffError::Invalid(
-            "cannot determine applied DHCP/RA policy: require an active flat systemd-networkd profile with explicit DHCP= and IPv6AcceptRA=; other managers and drop-ins are unsupported",
+            "cannot determine applied networkd policy: require a flat profile with explicit DHCP= and IPv6AcceptRA=, or use explicit networking",
         )
     };
     let state_dir = root.join("run/systemd/netif");
@@ -415,6 +1338,7 @@ fn validate_inherited_routes(
     routes: &str,
     family: AddressFamily,
     network: &[NetworkInterface],
+    legacy_dhcp4: &BTreeSet<&str>,
 ) -> Result<(), HandoffError> {
     let invalid = || {
         HandoffError::Invalid(
@@ -491,7 +1415,11 @@ fn validate_inherited_routes(
             if defaults > 1 || parse_default_gateway(line, family)?.as_ref() != gateway.as_ref() {
                 return Err(invalid());
             }
-            if (!v6 && nic.dhcp4 && field("proto") != Some("dhcp"))
+            if (!v6
+                && nic.dhcp4
+                && field("proto") != Some("dhcp")
+                && !(legacy_dhcp4.contains(nic.name.as_str())
+                    && matches!(field("proto"), None | Some("boot"))))
                 || (v6 && nic.accept_ra && field("proto") != Some("ra"))
                 || (v6 && nic.dhcp6 && !nic.accept_ra)
             {
@@ -747,7 +1675,7 @@ mod tests {
             };
             let mut runner = MockRunner::new([
                 out(0, "active\n"),
-                out(3, "inactive\n"),
+                out(8, ""),
                 out(0, "2: eth0: <UP> mtu 1500 link/ether 52:54:00:12:34:56\n"),
                 out(0, &v4),
                 out(0, &v6_address),
@@ -769,7 +1697,7 @@ mod tests {
                 runner
                     .calls()
                     .iter()
-                    .all(|c| c.program == "ip" || c.program == "systemctl")
+                    .all(|c| c.program == "ip" || c.program == "systemctl" || c.program == "nmcli")
             );
         }
     }
@@ -836,7 +1764,11 @@ mod tests {
         };
         let network = [nic];
         let routes = "default via 192.0.2.1 dev eth0 proto static\n192.0.2.0/24 dev eth0 proto kernel\nlocal 192.0.2.2 dev eth0 table local proto kernel\n";
-        assert!(validate_inherited_routes(RULES, routes, AddressFamily::Ipv4, &network).is_ok());
+        let no_legacy = BTreeSet::new();
+        assert!(
+            validate_inherited_routes(RULES, routes, AddressFamily::Ipv4, &network, &no_legacy)
+                .is_ok()
+        );
         for extra in [
             "100: from 192.0.2.2 lookup 100\n",
             "100: from all fwmark 1 lookup main\n",
@@ -848,7 +1780,8 @@ mod tests {
                     &format!("{RULES}{extra}"),
                     routes,
                     AddressFamily::Ipv4,
-                    &network
+                    &network,
+                    &no_legacy,
                 )
                 .is_err()
             );
@@ -866,21 +1799,169 @@ mod tests {
             "default via 192.0.2.1 dev eth0 src 192.0.2.99\n",
         ] {
             assert!(
-                validate_inherited_routes(RULES, bad, AddressFamily::Ipv4, &network).is_err(),
+                validate_inherited_routes(RULES, bad, AddressFamily::Ipv4, &network, &no_legacy)
+                    .is_err(),
                 "{bad}"
             );
         }
         let mut dynamic = network.clone();
         dynamic[0].dhcp4 = true;
-        assert!(validate_inherited_routes(RULES, routes, AddressFamily::Ipv4, &dynamic).is_err());
+        assert!(
+            validate_inherited_routes(RULES, routes, AddressFamily::Ipv4, &dynamic, &no_legacy)
+                .is_err()
+        );
         assert!(
             validate_inherited_routes(
                 RULES,
                 &routes.replace("proto static", "proto dhcp"),
                 AddressFamily::Ipv4,
-                &dynamic
+                &dynamic,
+                &no_legacy,
             )
             .is_ok()
         );
+    }
+
+    fn nm_fixture() -> String {
+        NM_FIELDS
+            .split(',')
+            .map(|name| {
+                let value = match name {
+                    "connection.interface-name" => "ens3",
+                    "ipv4.method" => "manual",
+                    "ipv4.addresses" => "192.0.2.20/24",
+                    "ipv4.gateway" => "192.0.2.1",
+                    "ipv6.method" => "disabled",
+                    _ => "--",
+                };
+                format!("{name}:{value}\n")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn networkmanager_uses_the_active_profile_and_checks_observed_policy() {
+        let root = Scratch::new("source-nm");
+        let uuid = "12345678-90ab-cdef-1234-0123456789ab";
+        let routes = "default via 192.0.2.1 dev ens3 proto static\n192.0.2.0/24 dev ens3 proto kernel scope link src 192.0.2.20\n";
+        let mut runner = MockRunner::new([
+            out(3, ""),
+            out(0, &format!("{uuid}:802-3-ethernet:ens3\n")),
+            out(0, "2: ens3: <UP> mtu 1500 link/ether 52:54:00:12:34:56\n"),
+            out(0, "2: ens3 inet 192.0.2.20/24 scope global ens3\n"),
+            out(0, ""),
+            out(0, &nm_fixture()),
+            out(0, routes.lines().next().unwrap()),
+            out(0, ""),
+            out(0, RULES),
+            out(0, routes),
+            out(0, ""),
+            out(0, ""),
+        ]);
+        let network = collect_network_at(&mut runner, &root.0).unwrap();
+        assert_eq!(network[0].ipv4_addresses, ["192.0.2.20/24"]);
+        assert_eq!(network[0].ipv4_gateway.as_deref(), Some("192.0.2.1"));
+        assert!(!network[0].dhcp4);
+        let profile = &runner.calls()[5];
+        assert_eq!(profile.program, "nmcli");
+        assert!(profile.args.iter().any(|arg| arg == uuid));
+        assert!(profile.args.iter().all(|arg| arg != "--show-secrets"));
+        assert!(
+            parse_nm_profile(
+                &nm_fixture().replace("ipv4.routes:--", "ipv4.routes:198.51.100.0/24"),
+                "ens3"
+            )
+            .is_err()
+        );
+        assert!(parse_nm_active(&format!("{uuid}:vpn:ens3")).is_err());
+    }
+
+    #[test]
+    fn ifupdown_checks_the_applied_flat_profile_and_native_alpine_syntax() {
+        let root = Scratch::new("source-ifupdown");
+        let path = root.0.join("etc/network/interfaces");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "source /etc/network/interfaces.d/*\n").unwrap();
+        let include = path.parent().unwrap().join("interfaces.d/10-wan");
+        fs::create_dir_all(include.parent().unwrap()).unwrap();
+        fs::write(&include, "auto eth0\niface eth0 inet static\n  address 192.0.2.2\n  netmask 255.255.255.0\n  gateway 192.0.2.1\n").unwrap();
+        let state = root.0.join("run/network/ifstate");
+        fs::create_dir_all(state.parent().unwrap()).unwrap();
+        fs::write(&state, "lo=lo\neth0=eth0\n").unwrap();
+        let policy = ifupdown_policy(&root.0, "eth0").unwrap().unwrap();
+        assert_eq!(
+            policy.static_addresses[0],
+            Some(vec!["192.0.2.2/24".into()])
+        );
+        assert_eq!(policy.static_gateways[0], Some(Some("192.0.2.1".into())));
+        assert!(ifupdown_policy(&root.0, "eth1").unwrap().is_none());
+        let policy = parse_ifupdown_profile(
+            "auto eth0\niface eth0\n  use dhcp\n  dhcp-opts -4\n  ipv6-accept-ra 0\n",
+            "eth0",
+        )
+        .unwrap();
+        assert!(policy.dhcp4 && !policy.dhcp6 && !policy.accept_ra);
+        assert!(
+            parse_ifupdown_profile("iface eth0 inet dhcp\n  pre-up /usr/bin/anything\n", "eth0")
+                .is_err()
+        );
+        fs::write(&state, "eth0=other 1 explicit\n").unwrap();
+        assert!(ifupdown_policy(&root.0, "eth0").is_err());
+    }
+
+    #[test]
+    fn dhcpcd_requires_active_matching_lease_and_rejects_competing_owner() {
+        let root = Scratch::new("source-dhcpcd");
+        let proc = root.0.join("proc/25");
+        fs::create_dir_all(&proc).unwrap();
+        symlink("/usr/sbin/dhcpcd", proc.join("exe")).unwrap();
+        let pid = root.0.join("run/dhcpcd.eth0-4.pid");
+        fs::create_dir_all(pid.parent().unwrap()).unwrap();
+        fs::write(&pid, "25\n").unwrap();
+        let lease = active_dhcpcd(&root.0, "eth0").unwrap().unwrap();
+        let addresses = vec!["192.0.2.2/24".to_owned()];
+        let mut runner = MockRunner::new([out(0, "new_ip_address='192.0.2.2'\n")]);
+        let policy = dhcpcd_policy(&mut runner, &root.0, "eth0", &addresses, lease).unwrap();
+        assert!(policy.dhcp4 && !policy.dhcp6 && !policy.accept_ra);
+        assert!(!lease_matches_ipv4(
+            "new_ip_address=192.0.2.3\n",
+            &addresses
+        ));
+        let nm = NmConnection {
+            uuid: "active-profile".into(),
+            wireless: false,
+        };
+        assert!(
+            applied_policy(
+                &mut runner,
+                &root.0,
+                "eth0",
+                2,
+                false,
+                Some(&nm),
+                &addresses
+            )
+            .is_err()
+        );
+        assert_eq!(runner.calls()[0].args, ["-4", "--dumplease", "eth0"]);
+    }
+
+    #[test]
+    fn iwd_association_reports_address_ownership_without_reading_profiles() {
+        let root = Scratch::new("source-iwd");
+        let path = root.0.join("etc/iwd/main.conf");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "[General]\nEnableNetworkConfiguration=false\n").unwrap();
+        let mut runner =
+            MockRunner::new([out(0, "State connected\nConnected network example-wifi\n")]);
+        let reason = wireless_requirement(&mut runner, &root.0, "wlan0", true).to_string();
+        assert!(
+            reason
+                .contains("NetworkManager owns addressing and iwd reports the station associated")
+        );
+        assert!(!reason.contains("example-wifi"));
+        assert_eq!(runner.calls()[0].args, ["station", "wlan0", "show"]);
+        fs::write(&path, "[General]\nEnableNetworkConfiguration=true\n").unwrap();
+        assert_eq!(iwd_ip_configuration(&root.0).unwrap(), Some(true));
     }
 }

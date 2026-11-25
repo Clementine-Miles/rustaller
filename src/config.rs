@@ -37,8 +37,8 @@ impl FromStr for GentooInit {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum InstallProfile {
-    #[default]
     Standard,
+    #[default]
     Minimal,
 }
 impl InstallProfile {
@@ -216,8 +216,60 @@ pub struct SystemConfig {
     pub keep_package_cache: bool,
     pub dns: DnsConfig,
     pub network: NetworkConfig,
+    pub explicit_network: Option<ExplicitNetwork>,
     pub swap: SwapConfig,
 }
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ExplicitNetwork {
+    pub mac: String,
+    pub ipv4_address: Option<String>,
+    pub ipv4_gateway: Option<String>,
+    pub ipv6_address: Option<String>,
+    pub ipv6_gateway: Option<String>,
+    pub dhcp4: bool,
+    pub dhcp6: bool,
+    pub accept_ra: bool,
+}
+
+impl ExplicitNetwork {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !crate::worker::initrd_network::valid_mac(&self.mac) {
+            return Err("Explicit networking requires a unicast Ethernet MAC");
+        }
+        for (v6, address, gateway, dynamic) in [
+            (false, &self.ipv4_address, &self.ipv4_gateway, self.dhcp4),
+            (
+                true,
+                &self.ipv6_address,
+                &self.ipv6_gateway,
+                self.dhcp6 || self.accept_ra,
+            ),
+        ] {
+            if let Some(address) = address {
+                crate::deployment::parse_interface_address(address, v6)
+                    .map_err(|_| "Explicit addresses require a unicast IP and a prefix of the matching family")?;
+            }
+            if let Some(gateway) = gateway {
+                let ip = gateway.parse().map_err(|_| "Invalid explicit gateway IP")?;
+                if !crate::deployment::valid_unicast(ip, v6) || address.is_none() {
+                    return Err("An explicit gateway requires a static address in the same family");
+                }
+            }
+            if address.is_some() && dynamic {
+                return Err("Choose static or automatic addressing separately for each family");
+            }
+        }
+        if !(self.dhcp4 || self.dhcp6 || self.accept_ra)
+            && self.ipv4_address.is_none()
+            && self.ipv6_address.is_none()
+        {
+            return Err("Select an address or an automatic address policy for at least one family");
+        }
+        Ok(())
+    }
+}
+
 impl SystemConfig {
     pub fn is_default(&self) -> bool {
         self == &Self::default()
@@ -232,9 +284,23 @@ impl SystemConfig {
             && self
                 == &Self {
                     gentoo_init: self.gentoo_init,
+                    profile: self.profile,
                     ..Self::default()
                 };
-        if !self.is_default() && !route_default && (!target.is_automatic() || hold == Some(1)) {
+        // Earlier plans explicitly encoded Standard even on routes that do not
+        // install a target. Keep that neutral value readable after changing the
+        // default; neither profile is applied to reset or Live rescue routes.
+        let legacy_neutral_standard = self.profile == InstallProfile::Standard
+            && self
+                == &Self {
+                    profile: InstallProfile::Standard,
+                    ..Self::default()
+                };
+        if !self.is_default()
+            && !route_default
+            && !legacy_neutral_standard
+            && (!target.is_automatic() || hold == Some(1))
+        {
             return Err(SystemConfigError::UnexpectedRoute);
         }
         if self
@@ -255,6 +321,26 @@ impl SystemConfig {
         self.network
             .validate(target)
             .map_err(SystemConfigError::Network)?;
+        if let Some(explicit) = &self.explicit_network {
+            explicit
+                .validate()
+                .map_err(SystemConfigError::ExplicitNetwork)?;
+            let has_ipv6 = explicit.dhcp6 || explicit.accept_ra || explicit.ipv6_address.is_some();
+            if has_ipv6 && self.network.ipv6 == Ipv6Policy::Disable {
+                return Err(SystemConfigError::ExplicitNetwork(
+                    "Explicit IPv6 conflicts with --ipv6 disable",
+                ));
+            }
+            if !has_ipv6
+                && self
+                    .dns
+                    .servers
+                    .iter()
+                    .any(|ip| ip.to_canonical().is_ipv6())
+            {
+                return Err(SystemConfigError::Network(NetworkConfigError::DnsNeedsIpv6));
+            }
+        }
         self.swap.validate().map_err(SystemConfigError::Swap)?;
         if self.root_filesystem == RootFilesystem::Btrfs && self.swap.size_mib.is_some() {
             return Err(SystemConfigError::BtrfsSwapUnsupported);
@@ -316,6 +402,7 @@ pub enum SystemConfigError {
     DuplicateDnsServer,
     InvalidSearchDomain,
     UnexpectedRoute,
+    ExplicitNetwork(&'static str),
     Network(NetworkConfigError),
     Swap(SwapConfigError),
 }
@@ -358,6 +445,7 @@ impl fmt::Display for SystemConfigError {
             Self::UnexpectedRoute => {
                 "Target system settings require an automatic installation, not rescue or reset"
             }
+            Self::ExplicitNetwork(reason) => reason,
             Self::Network(_) | Self::Swap(_) => unreachable!(),
         })
     }

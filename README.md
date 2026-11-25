@@ -24,7 +24,8 @@ cargo xtask bundle
 及可选目标 swapfile。自动流程要求 kexec，最后仅重启一次；失败保留 Live 救援。
 新系统统一使用 [rustaller-boot](docs/BOOT.md)，默认 FAT32（`/boot`）加根分区；BIOS 大盘使用带专用
 引导分区的 GPT。Btrfs 使用 `@` 和可选 zstd，暂不支持 Btrfs swapfile。
-TUI 对照展示检测到的当前系统与安装计划；保留 reset 基础设施，但执行仍不可用。
+TUI 对照展示检测到的当前系统与安装计划。安装默认采用 Minimal 配置。
+在切换内核前可以运行 `rustaller reset`，取消已准备的安装并保留原系统运行。
 
 只读主机检查涵盖客户机可见的 CPU/ISA 级别、内存与 swap、存储、虚拟化、固件及网络，
 不运行基准测试或第三方脚本。Arch 新增 hardened、Zen 内核；Gentoo 通过
@@ -33,8 +34,9 @@ TUI 对照展示检测到的当前系统与安装计划；保留 reset 基础设
 已测内核版本下的原生重建/重启通过；跨内核版本升级、新增内核/init 组合和多 VPS
 覆盖仍需进一步真实虚拟机验收。
 
-当前原系统网络捕获要求已生效、显式配置的单文件 networkd 配置；不支持的网络管理器
-或路由策略会在清盘前终止准备。
+支持从已验证的 networkd、NetworkManager、ifupdown 和 dhcpcd 以太网配置继承策略。
+也可以按 MAC 地址在 CLI 或 TUI 设置静态地址、DHCP 和 IPv6 RA。
+Wi-Fi 重连当前需要另行支持。[网络配置与限制](docs/CONFIGURATION.md)
 
 - [架构](docs/ARCHITECTURE.md)
 - [安装、要求与使用方法](docs/INSTALLATION.md)

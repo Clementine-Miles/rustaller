@@ -9,6 +9,39 @@ mod args {
     }
 
     #[test]
+    fn explicit_ethernet_policy_round_trips_and_rejects_ambiguous_options() {
+        let mac = "--network-mac=52:54:00:12:34:56";
+        let CliOutcome::Plan(plan) = parse(&[
+            "debian",
+            mac,
+            "--dhcp4",
+            "--ipv6-address=2001:db8::5/64",
+            "--ipv6-gateway=fe80::1",
+            "--dns=2001:db8::53",
+            "--mtu=1400",
+        ]) else {
+            panic!("expected an install plan");
+        };
+        let policy = plan.system.explicit_network.as_ref().unwrap();
+        assert!(policy.dhcp4);
+        assert_eq!(policy.ipv6_address.as_deref(), Some("2001:db8::5/64"));
+        let decoded =
+            rustaller::codec::decode_plan(&rustaller::codec::encode_plan(&plan).unwrap()).unwrap();
+        assert_eq!(decoded.system, plan.system);
+        for args in [
+            vec!["debian", "--dhcp4"],
+            vec!["debian", mac, "--ipv4-gateway=192.0.2.1", "--dhcp4"],
+            vec!["debian", mac, "--ipv6-address=2001:db8::5/64", "--ipv6-ra"],
+            vec!["debian", mac, "--ipv6=disable", "--dhcp6"],
+            vec!["debian", mac, "--dhcp4", "--dns=2001:db8::53"],
+        ] {
+            assert!(parse_args(args).is_err());
+        }
+        assert!(matches!(parse_args(["reset"]), Ok(CliOutcome::Reset)));
+        assert!(parse_args(["reset", "--filesystem=ext4"]).is_err());
+    }
+
+    #[test]
     fn parses_target_and_current_option_aliases() {
         let CliOutcome::Plan(plan) = parse(&[
             "--user=admin",
@@ -473,7 +506,7 @@ mod plan_codec {
                 plan.post_install
             );
         }
-        for schema in (0..CURRENT_SCHEMA_VERSION).chain([CURRENT_SCHEMA_VERSION + 1]) {
+        for schema in (0..10).chain([CURRENT_SCHEMA_VERSION + 1]) {
             let mut bytes = b"RINSTALL\0".to_vec();
             bytes.extend_from_slice(&schema.to_le_bytes());
             assert!(
@@ -481,12 +514,26 @@ mod plan_codec {
             );
         }
         let mut bytes = encode_plan(&InstallPlan::new(Target::Reset)).unwrap();
-        let kernel_index = bytes.len() - 3;
+        let kernel_index = bytes.len() - 4;
         bytes[kernel_index] = 255;
         assert!(matches!(
             decode_plan(&bytes),
             Err(PlanCodecError::InvalidTag)
         ));
+    }
+
+    #[test]
+    fn schema_ten_preserves_an_explicit_standard_profile() {
+        let mut plan = InstallPlan::new(Target::Debian);
+        plan.schema_version = 10;
+        plan.system.profile = rustaller::config::InstallProfile::Standard;
+        let decoded = decode_plan(&encode_plan(&plan).unwrap()).unwrap();
+        assert_eq!(decoded.schema_version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(
+            decoded.system.profile,
+            rustaller::config::InstallProfile::Standard
+        );
+        assert_eq!(decoded.system.explicit_network, None);
     }
 }
 

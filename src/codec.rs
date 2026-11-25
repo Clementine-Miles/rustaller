@@ -1,8 +1,8 @@
-use crate::config::NetworkConfig;
 use crate::config::SwapConfig;
 use crate::config::{
     DnsConfig, DnsMode, GentooInit, InstallProfile, RootFilesystem, SystemConfig, SystemConfigError,
 };
+use crate::config::{ExplicitNetwork, NetworkConfig};
 use crate::model::{
     BootMode, CURRENT_SCHEMA_VERSION, InstallPlan, PlanError, SecretString, Target,
 };
@@ -43,6 +43,11 @@ impl std::fmt::Display for PlanCodecError {
 impl std::error::Error for PlanCodecError {}
 
 pub fn encode_plan(plan: &InstallPlan) -> Result<Vec<u8>, PlanCodecError> {
+    if plan.schema_version == 10 && plan.system.explicit_network.is_some() {
+        return Err(PlanCodecError::InvalidPlan(PlanError::UnsupportedSchema(
+            10,
+        )));
+    }
     let mut output = Vec::new();
     output.extend_from_slice(MAGIC);
     output.extend_from_slice(&plan.schema_version.to_le_bytes());
@@ -158,6 +163,25 @@ pub fn encode_plan(plan: &InstallPlan) -> Result<Vec<u8>, PlanCodecError> {
     });
     put_optional_string(&mut output, plan.post_install.hostname.as_deref())?;
     put_optional_string(&mut output, plan.post_install.timezone.as_deref())?;
+    if plan.schema_version >= 11 {
+        output.push(u8::from(plan.system.explicit_network.is_some()));
+        if let Some(net) = &plan.system.explicit_network {
+            put_string(&mut output, &net.mac)?;
+            for value in [
+                &net.ipv4_address,
+                &net.ipv4_gateway,
+                &net.ipv6_address,
+                &net.ipv6_gateway,
+            ] {
+                put_optional_string(&mut output, value.as_deref())?;
+            }
+            output.extend([
+                u8::from(net.dhcp4),
+                u8::from(net.dhcp6),
+                u8::from(net.accept_ra),
+            ]);
+        }
+    }
 
     if output.len() > MAX_PLAN_SIZE {
         return Err(PlanCodecError::Oversized);
@@ -175,7 +199,7 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
 
     let mut reader = Reader::new(&bytes[MAGIC.len()..]);
     let schema_version = reader.read_u16()?;
-    if schema_version != CURRENT_SCHEMA_VERSION {
+    if !matches!(schema_version, 10 | CURRENT_SCHEMA_VERSION) {
         return Err(PlanCodecError::InvalidPlan(PlanError::UnsupportedSchema(
             schema_version,
         )));
@@ -306,7 +330,7 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
         size_mib: reader.read_optional_u32()?,
         swappiness: reader.read_optional_u8()?,
     };
-    let system = SystemConfig {
+    let mut system = SystemConfig {
         gentoo_init,
         boot_size_mib,
         root_size_mib,
@@ -322,6 +346,7 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
             search_domains,
         },
         network,
+        explicit_network: None,
         swap,
     };
     let post_install = PostInstallConfig {
@@ -340,12 +365,24 @@ pub fn decode_plan(bytes: &[u8]) -> Result<InstallPlan, PlanCodecError> {
         hostname: reader.read_optional_string()?,
         timezone: reader.read_optional_string()?,
     };
+    if schema_version >= 11 && reader.read_bool()? {
+        system.explicit_network = Some(ExplicitNetwork {
+            mac: reader.read_string()?,
+            ipv4_address: reader.read_optional_string()?,
+            ipv4_gateway: reader.read_optional_string()?,
+            ipv6_address: reader.read_optional_string()?,
+            ipv6_gateway: reader.read_optional_string()?,
+            dhcp4: reader.read_bool()?,
+            dhcp6: reader.read_bool()?,
+            accept_ra: reader.read_bool()?,
+        });
+    }
     if !reader.is_empty() {
         return Err(PlanCodecError::TrailingData);
     }
 
     let plan = InstallPlan {
-        schema_version,
+        schema_version: CURRENT_SCHEMA_VERSION,
         target,
         username,
         password,

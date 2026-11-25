@@ -188,15 +188,17 @@ mod debian {
 
 mod target_config {
     use rustaller::command::{CommandInput, OutputMode};
+    use rustaller::config::InstallProfile;
     use rustaller::model::{BootMode, InstallPlan, Target};
     use rustaller::postinstall::KernelChoice;
     use rustaller::targets::{debian, packages};
     use std::path::Path;
 
     #[test]
-    fn default_plan_adapters_preserve_existing_kernel_and_package_selection() {
+    fn standard_plan_adapters_preserve_existing_kernel_and_package_selection() {
         for no_cloud in [false, true] {
             let mut alpine_plan = InstallPlan::new(Target::Alpine);
+            alpine_plan.system.profile = InstallProfile::Standard;
             alpine_plan.no_cloud_kernel = no_cloud;
             for is_vm in [false, true] {
                 let configuration =
@@ -205,6 +207,7 @@ mod target_config {
                 assert!(configuration.extra_packages.is_empty());
             }
             let mut debian_plan = InstallPlan::new(Target::Debian);
+            debian_plan.system.profile = InstallProfile::Standard;
             debian_plan.no_cloud_kernel = no_cloud;
             for boot_mode in [BootMode::Bios, BootMode::Efi] {
                 assert_eq!(
@@ -213,15 +216,12 @@ mod target_config {
                 );
             }
         }
+        let mut gentoo_plan = InstallPlan::new(Target::Gentoo);
+        gentoo_plan.system.profile = InstallProfile::Standard;
         for boot_mode in [BootMode::Bios, BootMode::Efi] {
             assert_eq!(
-                packages::emerge_package_set_for_plan(
-                    &InstallPlan::new(Target::Gentoo),
-                    boot_mode,
-                    "ext4",
-                    &[]
-                )
-                .unwrap(),
+                packages::emerge_package_set_for_plan(&gentoo_plan, boot_mode, "ext4", &[])
+                    .unwrap(),
                 {
                     let mut expected = packages::emerge_package_set(boot_mode, "ext4", "root", &[]);
                     expected.extend(
@@ -272,7 +272,10 @@ mod target_config {
         let configuration =
             packages::configuration_for_plan(&alpine_plan, Target::Alpine, false).unwrap();
         assert_eq!(configuration.kernel.alpine_flavor, Some("virt"));
-        assert_eq!(configuration.extra_packages, ["tzdata"]);
+        assert_eq!(
+            configuration.extra_packages,
+            ["tzdata", "openssh", "ca-certificates", "dhcpcd"]
+        );
 
         let mut debian_plan = InstallPlan::new(Target::Debian);
         debian_plan.post_install.kernel = KernelChoice::Generic;

@@ -14,13 +14,10 @@ binary do not establish that a VPS can reinstall successfully.
   detected restricted confidential guests and enabled Secure Boot are rejected.
 - BIOS with 512-byte logical sectors, or genuine 64-bit EFI with 512/4096-byte
   sectors. BIOS/4Kn and inaccessible or ambiguous firmware state are rejected.
-- Working official HTTPS repositories, correct trust material and supported,
-  unambiguous source networking. Configuration ownership and routing are checked;
-  an address marked `dynamic` is not proof of DHCPv6 or SLAAC policy. Unsupported
-  managers/topologies stop preflight. Current automatic network discovery requires
-  an applied, explicit, flat systemd-networkd profile and no competing manager;
-  ifupdown/NetworkManager source policies are unsupported. See
-  [configuration](CONFIGURATION.md) for the exact constraints.
+- Working official HTTPS repositories, correct trust material and a supported
+  Ethernet policy. Automatic discovery requires one verified manager per link.
+  An explicit MAC-bound policy is available for unsupported source managers and
+  simple Ethernet configurations. See [configuration](CONFIGURATION.md).
 
 | Target | Installation | Kernel choices |
 | --- | --- | --- |
@@ -61,8 +58,19 @@ systemd retains networkd/resolved and native units. Both share the binary
 distribution kernel, dracut, rustaller-boot and supported root filesystems. No source
 kernel compilation or v3-specific optimization is selected automatically.
 
-The new plan schema is 10 and uses a matching worker runtime. Older plans are
-rejected instead of reinterpreting their former systemd default as OpenRC.
+Plan schema 11 adds explicit Ethernet policy and uses a matching worker runtime.
+Schema 10 plans retain their stored init and package profile when read. Earlier
+schemas require a new plan.
+
+## Installation footprint
+
+Minimal is the default. It retains the native package manager, init,
+networking, SSH, certificates, selected kernel and initramfs, filesystem
+maintenance tools and native boot hooks. Debian requests maintenance tools for
+the selected filesystem. The distribution can still install other tools as
+dependencies. Gentoo retains the stage3's Portage, Python and toolchain.
+Use `--profile standard`, `--with-tools`, `--keep-docs` or
+`--keep-package-cache` to select a different footprint.
 
 ## Disk layout and boot
 
@@ -103,6 +111,7 @@ matching kernels/initramfs, which must be restored and verified separately.
 ```console
 cargo xtask bundle
 ./target/x86_64-unknown-linux-musl/release/rustaller --help
+./target/x86_64-unknown-linux-musl/release/rustaller --inspect
 ./target/x86_64-unknown-linux-musl/release/rustaller debian --inspect
 ```
 
@@ -155,7 +164,8 @@ enters the plan. Back up the private key to the client before erasing its disk.
 - `./rustaller alpine --hold 1` enters Alpine Live rescue with SSH and does not
   partition/install a target. It still requires preflight and exact confirmation.
 - `--hold 0` pauses after preparation; an interactive `KEXEC` confirmation
-  continues. Noninteractive hold leaves the source running.
+  continues. Noninteractive hold leaves the source running. Run
+  `sudo ./rustaller reset` to discard the staged installation.
 - `--hold 2` retains Live after target installation; the user reboots manually.
 - `--force-boot-mode bios|efi` asserts the detected mode; a mismatch is rejected.
 - `--ssh-port` and `--frpc-config` configure installation access. In Alpine Live, read `/var/log/rustaller.log` locally or over the recovery SSH connection.
@@ -165,3 +175,24 @@ enters the plan. Back up the private key to the client before erasing its disk.
 See [configuration](CONFIGURATION.md) for ranges and compatibility. Installation
 failure retains Alpine Live rescue. Runtime acceptance remains listed in
 [testing](TESTING.md).
+
+### Cancel a pending installation
+
+`rustaller reset` cancels Rustaller's own pending operation. It returns
+success with no pending operation. Preparation writes only to a private
+`/var/tmp/rustaller-handoff` directory. Reset removes the verified workspace
+and leaves the running system available. If a staging command is active,
+reset records a cancellation request and cleanup follows when the command
+returns. The source partition table, bootloader, network and SSH settings
+are untouched.
+
+After handoff is initiated, reset refuses cancellation from that source
+boot because Linux does not expose the loaded image's identity. Review
+the native init and kexec state at the console before rebooting.
+
+From the Alpine Live console or recovery SSH, run `/rustaller-worker reset`.
+Before disk erasure it marks the operation cancelled and verifies the
+recorded disk identity, partition table ID and firmware mode. Confirm the
+original firmware boot path at the console and reboot manually to return.
+If disk erasure has started, Live reset refuses and keeps the rescue
+environment available.

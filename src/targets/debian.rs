@@ -109,6 +109,16 @@ pub fn apt_package_list_for_plan(
         plan.username.as_deref().unwrap_or("root"),
         firmware_packages,
     );
+    if plan.system.profile == crate::config::InstallProfile::Minimal {
+        // debootstrap's minbase and native package dependencies remain intact.
+        // Avoid explicitly adding tools for unrelated root filesystems; never
+        // purge native required packages merely to shrink their installed size.
+        packages.retain(|package| match package.as_str() {
+            "xfsprogs" => plan.system.root_filesystem == crate::config::RootFilesystem::Xfs,
+            "e2fsprogs" => plan.system.root_filesystem == crate::config::RootFilesystem::Ext4,
+            _ => true,
+        });
+    }
     if plan.system.root_filesystem.as_str() == "btrfs" {
         packages.push("btrfs-progs".into());
     }

@@ -5,7 +5,6 @@ use rustaller::host::initrd::{
     stage_alpine_initrd, unpack_initrd,
 };
 use rustaller::model::{InstallPlan, SecretString, Target};
-use rustaller::worker::initrd_network::InitrdNetworkConfig;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
@@ -139,22 +138,11 @@ fn stages_network_hook_worker_and_private_plan_as_one_alpine_initrd_payload() {
         "#!/bin/sh\nconfigure_ip() {\n    setup_dhcp\n}\nexec switch_root\n",
     )
     .unwrap();
-    let config = InitrdNetworkConfig::new(
-        "00:11:22:33:44:55",
-        "192.0.2.20/24",
-        "192.0.2.1",
-        "",
-        "",
-        "",
-    )
-    .unwrap();
-
-    let paths =
-        stage_alpine_initrd(&scratch.0, &automatic_plan(), &worker_bytes(), &[config]).unwrap();
+    let paths = stage_alpine_initrd(&scratch.0, &automatic_plan(), &worker_bytes()).unwrap();
     assert!(
         fs::read_to_string(scratch.0.join("init"))
             .unwrap()
-            .contains("/rustaller-worker initrd-network '00:11:22:33:44:55'")
+            .contains("/rustaller-worker initrd-network && MAC_ADDRESS=1")
     );
     assert_eq!(fs::read(paths.worker).unwrap(), worker_bytes());
     assert!(paths.plan.is_file());
@@ -165,7 +153,7 @@ fn invalid_init_script_prevents_any_payload_from_being_staged() {
     let scratch = Scratch::new("initrd");
     fs::write(scratch.0.join("init"), "no configure function\n").unwrap();
     assert!(matches!(
-        stage_alpine_initrd(&scratch.0, &automatic_plan(), &worker_bytes(), &[]),
+        stage_alpine_initrd(&scratch.0, &automatic_plan(), &worker_bytes()),
         Err(InitrdError::ConfigureIpAnchorNotUnique)
     ));
     assert!(!scratch.0.join("rustaller-worker").exists());
@@ -229,27 +217,19 @@ fn initrd_payload_refuses_to_replace_an_existing_worker_file() {
 }
 
 #[test]
-fn alpine_init_network_hook_runs_worker_with_validated_single_nic_arguments() {
+fn alpine_init_network_hook_attempts_the_private_plan_once() {
     let source = "#!/bin/sh\nconfigure_ip() {\n    setup_dhcp\n}\nexec switch_root\n";
-    let config = InitrdNetworkConfig::new(
-        "00:11:22:33:44:55",
-        "192.0.2.20/24",
-        "192.0.2.1",
-        "2001:db8::20/64",
-        "2001:db8::1",
-        "2001:db8::21/64",
-    )
-    .unwrap();
     assert_eq!(
-        inject_network_bootstrap(source, &[config]).unwrap(),
+        inject_network_bootstrap(source).unwrap(),
         concat!(
             "#!/bin/sh\n",
             "configure_ip() {\n",
             "        # BEGIN RUSTALLER initrd network worker\n",
+            "        [ -z \"$RUSTALLER_NETWORK_ATTEMPTED\" ] || return\n",
+            "        RUSTALLER_NETWORK_ATTEMPTED=1\n",
             "        depmod\n",
             "        [ -d /sys/module/ipv6 ] || modprobe ipv6\n",
-            "        /rustaller-worker initrd-network '00:11:22:33:44:55' '192.0.2.20/24' '192.0.2.1' '2001:db8::20/64' '2001:db8::1' '2001:db8::21/64'\n",
-            "        MAC_ADDRESS=1\n",
+            "        /rustaller-worker initrd-network && MAC_ADDRESS=1\n",
             "        return\n",
             "        # END RUSTALLER initrd network worker\n",
             "    setup_dhcp\n",
@@ -260,42 +240,18 @@ fn alpine_init_network_hook_runs_worker_with_validated_single_nic_arguments() {
 }
 
 #[test]
-fn alpine_init_network_hook_supports_multiple_nics_and_no_static_config() {
-    let source = "configure_ip() {\n  upstream\n}\n";
-    let configs = [
-        InitrdNetworkConfig::new("00:11:22:33:44:55", "192.0.2.20/24", "", "", "", "").unwrap(),
-        InitrdNetworkConfig::new("00:11:22:33:44:66", "", "", "2001:db8::20/64", "", "").unwrap(),
-    ];
-    let patched = inject_network_bootstrap(source, &configs).unwrap();
-    assert!(patched.contains(
-        "/rustaller-worker initrd-network '00:11:22:33:44:55' '192.0.2.20/24' '' '' '' ''"
-    ));
-    assert!(patched.contains(
-        "/rustaller-worker initrd-network '00:11:22:33:44:66' '' '' '2001:db8::20/64' '' ''"
-    ));
-    assert!(patched.contains("        MAC_ADDRESS=1\n        return\n"));
-    assert_eq!(
-        inject_network_bootstrap(source, &[])
-            .unwrap()
-            .matches("depmod")
-            .count(),
-        1
-    );
-}
-
-#[test]
 fn alpine_init_patch_fails_closed_if_anchor_is_missing_ambiguous_or_already_patched() {
     assert!(matches!(
-        inject_network_bootstrap("echo no network function\n", &[]),
+        inject_network_bootstrap("echo no network function\n"),
         Err(InitrdError::ConfigureIpAnchorNotUnique)
     ));
     assert!(matches!(
-        inject_network_bootstrap("configure_ip() {\n}\nconfigure_ip() {\n}\n", &[]),
+        inject_network_bootstrap("configure_ip() {\n}\nconfigure_ip() {\n}\n"),
         Err(InitrdError::ConfigureIpAnchorNotUnique)
     ));
-    let patched = inject_network_bootstrap("configure_ip() {\n}\n", &[]).unwrap();
+    let patched = inject_network_bootstrap("configure_ip() {\n}\n").unwrap();
     assert!(matches!(
-        inject_network_bootstrap(&patched, &[]),
+        inject_network_bootstrap(&patched),
         Err(InitrdError::AlreadyPatched)
     ));
 }

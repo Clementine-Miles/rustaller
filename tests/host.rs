@@ -408,23 +408,10 @@ mod handoff {
 
     #[test]
     fn confirmation_firmware_and_source_identity_fail_before_workspace_or_downloads() {
-        let scratch = Scratch::new("handoff");
         let plan = plan();
         let inventory = deployment(&plan);
-        let workspace = scratch.0.join("new-workspace");
         let mut runner = MockRunner::empty();
-        assert!(
-            prepare(
-                &mut runner,
-                &plan,
-                &inventory,
-                "yes",
-                &workspace,
-                b"not-a-worker"
-            )
-            .is_err()
-        );
-        assert!(!workspace.exists());
+        assert!(prepare(&mut runner, &plan, &inventory, "yes", b"not-a-worker").is_err());
         assert!(runner.calls().is_empty());
         let mut wrong_source = deployment(&plan);
         wrong_source.alpine.filename = "../outside".into();
@@ -434,12 +421,10 @@ mod handoff {
                 &plan,
                 &wrong_source,
                 &wrong_source.confirmation,
-                &workspace,
                 b"not-a-worker"
             )
             .is_err()
         );
-        assert!(!workspace.exists());
         assert!(runner.calls().is_empty());
         let mut forced = plan;
         forced.force_boot_mode = Some(BootMode::Efi);
@@ -449,7 +434,6 @@ mod handoff {
                 &forced,
                 &inventory,
                 &inventory.confirmation,
-                &workspace,
                 b"not-a-worker"
             )
             .is_err()
@@ -459,10 +443,8 @@ mod handoff {
 
     #[test]
     fn changed_disk_identity_stops_before_any_download_or_staging() {
-        let scratch = Scratch::new("handoff");
         let plan = plan();
         let inventory = deployment(&plan);
-        let workspace = scratch.0.join("new-workspace");
         let mut runner = MockRunner::new([
             output("8589934592\n"),
             output("different-disk\n"),
@@ -475,13 +457,11 @@ mod handoff {
                 &plan,
                 &inventory,
                 &inventory.confirmation,
-                &workspace,
                 b"not-a-worker"
             )
             .is_err()
         );
         assert_eq!(runner.calls().len(), 4);
-        assert!(!workspace.exists());
     }
 
     #[test]
@@ -921,7 +901,11 @@ mod inspection_preview {
                 "ip",
                 "ip",
                 "ip",
-                "sshd"
+                "sshd",
+                "tc",
+                "nft",
+                "iptables",
+                "ip6tables",
             ]
         );
     }

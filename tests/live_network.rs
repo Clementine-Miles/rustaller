@@ -1,344 +1,347 @@
 mod support;
-mod initrd_network {
-    use rustaller::command::{
-        CommandOutput, CommandRunner, CommandSpec, MockRunner, PipelineOutput,
-    };
-    use rustaller::worker::initrd_network::{
-        AddressFamily, InitrdNetworkConfig, ProxyEndpoint, address_from_ip_output,
-        gateway_from_route_output, interface_for_mac, run_initrd_network,
-        run_initrd_network_with_proxy,
-    };
-    use std::fs;
-    use std::io;
-    use std::path::Path;
 
-    #[test]
-    fn physical_interface_lookup_matches_mac_and_skips_azure_master_slaves() {
-        let links = concat!(
-            "2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP qlen 1000 ",
-            "link/ether 00:11:22:33:44:55 brd ff:ff:ff:ff:ff:ff\n",
-            "3: eth1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq ",
-            "master eth0 state UP qlen 1000 link/ether 00:11:22:33:44:55 ",
-            "brd ff:ff:ff:ff:ff:ff\n"
-        );
+use rustaller::command::{CommandOutput, CommandRunner, CommandSpec, PipelineOutput};
+use rustaller::config::{DnsConfig, DnsMode, Ipv6Policy, NetworkConfig};
+use rustaller::deployment::{DeploymentManifest, DiskIdentity, NetworkInterface};
+use rustaller::model::BootMode;
+use rustaller::worker::initrd_network::{
+    AddressFamily, ProxyEndpoint, address_from_ip_output, apply_network_policy,
+    gateway_from_route_output, interface_for_mac, source_dns_seed,
+};
+use std::io;
+use support::Scratch;
+
+const MAC: &str = "00:11:22:33:44:55";
+const LINKS: &str = concat!(
+    "2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP ",
+    "link/ether 00:11:22:33:44:55 brd ff:ff:ff:ff:ff:ff\n",
+    "3: eth1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq ",
+    "master eth0 state UP link/ether 00:11:22:33:44:55 brd ff:ff:ff:ff:ff:ff\n",
+);
+const V6: &str = "2001:db8::8/64";
+
+#[test]
+fn physical_interface_lookup_requires_a_unique_mac_on_a_non_member_link() {
+    assert_eq!(interface_for_mac(LINKS, MAC).as_deref(), Some("eth0"));
+    assert_eq!(interface_for_mac(LINKS, "00:11:22:33:44:56"), None);
+    let duplicate = format!("{LINKS}4: eth2: <BROADCAST,LOWER_UP> mtu 1500 link/ether {MAC}\n");
+    assert_eq!(interface_for_mac(&duplicate, MAC), None);
+}
+
+#[test]
+fn address_and_gateway_parsers_preserve_prefix_and_skip_ipv6_dad() {
+    let ipv6 = "2: eth0 inet6 2001:db8::1/64 scope global tentative\n\
+                2: eth0 inet6 2001:db8::2/64 scope global dadfailed\n\
+                2: eth0 inet6 2001:db8::8/64 scope global\n";
+    assert_eq!(
+        address_from_ip_output(ipv6, AddressFamily::Ipv6).as_deref(),
+        Some(V6)
+    );
+    assert_eq!(
+        gateway_from_route_output("default via 198.51.100.1 dev eth0 proto static\n"),
+        Some("198.51.100.1".into())
+    );
+    assert_eq!(
+        gateway_from_route_output("default dev eth0 proto kernel\n"),
+        None
+    );
+    assert_eq!(gateway_from_route_output("default via malformed\n"), None);
+}
+
+#[test]
+fn proxy_parser_drops_credentials_and_rejects_loopback_or_invalid_transports() {
+    for (url, host, port) in [
+        ("https://[2001:db8::1]:8443", "2001:db8::1", 8443),
+        ("http://10.0.2.2:8080", "10.0.2.2", 8080),
+        ("http://username:PRIVATE@proxy.example", "proxy.example", 80),
+    ] {
         assert_eq!(
-            interface_for_mac(links, "00:11:22:33:44:55").as_deref(),
-            Some("eth0")
+            ProxyEndpoint::parse(url).unwrap(),
+            ProxyEndpoint {
+                host: host.into(),
+                port
+            }
         );
-        assert_eq!(interface_for_mac(links, "00:11:22:33:44:56"), None);
+    }
+    for url in [
+        "socks5://proxy.example:1080",
+        "http://127.0.0.1:8080",
+        "http://localhost:8080",
+        "http://[::1]:8080",
+        "http://proxy.example:0",
+        "http://bad\nheader:80",
+        "http://-e:80",
+        "http://2001:db8::1",
+    ] {
+        assert!(ProxyEndpoint::parse(url).is_err(), "{url}");
+    }
+}
+
+#[test]
+fn source_dns_seed_uses_valid_upstream_dns_without_the_source_stub() {
+    let scratch = Scratch::with_etc("network-dns-seed");
+    scratch.write("etc/resolv.conf", "nameserver 127.0.0.53\n");
+    scratch.write("run/systemd/resolve/resolv.conf",
+                  "nameserver 192.0.2.53\nnameserver 2001:db8::53\nnameserver ::ffff:192.0.2.53\nsearch example.test\n");
+    let dns = source_dns_seed(&scratch.0).unwrap();
+    assert_eq!(dns.mode, DnsMode::Static);
+    assert_eq!(
+        dns.servers
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        ["192.0.2.53", "2001:db8::53"]
+    );
+    assert_eq!(dns.search_domains, ["example.test"]);
+}
+
+struct NetworkRunner {
+    calls: Vec<CommandSpec>,
+    links: String,
+    v6_address: Option<String>,
+    timeout_status: i32,
+}
+
+impl NetworkRunner {
+    fn new() -> Self {
+        Self {
+            calls: vec![],
+            links: LINKS.into(),
+            v6_address: Some(V6.into()),
+            timeout_status: 0,
+        }
     }
 
-    #[test]
-    fn proxy_transport_preserves_working_interfaces_without_direct_public_egress_or_credential_arguments()
-     {
-        let scratch = Scratch::with_etc("initrd_network");
-        scratch.write(
-            "etc/resolv.conf",
-            "nameserver 1.1.1.1\nnameserver 2001:4860:4860::8888\n",
-        );
-        let mut runner = NetworkRunner::new(true);
-        let config = InitrdNetworkConfig::new(
-            "00:11:22:33:44:55",
-            "198.51.100.8/24",
-            "198.51.100.1",
-            "2001:db8::8/64",
-            "2001:db8::1",
-            "",
-        )
-        .unwrap();
-        let result = run_initrd_network_with_proxy(
+    fn ran(&self, program: &str, args: &[&str]) -> bool {
+        self.calls
+            .iter()
+            .any(|call| call.program == program && call.args == args)
+    }
+
+    fn dhcp(&self) -> Vec<String> {
+        self.calls
+            .iter()
+            .filter(|call| call.program == "timeout")
+            .map(|call| call.args[1].to_string_lossy().into_owned())
+            .collect()
+    }
+}
+
+impl CommandRunner for NetworkRunner {
+    fn run(&mut self, command: &CommandSpec) -> io::Result<CommandOutput> {
+        self.calls.push(command.clone());
+        let args = command
+            .args
+            .iter()
+            .map(|arg| arg.to_str().unwrap())
+            .collect::<Vec<_>>();
+        let text = if command.program == "ip" {
+            match args.as_slice() {
+                ["-o", "link"] => self.links.clone(),
+                ["-4", "-o", "addr", "show", ..] => {
+                    "2: eth0 inet 198.51.100.8/24 scope global eth0\n".into()
+                }
+                ["-6", "-o", "addr", "show", ..] => self
+                    .v6_address
+                    .as_deref()
+                    .map(|value| format!("2: eth0 inet6 {value} scope global\n"))
+                    .unwrap_or_default(),
+                ["-4", "route", "show", ..] => "default via 198.51.100.1 dev eth0\n".into(),
+                ["-6", "route", "show", ..] => "default via fe80::1 dev eth0\n".into(),
+                _ => String::new(),
+            }
+        } else {
+            String::new()
+        };
+        let status = if command.program == "timeout" {
+            self.timeout_status
+        } else {
+            0
+        };
+        Ok(CommandOutput::new(Some(status), text.into_bytes(), vec![]))
+    }
+
+    fn run_pipeline(&mut self, _commands: &[CommandSpec]) -> io::Result<PipelineOutput> {
+        unreachable!()
+    }
+}
+
+fn manifest() -> DeploymentManifest {
+    DeploymentManifest {
+        disk: DiskIdentity {
+            device: "/dev/vda".into(),
+            size_bytes: 8 * (1 << 30),
+            serial: "test".into(),
+            wwn: String::new(),
+            partition_table_id: String::new(),
+        },
+        boot_mode: BootMode::Bios,
+        alpine_branch: "v3.24".into(),
+        debian_codename: String::new(),
+        gentoo_stage3: None,
+        network: vec![NetworkInterface {
+            name: "ens3".into(),
+            mac: MAC.into(),
+            ipv4_addresses: vec!["198.51.100.8/24".into()],
+            ipv4_gateway: Some("198.51.100.1".into()),
+            ipv6_addresses: vec![V6.into()],
+            ipv6_gateway: Some("fe80::1".into()),
+            dhcp4: false,
+            dhcp6: false,
+            accept_ra: false,
+        }],
+    }
+}
+
+fn scratch() -> Scratch {
+    let scratch = Scratch::with_etc("live-network");
+    for sysctl in ["accept_ra", "autoconf", "disable_ipv6"] {
+        scratch.write(&format!("proc/sys/net/ipv6/conf/eth0/{sysctl}"), "1\n");
+    }
+    scratch
+}
+
+#[test]
+fn static_dual_stack_sets_on_link_gateways_and_resolver_without_dhcp() {
+    let scratch = scratch();
+    let mut runner = NetworkRunner::new();
+    let policy = NetworkConfig {
+        mtu: Some(1450),
+        ..NetworkConfig::default()
+    };
+    let dns = DnsConfig {
+        mode: DnsMode::Static,
+        servers: vec!["2001:db8::53".parse().unwrap()],
+        search_domains: vec!["example.test".into()],
+    };
+    apply_network_policy(&mut runner, &scratch.0, &manifest(), &policy, &dns, None).unwrap();
+    for args in [
+        vec!["link", "set", "dev", "eth0", "mtu", "1450"],
+        vec!["-4", "addr", "replace", "198.51.100.8/24", "dev", "eth0"],
+        vec!["-6", "addr", "replace", V6, "dev", "eth0"],
+        vec!["-6", "route", "replace", "fe80::1", "dev", "eth0"],
+        vec![
+            "-6", "route", "replace", "default", "via", "fe80::1", "dev", "eth0",
+        ],
+    ] {
+        assert!(runner.ran("ip", &args), "{args:?}");
+    }
+    assert!(runner.dhcp().is_empty());
+    assert_eq!(scratch.read("proc/sys/net/ipv6/conf/eth0/accept_ra"), "0\n");
+    assert!(
+        scratch
+            .read("etc/resolv.conf")
+            .contains("nameserver 2001:db8::53")
+    );
+}
+
+#[test]
+fn dhcp_and_ra_follow_the_plan_and_dynamic_observations_are_never_replayed() {
+    let scratch = scratch();
+    let mut plan = manifest();
+    plan.network[0].dhcp4 = true;
+    plan.network[0].accept_ra = true;
+    let mut runner = NetworkRunner::new();
+    apply_network_policy(
+        &mut runner,
+        &scratch.0,
+        &plan,
+        &NetworkConfig::default(),
+        &DnsConfig::default(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(runner.dhcp(), ["udhcpc"]);
+    assert!(runner.calls.iter().all(|call| {
+        !call
+            .args
+            .iter()
+            .any(|arg| arg == "flush" || arg == "replace")
+    }));
+    assert_eq!(scratch.read("proc/sys/net/ipv6/conf/eth0/accept_ra"), "1\n");
+    assert_eq!(scratch.read("proc/sys/net/ipv6/conf/eth0/autoconf"), "1\n");
+
+    plan.network[0].accept_ra = false;
+    plan.network[0].dhcp6 = true;
+    let mut runner = NetworkRunner::new();
+    apply_network_policy(
+        &mut runner,
+        &scratch.0,
+        &plan,
+        &NetworkConfig::default(),
+        &DnsConfig::default(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(runner.dhcp(), ["udhcpc", "udhcpc6"]);
+    assert!(runner.ran(
+        "ip",
+        &[
+            "-6", "route", "replace", "default", "via", "fe80::1", "dev", "eth0"
+        ]
+    ));
+
+    let mut runner = NetworkRunner::new();
+    let policy = NetworkConfig {
+        ipv6: Ipv6Policy::Disable,
+        ..NetworkConfig::default()
+    };
+    apply_network_policy(
+        &mut runner,
+        &scratch.0,
+        &plan,
+        &policy,
+        &DnsConfig::default(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(runner.dhcp(), ["udhcpc"]);
+    assert_eq!(
+        scratch.read("proc/sys/net/ipv6/conf/eth0/disable_ipv6"),
+        "1\n"
+    );
+}
+
+#[test]
+fn missing_live_address_never_replaces_resolver_or_flushes_interfaces() {
+    let scratch = scratch();
+    scratch.write("etc/resolv.conf", "nameserver 192.0.2.53\n");
+    let mut runner = NetworkRunner::new();
+    runner.v6_address = None;
+    assert!(
+        apply_network_policy(
             &mut runner,
             &scratch.0,
-            &config,
-            Some("http://username:PRIVATE-PROXY-PASSWORD@proxy.example:3128"),
+            &manifest(),
+            &NetworkConfig::default(),
+            &DnsConfig::default(),
+            None
         )
-        .unwrap()
-        .unwrap();
-        assert!(result.ipv4_has_internet && result.ipv6_has_internet);
-        let probes = runner
+        .is_err()
+    );
+    assert_eq!(scratch.read("etc/resolv.conf"), "nameserver 192.0.2.53\n");
+    assert!(
+        runner
             .calls
             .iter()
-            .filter(|call| call.program == "nc")
-            .collect::<Vec<_>>();
-        assert!(!probes.is_empty());
-        for probe in probes {
-            assert_eq!(probe.args[probe.args.len() - 2], "proxy.example");
-            assert_eq!(probe.args.last().unwrap(), "3128");
-            assert!(
-                !probe
-                    .args
-                    .iter()
-                    .any(|arg| arg.to_string_lossy().contains("PRIVATE-PROXY-PASSWORD"))
-            );
-        }
-        for (url, host, port) in [
-            ("https://[2001:db8::1]:8443", "2001:db8::1", 8443),
-            ("http://10.0.2.2:8080", "10.0.2.2", 8080),
-            ("http://proxy.example", "proxy.example", 80),
-        ] {
-            assert_eq!(
-                ProxyEndpoint::parse(url).unwrap(),
-                ProxyEndpoint {
-                    host: host.into(),
-                    port
-                }
-            );
-        }
-        for url in [
-            "socks5://proxy.example:1080",
-            "http://127.0.0.1:8080",
-            "http://localhost:8080",
-            "http://[::1]:8080",
-            "http://proxy.example:0",
-            "http://bad\nheader:80",
-            "http://-e:80",
-            "http://2001:db8::1",
-        ] {
-            assert!(ProxyEndpoint::parse(url).is_err());
-        }
-    }
+            .all(|call| !call.args.iter().any(|argument| argument == "flush"))
+    );
+}
 
-    #[test]
-    fn address_parser_selects_first_global_address_and_preserves_prefix() {
-        let ipv4 = "2: eth0 inet 198.51.100.8/24 brd 198.51.100.255 scope global eth0\n";
-        assert_eq!(
-            address_from_ip_output(ipv4, AddressFamily::Ipv4).as_deref(),
-            Some("198.51.100.8/24")
-        );
-        let ipv6 = concat!(
-            "2: eth0 inet6 2001:db8::8/64 scope global\n",
-            "2: eth0 inet6 2001:db8::9/64 scope global\n"
-        );
-        assert_eq!(
-            address_from_ip_output(ipv6, AddressFamily::Ipv6).as_deref(),
-            Some("2001:db8::8/64")
-        );
-        assert_eq!(address_from_ip_output("", AddressFamily::Ipv4), None);
-    }
-
-    #[test]
-    fn gateway_parser_reads_default_route_next_hop_without_shell_cut_pipeline() {
-        assert_eq!(
-            gateway_from_route_output("default via 198.51.100.1 dev eth0 proto static\n"),
-            Some("198.51.100.1".into())
-        );
-        assert_eq!(
-            gateway_from_route_output("default dev eth0 proto kernel\n"),
-            None
-        );
-    }
-
-    struct NetworkRunner {
-        calls: Vec<CommandSpec>,
-        nc_success: bool,
-    }
-
-    impl NetworkRunner {
-        fn new(nc_success: bool) -> Self {
-            Self {
-                calls: Vec::new(),
-                nc_success,
-            }
-        }
-    }
-
-    impl CommandRunner for NetworkRunner {
-        fn run(&mut self, command: &CommandSpec) -> io::Result<CommandOutput> {
-            self.calls.push(command.clone());
-            let program = command.program.to_string_lossy();
-            let args: Vec<String> = command
-                .args
-                .iter()
-                .map(|arg| arg.to_string_lossy().into_owned())
-                .collect();
-            let output = if program == "ip" && args == ["-o", "link"] {
-                b"2: eth0: <BROADCAST,UP,LOWER_UP> mtu 1500 link/ether 00:11:22:33:44:55 brd ff:ff:ff:ff:ff:ff\n".to_vec()
-            } else if program == "ip" && args.starts_with(&["-4", "-o", "addr"].map(str::to_owned))
-            {
-                b"2: eth0 inet 198.51.100.8/24 scope global eth0\n".to_vec()
-            } else if program == "ip" && args.starts_with(&["-6", "-o", "addr"].map(str::to_owned))
-            {
-                b"2: eth0 inet6 2001:db8::8/64 scope global\n".to_vec()
-            } else if program == "ip"
-                && args.starts_with(&["-4", "addr", "show"].map(str::to_owned))
-            {
-                b"2: eth0 inet 198.51.100.8/24 scope global eth0\n".to_vec()
-            } else if program == "ip"
-                && args.starts_with(&["-6", "addr", "show"].map(str::to_owned))
-            {
-                b"2: eth0 inet6 2001:db8::8/64 scope global\n".to_vec()
-            } else if program == "ip"
-                && args.starts_with(&["-4", "route", "show"].map(str::to_owned))
-            {
-                b"default via 198.51.100.1 dev eth0 proto static\n".to_vec()
-            } else if program == "ip"
-                && args.starts_with(&["-6", "route", "show"].map(str::to_owned))
-            {
-                b"default via 2001:db8::1 dev eth0 proto ra\n".to_vec()
-            } else {
-                Vec::new()
-            };
-            let status = if program == "timeout" || (program == "nc" && !self.nc_success) {
-                1
-            } else {
-                0
-            };
-            Ok(CommandOutput::new(Some(status), output, Vec::new()))
-        }
-
-        fn run_pipeline(&mut self, _commands: &[CommandSpec]) -> io::Result<PipelineOutput> {
-            Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "pipeline unused",
-            ))
-        }
-    }
-
-    use crate::support::Scratch;
-
-    #[test]
-    fn initrd_setup_uses_mac_networks_and_publishes_live_netconf() {
-        let scratch = Scratch::with_etc("initrd_network");
-        scratch.write(
-            "etc/resolv.conf",
-            "nameserver 1.1.1.1\nnameserver 2001:4860:4860::8888\n",
-        );
-        let config = InitrdNetworkConfig::new(
-            "00:11:22:33:44:55",
-            "198.51.100.8/24",
-            "198.51.100.1",
-            "2001:db8::8/64",
-            "2001:db8::1",
-            "",
-        )
-        .unwrap();
-        let mut runner = NetworkRunner::new(true);
-        let result = run_initrd_network(&mut runner, &scratch.0, &config)
-            .unwrap()
-            .unwrap();
-        assert_eq!(result.interface, "eth0");
-        assert!(result.dhcpv4);
-        assert!(result.dhcpv6_or_slaac);
-        assert!(result.ipv4_has_internet);
-        assert!(result.ipv6_has_internet);
-        assert!(!result.should_disable_dhcpv4);
-        assert!(!result.should_disable_accept_ra);
-        let netconf = scratch.0.join("dev/netconf/eth0");
-        assert_eq!(fs::read_to_string(netconf.join("dhcpv4")).unwrap(), "1\n");
-        assert_eq!(
-            fs::read_to_string(netconf.join("ipv4_addr")).unwrap(),
-            "198.51.100.8/24\n"
-        );
-        assert_eq!(
-            fs::read_to_string(netconf.join("ipv6_has_internet")).unwrap(),
-            "1\n"
-        );
-        assert_eq!(runner.calls[0].args, ["-o", "link"]);
-        assert_eq!(runner.calls[1].args, ["link", "set", "dev", "lo", "up"]);
-        assert_eq!(runner.calls[2].args, ["link", "set", "dev", "eth0", "up"]);
-        assert!(runner.calls.iter().any(|call| {
-            call.program == "timeout"
-                && call.args == ["15", "udhcpc", "-i", "eth0", "-f", "-q", "-n"]
-        }));
-        assert!(runner.calls.iter().any(|call| {
-            call.program == "nc"
-                && call.args[4] == "-s"
-                && call.args[5] == "198.51.100.8"
-                && call.args[6] == "1.1.1.1"
-                && call.args[7] == "443"
-        }));
-        assert!(runner.calls.iter().all(|call| call.program != "sh"));
-    }
-
-    #[test]
-    fn absent_interface_stops_after_twenty_nonfatal_probes() {
-        let config = InitrdNetworkConfig::new("00:11:22:33:44:55", "", "", "", "", "").unwrap();
-        let mut outputs = Vec::new();
-        for _ in 0..20 {
-            outputs.push(CommandOutput::new(Some(0), Vec::new(), Vec::new()));
-            outputs.push(CommandOutput::new(Some(0), Vec::new(), Vec::new()));
-        }
-        let mut runner = MockRunner::new(outputs);
-        assert!(
-            run_initrd_network(&mut runner, Path::new("/unused"), &config)
-                .unwrap()
-                .is_none()
-        );
-        assert_eq!(runner.calls().len(), 40);
-        let (pairs, tail) = runner.calls().as_chunks::<2>();
-        assert!(tail.is_empty());
-        for calls in pairs {
-            assert_eq!(calls[0].program, "ip");
-            assert_eq!(calls[0].args, ["-o", "link"]);
-            assert_eq!(calls[1].program, "sleep");
-            assert_eq!(calls[1].args, ["1"]);
-        }
-    }
-
-    #[test]
-    fn failed_connectivity_flushes_unusable_network_state_and_restores_dns_fallbacks() {
-        let scratch = Scratch::with_etc("initrd_network");
-        scratch.write(
-            "etc/resolv.conf",
-            "nameserver 1.1.1.1\nnameserver 2001:4860:4860::8888\n",
-        );
-        let proc = scratch.0.join("proc/sys/net/ipv6/conf/eth0");
-        fs::create_dir_all(&proc).unwrap();
-        fs::write(proc.join("accept_ra"), "1\n").unwrap();
-        fs::write(proc.join("autoconf"), "1\n").unwrap();
-        let config = InitrdNetworkConfig::new(
-            "00:11:22:33:44:55",
-            "198.51.100.8/24",
-            "198.51.100.1",
-            "2001:db8::8/64",
-            "2001:db8::1",
-            "",
-        )
-        .unwrap();
-        let mut runner = NetworkRunner::new(false);
-        let result = run_initrd_network(&mut runner, &scratch.0, &config)
-            .unwrap()
-            .unwrap();
-        assert!(!result.ipv4_has_internet);
-        assert!(!result.ipv6_has_internet);
-        assert!(result.should_disable_dhcpv4);
-        assert!(result.should_disable_accept_ra);
-        assert!(result.should_disable_autoconf);
-        assert_eq!(fs::read_to_string(proc.join("accept_ra")).unwrap(), "0\n");
-        assert_eq!(fs::read_to_string(proc.join("autoconf")).unwrap(), "0\n");
-        assert_eq!(
-            fs::read_to_string(scratch.0.join("etc/resolv.conf")).unwrap(),
-            "nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 2606:4700:4700::1111\nnameserver 2001:4860:4860::8888\n"
-        );
-        assert!(runner.calls.iter().any(|call| {
-            call.program == "ip"
-                && call.args.len() >= 3
-                && call.args[0] == "-4"
-                && call.args[1] == "addr"
-                && call.args[2] == "flush"
-        }));
-        assert!(runner.calls.iter().any(|call| {
-            call.program == "ip"
-                && call.args.len() >= 3
-                && call.args[0] == "-6"
-                && call.args[1] == "route"
-                && call.args[2] == "flush"
-        }));
-    }
-
-    #[test]
-    fn initrd_network_config_rejects_bad_mac_and_preserves_six_field_protocol() {
-        let config = InitrdNetworkConfig::new(
-            "00:11:22:33:44:55",
-            "198.51.100.8/24",
-            "198.51.100.1",
-            "2001:db8::8/64",
-            "2001:db8::1",
-            "2001:db8::9/64",
-        )
-        .unwrap();
-        assert_eq!(config.mac_addr(), "00:11:22:33:44:55");
-        assert_eq!(config.ipv6_extra_addrs(), "2001:db8::9/64");
-        assert!(InitrdNetworkConfig::new("not-a-mac", "", "", "", "", "").is_err());
-    }
+#[test]
+fn wireless_interface_cannot_enter_the_wired_live_policy() {
+    let scratch = scratch();
+    std::fs::create_dir_all(scratch.0.join("sys/class/net/eth0/phy80211")).unwrap();
+    let mut runner = NetworkRunner::new();
+    let error = apply_network_policy(
+        &mut runner,
+        &scratch.0,
+        &manifest(),
+        &NetworkConfig::default(),
+        &DnsConfig::default(),
+        None,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("wireless"));
+    assert!(runner.dhcp().is_empty());
 }

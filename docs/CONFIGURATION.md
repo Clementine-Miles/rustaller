@@ -5,12 +5,13 @@ partition size, Btrfs compression, package profile, DNS,
 network and optional swap policy. `InstallPlan.post_install: PostInstallConfig`
 holds kernel, hostname and timezone choices. Credentials and SSH settings belong
 to `InstallPlan`; `DeploymentManifest` carries source disk/network facts. These
-settings configure the new target, not the running source or Live network.
+settings configure the new target. The resolved Ethernet, MTU and resolver
+policy also applies during Alpine Live. The source stays configured by its
+existing manager.
 
-Plan schema 10 serializes the Gentoo init choice explicitly and requires the
-matching embedded worker runtime. Older schemas, including schema 8's fixed
-systemd stage3, are rejected before body decoding. Recreate old plans explicitly;
-they are never silently assigned the new OpenRC default.
+Schema 11 adds the explicit Ethernet settings. Schema 10 can be read with its
+encoded profile and Gentoo init selection intact. Earlier schemas require a
+new plan. Handoff uses the matching embedded worker runtime.
 
 ## Unified pipeline
 
@@ -26,16 +27,33 @@ operations finish. File generation proves neither activation nor reachability.
 The host binds interfaces to MAC addresses and separates observed addresses from
 source configuration policy. DHCPv6 and RA must come from an identifiable active
 configuration; the IPv6 `dynamic` flag alone never selects either mechanism.
-Automatic capture currently requires active systemd-networkd, an applied flat
-profile with explicit `DHCP=` and `IPv6AcceptRA=`, no profile/global drop-ins or
-global overrides, and no active NetworkManager. Other source managers (including
-ifupdown/OpenRC-managed networking), implicit defaults, changed profiles and
-conflicting owners stop preparation with a diagnostic. Apply an explicit supported
-profile before retrying; do not change a remote host without console access.
-This constraint does not restrict Alpine target networking.
-It also does not prevent read-only diagnostic inspection; unsupported source
-network policy blocks installation authorization, while available facts remain
-visible in the CLI and TUI.
+Automatic capture dispatches per Ethernet link.
+
+| Source | Supported policy and evidence |
+| --- | --- |
+| systemd-networkd | Applied flat profile with explicit `DHCP=` and `IPv6AcceptRA=`, without drop-ins or global overrides |
+| NetworkManager | Active wired connection UUID and matching manual, DHCP, RA or disabled policy, read via `nmcli` without secrets |
+| ifupdown and ifupdown-ng | Applied interface state and unchanged flat static or supported DHCP configuration |
+| dhcpcd | Active daemon and matching DHCPv4 lease with a supported address family configuration |
+| iwd and NetworkManager Wi-Fi | Detected as wireless association, independently of IP ownership. Handoff stops before erasure because firmware and private credential reassociation are unavailable. |
+
+Conflicting ownership, custom DHCP identities, VPNs, tunnels, bridges, bonds,
+policy routing and unsupported address combinations require an explicit Ethernet
+policy or a supported topology. Offline inspection remains available.
+
+Use `--network-mac` to supply the complete address policy for one Ethernet
+interface. Omitted families use no static or dynamic addresses. Specify either
+a static address/prefix and optional same-family gateway or DHCP for each family.
+IPv6 RA can be selected with or without DHCPv6. The installer matches the MAC
+again in Live. `--dns` and `--mtu` retain their existing meaning.
+
+```console
+rustaller debian --inspect --network-mac=52:54:00:12:34:56 --dhcp4 \
+  --ipv6-address=2001:db8:1::10/64 --ipv6-gateway=fe80::1 --dns=192.0.2.53
+```
+
+The TUI includes these address fields under **Network and DNS → Explicit
+address policy**. Review the effective settings before confirming the disk.
 Gentoo OpenRC targets use Gentoo's netifrc/dhcpcd/openresolv conventions, rather
 than Alpine's ifupdown-ng files. Per-interface `/etc/conf.d/net` settings preserve
 supported static addresses, DHCPv4/DHCPv6/RA and off-link default routes. MAC-bound

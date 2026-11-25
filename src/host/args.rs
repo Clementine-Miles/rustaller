@@ -1,8 +1,10 @@
-use crate::config::{DnsMode, InstallProfile};
+use crate::config::{DnsMode, ExplicitNetwork, InstallProfile};
 use crate::model::{BootMode, InstallPlan, PlanError, Target};
 use std::fmt;
 
 pub const HELP: &str = r#"Usage: rustaller [OPTIONS] TARGET
+       rustaller reset
+       rustaller --inspect
 
 Targets:
   alpine       Latest stable Alpine Linux
@@ -32,7 +34,7 @@ Options:
   --gentoo-init openrc|systemd   Gentoo amd64-nomultilib stage3 (default: openrc)
   --hostname NAME               Set target hostname (one ASCII label)
   --timezone ZONE               Set target timezone, e.g. Etc/UTC
-  --profile standard|minimal    Select target installation footprint
+  --profile minimal|standard    Select target footprint (default: minimal)
   --minimal                    Alias for --profile minimal
   --with-tools                 Add curl and less (Gentoo equivalents)
   --keep-docs                  Keep documentation in the minimal profile
@@ -40,6 +42,14 @@ Options:
   --dns-mode auto|static       Target DNS policy (default: auto)
   --dns IP[,IP]                Static upstream DNS, repeatable, maximum 3
   --dns-search DOMAIN[,DOMAIN] DNS search domains, repeatable, maximum 6
+  --network-mac MAC            Use explicit policy for one Ethernet interface
+  --ipv4-address IP/PREFIX     Static IPv4 address for the selected interface
+  --ipv4-gateway IP            IPv4 default gateway for the static address
+  --ipv6-address IP/PREFIX     Static IPv6 address for the selected interface
+  --ipv6-gateway IP            IPv6 default gateway for the static address
+  --dhcp4                      Request DHCPv4 for the selected interface
+  --dhcp6                      Request DHCPv6 for the selected interface
+  --ipv6-ra                    Accept IPv6 router advertisements and SLAAC
   --tcp-congestion CHOICE      default|bbr|cubic (bbr requires --qdisc fq)
   --qdisc CHOICE               default|fq|fq_codel
   --ipv6 POLICY               inherit|enable|disable (target only)
@@ -64,11 +74,15 @@ Options:
 Linux x86_64 hosts only. Automatic installation erases the selected disk.
 Rust embeds its matching worker and verifies official installation sources.
 New target systems use rustaller-boot schema 1; Btrfs swapfiles are unsupported.
-Development installer: BIOS/UEFI acceptance is required before production use.
+Without --network-mac, Rustaller inherits a verified source network policy.
+With --network-mac, omitted address families are disabled. Use --dns for static DNS.
+"rustaller reset" cancels installer-owned preparation before a handoff.
 "#;
 
 pub enum CliOutcome {
     Help,
+    Reset,
+    HostInspection,
     Plan(Box<InstallPlan>),
     Inspect(Box<InstallPlan>),
     ConfirmedPlan {
@@ -119,6 +133,12 @@ where
     {
         return Ok(CliOutcome::Help);
     }
+    if args == ["reset"] {
+        return Ok(CliOutcome::Reset);
+    }
+    if args == ["--inspect"] {
+        return Ok(CliOutcome::HostInspection);
+    }
 
     let mut target = None;
     let mut inspect = false;
@@ -152,6 +172,47 @@ where
         };
 
         match name.as_str() {
+            "--network-mac" | "--ipv4-address" | "--ipv4-gateway" | "--ipv6-address"
+            | "--ipv6-gateway" => {
+                let (value, consumed) = take_value(&args, index, &name, inline_value)?;
+                let net = options
+                    .system
+                    .explicit_network
+                    .get_or_insert_with(ExplicitNetwork::default);
+                let field = match name.as_str() {
+                    "--network-mac" => {
+                        if !net.mac.is_empty() || value.is_empty() {
+                            return Err(CliError::InvalidValue(name));
+                        }
+                        net.mac = value.to_ascii_lowercase();
+                        index += consumed;
+                        continue;
+                    }
+                    "--ipv4-address" => &mut net.ipv4_address,
+                    "--ipv4-gateway" => &mut net.ipv4_gateway,
+                    "--ipv6-address" => &mut net.ipv6_address,
+                    "--ipv6-gateway" => &mut net.ipv6_gateway,
+                    _ => unreachable!(),
+                };
+                if field.replace(value).is_some() {
+                    return Err(CliError::InvalidValue(name));
+                }
+                index += consumed;
+            }
+            "--dhcp4" | "--dhcp6" | "--ipv6-ra" => {
+                reject_inline(&name, inline_value.as_deref())?;
+                let net = options
+                    .system
+                    .explicit_network
+                    .get_or_insert_with(ExplicitNetwork::default);
+                match name.as_str() {
+                    "--dhcp4" => net.dhcp4 = true,
+                    "--dhcp6" => net.dhcp6 = true,
+                    "--ipv6-ra" => net.accept_ra = true,
+                    _ => unreachable!(),
+                }
+                index += 1;
+            }
             "--inspect" => {
                 reject_inline(&name, inline_value.as_deref())?;
                 inspect = true;
@@ -436,7 +497,6 @@ fn set_target(target: &mut Option<Target>, input: &str) -> Result<(), CliError> 
         "debian" => Target::Debian,
         "arch" => Target::Arch,
         "gentoo" => Target::Gentoo,
-        "reset" => Target::Reset,
         _ => return Err(CliError::InvalidTarget(input.to_owned())),
     });
     Ok(())

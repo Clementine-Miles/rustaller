@@ -426,16 +426,16 @@ mod system_config {
     }
 
     #[test]
-    fn defaults_preserve_existing_behavior_and_profiles_never_apply_to_rescue_or_media() {
+    fn new_plans_default_minimal_and_explicit_standard_roundtrips_unchanged() {
         assert!(SystemConfig::default().is_default());
+        assert_eq!(SystemConfig::default().profile, InstallProfile::Minimal);
         for target in [Target::Alpine, Target::Debian, Target::Arch, Target::Gentoo] {
             let original = InstallPlan::new(target);
             original.validate().unwrap();
-            assert!(!original.system.strip_docs());
-            assert!(!original.system.clear_package_cache());
-            let mut selected = InstallPlan::new(target);
-            selected.system.profile = InstallProfile::Minimal;
-            let packages = profile::package_plan(&selected, BootMode::Bios, true, &[]).unwrap();
+            assert_eq!(original.system.profile, InstallProfile::Minimal);
+            assert!(original.system.strip_docs());
+            assert!(original.system.clear_package_cache());
+            let packages = profile::package_plan(&original, BootMode::Bios, true, &[]).unwrap();
             assert!(packages.strip_docs);
             assert!(packages.clear_package_cache);
             assert!(
@@ -445,22 +445,147 @@ mod system_config {
                     .chain(&packages.later_packages)
                     .any(|package| package.contains("openssh"))
             );
-            selected.hold = Some(1);
-            assert!(selected.validate().is_err());
+            assert!(
+                !packages
+                    .bootstrap_packages
+                    .iter()
+                    .chain(&packages.later_packages)
+                    .any(|package| matches!(
+                        package.as_str(),
+                        "curl" | "less" | "net-misc/curl" | "sys-apps/less"
+                    ))
+            );
+            let mut standard = InstallPlan::new(target);
+            standard.system.profile = InstallProfile::Standard;
+            let decoded = decode_plan(&encode_plan(&standard).unwrap()).unwrap();
+            assert_eq!(decoded.system.profile, InstallProfile::Standard);
+            assert!(!decoded.system.strip_docs());
+            assert!(!decoded.system.clear_package_cache());
+            let mut rescue = original;
+            rescue.hold = Some(1);
+            rescue.validate().unwrap();
+            assert!(profile::package_plan(&rescue, BootMode::Bios, true, &[]).is_err());
+            rescue.system.with_tools = true;
+            assert!(rescue.validate().is_err());
         }
-        {
-            let target = Target::Reset;
+        for profile in [InstallProfile::Minimal, InstallProfile::Standard] {
             let system = SystemConfig {
-                profile: InstallProfile::Minimal,
+                profile,
                 ..Default::default()
             };
-            assert!(system.validate(target, None).is_err());
+            system.validate(Target::Reset, None).unwrap();
             let system = SystemConfig {
+                profile,
                 dns: dns(),
                 ..Default::default()
             };
-            assert!(system.validate(target, None).is_err());
+            assert!(system.validate(Target::Reset, None).is_err());
         }
+    }
+
+    #[test]
+    fn schema_ten_explicit_profiles_survive_the_new_plan_default() {
+        for target in [
+            Target::Alpine,
+            Target::Debian,
+            Target::Arch,
+            Target::Gentoo,
+            Target::Reset,
+        ] {
+            for profile in [InstallProfile::Standard, InstallProfile::Minimal] {
+                let mut previous = InstallPlan::new(target);
+                previous.schema_version = 10;
+                previous.system.profile = profile;
+                let bytes = encode_plan(&previous).unwrap();
+                let decoded = decode_plan(&bytes).unwrap();
+                assert_eq!(
+                    decoded.schema_version,
+                    rustaller::model::CURRENT_SCHEMA_VERSION
+                );
+                assert_eq!(decoded.system.profile, profile);
+                assert!(decoded.system.explicit_network.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn minimal_packages_retain_only_selected_filesystem_tools_without_purging_native_base() {
+        use rustaller::config::RootFilesystem;
+        for filesystem in [
+            RootFilesystem::Xfs,
+            RootFilesystem::Ext4,
+            RootFilesystem::Btrfs,
+        ] {
+            let mut selected = InstallPlan::new(Target::Debian);
+            selected.system.root_filesystem = filesystem;
+            selected.username = Some("admin".into());
+            let packages =
+                debian::apt_package_list_for_plan(&selected, BootMode::Bios, &[]).unwrap();
+            assert_eq!(
+                packages.iter().any(|p| p == "xfsprogs"),
+                filesystem == RootFilesystem::Xfs
+            );
+            assert_eq!(
+                packages.iter().any(|p| p == "e2fsprogs"),
+                filesystem == RootFilesystem::Ext4
+            );
+            assert_eq!(
+                packages.iter().any(|p| p == "btrfs-progs"),
+                filesystem == RootFilesystem::Btrfs
+            );
+            for essential in [
+                "dosfstools",
+                "initramfs-tools",
+                "openssh-server",
+                "systemd-sysv",
+                "systemd-resolved",
+                "iproute2",
+                "ca-certificates",
+                "sudo",
+            ] {
+                assert!(
+                    packages.iter().any(|p| p == essential),
+                    "missing {essential}"
+                );
+            }
+            selected.system.profile = InstallProfile::Standard;
+            let standard =
+                debian::apt_package_list_for_plan(&selected, BootMode::Bios, &[]).unwrap();
+            assert!(standard.iter().any(|p| p == "xfsprogs"));
+            assert!(standard.iter().any(|p| p == "e2fsprogs"));
+        }
+        let selected = InstallPlan::new(Target::Gentoo);
+        let minimal = profile::package_plan(&selected, BootMode::Bios, true, &[]).unwrap();
+        assert!(
+            !minimal
+                .later_packages
+                .iter()
+                .any(|p| p == "sys-block/io-scheduler-udev-rules")
+        );
+        assert!(
+            minimal
+                .later_packages
+                .iter()
+                .any(|p| p == "sys-kernel/gentoo-kernel-bin")
+        );
+        assert!(
+            !minimal
+                .later_packages
+                .iter()
+                .any(|p| p == "sys-kernel/gentoo-kernel")
+        );
+        assert!(
+            minimal
+                .later_packages
+                .iter()
+                .any(|p| p == "sys-kernel/dracut")
+        );
+        assert!(
+            minimal
+                .later_packages
+                .iter()
+                .any(|p| p == "sys-kernel/installkernel")
+        );
     }
 
     #[test]

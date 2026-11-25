@@ -3,10 +3,6 @@ use rustaller::host::args::{CliOutcome, parse_args};
 use rustaller::host::handoff;
 use rustaller::model::InstallPlan;
 use std::io::{self, BufRead, IsTerminal, Read, Write};
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static NEXT_WORKSPACE: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(feature = "tui")]
 #[path = "../tui/mod.rs"]
@@ -23,9 +19,6 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
-    if rustaller::worker_bytes().is_empty() {
-        return Err("matching rustaller-worker is not embedded".into());
-    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.is_empty() {
         if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
@@ -42,6 +35,21 @@ fn run() -> Result<(), String> {
     match outcome {
         CliOutcome::Help => {
             println!("{}", rustaller::host::args::HELP);
+            Ok(())
+        }
+        CliOutcome::Reset => {
+            println!(
+                "{}",
+                rustaller::host::lifecycle::reset().map_err(|error| error.to_string())?
+            );
+            Ok(())
+        }
+        CliOutcome::HostInspection => {
+            println!(
+                "{}",
+                rustaller::host::inspect::collect(&mut SystemRunner, std::path::Path::new("/"))
+                    .render_current()
+            );
             Ok(())
         }
         CliOutcome::Plan(plan) => run_plan(&plan),
@@ -65,7 +73,7 @@ fn preflight_plan(plan: &InstallPlan) -> Result<rustaller::host::inspect::Prefli
 fn inspect_plan(plan: &InstallPlan) -> (rustaller::host::inspect::PreflightReport, Option<String>) {
     let mut runner = SystemRunner;
     let root = std::path::Path::new("/");
-    match handoff::inspect_inventory(&mut runner, plan) {
+    let (mut report, confirmation) = match handoff::inspect_inventory(&mut runner, plan) {
         Ok(manifest) => {
             let confirmation = handoff::confirmation_for_plan(plan, &manifest.disk);
             let mut report = rustaller::host::inspect::report(&mut runner, root, plan, &manifest);
@@ -87,7 +95,12 @@ fn inspect_plan(plan: &InstallPlan) -> (rustaller::host::inspect::PreflightRepor
                 None,
             )
         }
+    };
+    if let Ok(status) = rustaller::host::lifecycle::status() {
+        report.warning.push('\n');
+        report.warning.push_str(status);
     }
+    (report, confirmation)
 }
 fn run_plan(plan: &InstallPlan) -> Result<(), String> {
     run_install(plan, None)
@@ -95,10 +108,10 @@ fn run_plan(plan: &InstallPlan) -> Result<(), String> {
 
 fn run_install(plan: &InstallPlan, provided_confirmation: Option<&str>) -> Result<(), String> {
     if !plan.target.is_automatic() {
-        return Err(
-            "Reset execution is unavailable. Select an installation or Alpine Live rescue route."
-                .into(),
-        );
+        return Err("Select an installation or Alpine Live rescue route.".into());
+    }
+    if rustaller::worker_bytes().is_empty() {
+        return Err("matching rustaller-worker is not embedded".into());
     }
     // Own the resolved plan: hostname discovery and a terminal root-password
     // prompt must be serialized before crossing into Live, never rediscovered there.
@@ -164,18 +177,12 @@ fn run_install(plan: &InstallPlan, provided_confirmation: Option<&str>) -> Resul
     if confirmation != deployment.confirmation {
         return Err("Installation cancelled: disk identity confirmation did not match".into());
     }
-    let workspace = PathBuf::from(format!(
-        "/var/tmp/rustaller-{}-{}",
-        std::process::id(),
-        NEXT_WORKSPACE.fetch_add(1, Ordering::Relaxed)
-    ));
     println!("Preparing authenticated Alpine Live and the private installation plan...");
     let prepared = handoff::prepare(
         &mut runner,
         plan,
         &deployment,
         &confirmation,
-        &workspace,
         rustaller::worker_bytes(),
     )
     .map_err(|error| error.to_string())?;
@@ -183,12 +190,12 @@ fn run_install(plan: &InstallPlan, provided_confirmation: Option<&str>) -> Resul
         println!("Prepared files: {}", prepared.workspace().display());
         if !io::stdin().is_terminal() {
             println!(
-                "Handoff paused by --hold 0; no kernel was loaded. Rerun without --hold 0 to perform the handoff after review."
+                "Handoff paused by --hold 0. Use rustaller reset to cancel or rerun without --hold 0 to prepare a fresh handoff."
             );
             return Ok(());
         }
         println!(
-            "Preparation is held for review. Type KEXEC to switch now; any other input leaves the source system running."
+            "Preparation is held for review. Type KEXEC to switch now or use rustaller reset to discard the staging files."
         );
         print!("> ");
         io::stdout().flush().map_err(|error| error.to_string())?;

@@ -1,24 +1,21 @@
 //! Authenticated host preparation and init-aware kexec handoff.
 //! All mutations require a disk-identity-bound confirmation. Tests use only mocks.
-use super::{disk, initrd, preflight, sources};
+use super::{disk, initrd, lifecycle, preflight, sources};
 use crate::codec::{decode_plan, encode_plan};
 use crate::command::{
     CommandError, CommandInput, CommandOutput, CommandRunner, CommandSpec, OutputMode,
     PipelineOutput, run_checked,
 };
 use crate::deployment::{DeploymentManifest, DiskIdentity, write_manifest};
-use crate::fsutil::effective_uid;
 use crate::model::{BootMode, InstallPlan, Target};
-use crate::worker::initrd_network::{InitrdNetworkConfig, ProxyEndpoint};
+use crate::worker::initrd_network::{ProxyEndpoint, stage_dns_seed};
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fmt;
 use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::{
-    DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt, symlink,
-};
-use std::path::{Component, Path, PathBuf};
+use std::os::unix::fs::{DirBuilderExt, FileTypeExt, OpenOptionsExt, PermissionsExt, symlink};
+use std::path::{Path, PathBuf};
 
 /// Published by https://alpinelinux.org/downloads/ and its /keys/ncopa.asc link.
 pub const ALPINE_RELEASE_FINGERPRINT: &str = "0482D84022F52DF1C4E7CD43293ACD0907D9495A";
@@ -71,6 +68,7 @@ pub enum HandoffError {
     Preflight(preflight::PreflightError),
     Kexec(preflight::KexecError),
     ArmedImage(Box<HandoffError>),
+    Lifecycle(lifecycle::LifecycleError),
 }
 impl fmt::Display for HandoffError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -78,11 +76,12 @@ impl fmt::Display for HandoffError {
             Self::Invalid(reason) => write!(f, "Cannot prepare installer handoff: {reason}"),
             Self::Filesystem(error) => write!(f, "Installer staging failed: {error}"),
             Self::Command(error) => error.fmt(f),
+            Self::Lifecycle(error) => error.fmt(f),
             Self::Preflight(error) => error.fmt(f),
             Self::Kexec(error) => error.fmt(f),
             Self::ArmedImage(error) => write!(
                 f,
-                "{error}; the installer kexec image could not be unloaded, so another kexec request must not be issued until it is unloaded"
+                "{error}; the kexec slot could not be unloaded or verified empty. Inspect the source console before another kexec request"
             ),
             Self::MissingTool(tool) => write!(f, "Required host tool is unavailable: {tool}"),
         }
@@ -97,6 +96,11 @@ impl From<io::Error> for HandoffError {
 impl From<CommandError> for HandoffError {
     fn from(error: CommandError) -> Self {
         Self::Command(error)
+    }
+}
+impl From<lifecycle::LifecycleError> for HandoffError {
+    fn from(error: lifecycle::LifecycleError) -> Self {
+        Self::Lifecycle(error)
     }
 }
 
@@ -131,7 +135,7 @@ pub fn inspect_inventory<R: CommandRunner>(
         alpine_branch: String::new(),
         debian_codename: String::new(),
         gentoo_stage3: None,
-        network: collect_network(runner)?,
+        network: network_for_plan(runner, plan)?,
     };
     manifest
         .validate_inventory()
@@ -233,7 +237,7 @@ pub fn discover<R: CommandRunner>(
             HandoffError::Invalid("disk is too small for the planned FAT32 and root partitions")
         })?;
     }
-    let network = collect_network(runner)?;
+    let network = network_for_plan(runner, plan)?;
     let alpine =
         sources::parse_alpine_netboot(&fetch_text(runner, sources::ALPINE_RELEASES_URL)?, "x86_64")
             .map_err(|_| HandoffError::Invalid("invalid official Alpine netboot metadata"))?;
@@ -389,13 +393,22 @@ pub fn read_disk_identity<R: CommandRunner>(
 
 pub use super::network::{collect_network, parse_addresses, parse_default_gateway};
 
+fn network_for_plan<R: CommandRunner>(
+    runner: &mut R,
+    plan: &InstallPlan,
+) -> Result<Vec<crate::deployment::NetworkInterface>, HandoffError> {
+    match &plan.system.explicit_network {
+        Some(explicit) => super::network::collect_explicit_network(runner, explicit),
+        None => collect_network(runner),
+    }
+}
+
 /// Prepare only after exact disk confirmation; failures leave boot state unchanged.
 pub fn prepare<R: CommandRunner>(
     runner: &mut R,
     plan: &InstallPlan,
     deployment: &HostDeployment,
     confirmation: &str,
-    workspace: &Path,
     worker: &[u8],
 ) -> Result<PreparedHandoff, HandoffError> {
     plan.validate_install_credentials()
@@ -428,11 +441,21 @@ pub fn prepare<R: CommandRunner>(
             "disk identity changed after confirmation",
         ));
     }
-    validate_new_workspace(workspace)?;
-    DirBuilder::new().mode(0o700).create(workspace)?;
-    let outcome = prepare_owned(runner, plan, deployment, workspace, worker);
+    let operation = lifecycle::Preparation::begin()?;
+    let outcome = (|| {
+        let mut runner = lifecycle::CancelAware(&operation, runner);
+        let prepared = prepare_owned(
+            &mut runner,
+            plan,
+            deployment,
+            &operation.workspace(),
+            worker,
+        )?;
+        operation.finish()?;
+        Ok(prepared)
+    })();
     if outcome.is_err() {
-        let _ = fs::remove_dir_all(workspace);
+        operation.discard()?;
     }
     outcome
 }
@@ -590,38 +613,19 @@ fn prepare_with_transport<R: CommandRunner>(
     )?;
     fs::set_permissions(&overlay_archive, fs::Permissions::from_mode(0o600))?;
     let initrd_root = workspace.join("initrd-root");
-    let configs = deployment
-        .manifest
-        .network
-        .iter()
-        .map(|nic| {
-            InitrdNetworkConfig::new(
-                &nic.mac,
-                nic.ipv4_addresses
-                    .first()
-                    .map(String::as_str)
-                    .unwrap_or_default(),
-                nic.ipv4_gateway.as_deref().unwrap_or_default(),
-                nic.ipv6_addresses
-                    .first()
-                    .map(String::as_str)
-                    .unwrap_or_default(),
-                nic.ipv6_gateway.as_deref().unwrap_or_default(),
-                nic.ipv6_addresses
-                    .iter()
-                    .skip(1)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(","),
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| HandoffError::Invalid("invalid inherited initrd network"))?;
     let mut checked = CheckedPipelines(runner);
     initrd::unpack_initrd(&mut checked, &original_initrd, &initrd_root)
         .map_err(|_| HandoffError::Invalid("verified initrd could not be unpacked"))?;
-    initrd::stage_alpine_initrd(&initrd_root, &resolved, worker, &configs)
+    initrd::stage_alpine_initrd(&initrd_root, &resolved, worker)
         .map_err(|_| HandoffError::Invalid("unsupported Alpine initrd network anchor"))?;
+    write_manifest(
+        &initrd_root.join("configs/deployment.manifest"),
+        &deployment.manifest,
+    )
+    .map_err(|_| HandoffError::Invalid("cannot stage initrd deployment manifest"))?;
+    if resolved.system.dns.mode == crate::config::DnsMode::Auto {
+        stage_dns_seed(&initrd_root, &resolved.system.network)?;
+    }
     transport.stage(&initrd_root)?;
     if !transport.environment.is_empty() {
         let init_path = initrd_root.join("init");
@@ -751,7 +755,12 @@ pub fn execute<R: CommandRunner>(
             "openrc-init command FIFO is unavailable",
         ));
     }
-    execute_with_facts(runner, prepared, available, current_init)
+    let operation = lifecycle::Handoff::begin(&prepared.workspace)?;
+    let result = execute_with_facts(runner, prepared, available, current_init);
+    if result.is_err() && !matches!(result, Err(HandoffError::ArmedImage(_))) {
+        operation.disarmed()?;
+    }
+    result
 }
 
 fn execute_with_facts<R: CommandRunner>(
@@ -787,7 +796,22 @@ fn execute_with_facts<R: CommandRunner>(
     ];
     args.push(format!("--initrd={}", prepared.initrd.display()).into());
     args.push(format!("--append={}", prepared.cmdline).into());
-    run_checked(runner, &spec("kexec", args, "handoff-kexec-file-load"))?;
+    if let Err(error) = run_checked(runner, &spec("kexec", args, "handoff-kexec-file-load")) {
+        // The helper can be interrupted after the syscall. A failed exit
+        // status alone does not establish an empty kernel slot.
+        let state = capture(
+            runner,
+            &spec(
+                "cat",
+                ["/sys/kernel/kexec_loaded"],
+                "handoff-check-failed-load",
+            ),
+        );
+        if state.is_ok_and(|value| value.trim() == "0") {
+            return Err(error.into());
+        }
+        return Err(HandoffError::ArmedImage(Box::new(error.into())));
+    }
     let handoff = (|| {
         let loaded = capture(
             runner,
@@ -872,6 +896,7 @@ pub fn verify_alpine_archive<R: CommandRunner>(
         "--no-options".into(),
         "--batch".into(),
         "--no-tty".into(),
+        "--no-autostart".into(),
         "--homedir".into(),
         home.as_os_str().to_owned(),
         "--no-auto-key-retrieve".into(),
@@ -1408,38 +1433,6 @@ fn valid_device(device: &str) -> bool {
                 .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
     })
 }
-fn validate_new_workspace(path: &Path) -> Result<(), HandoffError> {
-    if !path.is_absolute()
-        || path == Path::new("/")
-        || path
-            .components()
-            .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
-        || fs::symlink_metadata(path).is_ok()
-    {
-        return Err(HandoffError::Invalid(
-            "workspace must be a new absolute directory",
-        ));
-    }
-    let mut prefix = PathBuf::new();
-    for part in path
-        .parent()
-        .ok_or(HandoffError::Invalid("workspace parent missing"))?
-        .components()
-    {
-        prefix.push(part);
-        let metadata = fs::symlink_metadata(&prefix)?;
-        if !metadata.file_type().is_dir()
-            || ![0, effective_uid()].contains(&metadata.uid())
-            || (metadata.permissions().mode() & 0o022 != 0
-                && metadata.permissions().mode() & 0o1000 == 0)
-        {
-            return Err(HandoffError::Invalid(
-                "workspace ancestors must be trusted real directories",
-            ));
-        }
-    }
-    Ok(())
-}
 fn program_available(program: &str) -> bool {
     std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).any(|directory| {
         fs::metadata(directory.join(program))
@@ -1664,11 +1657,18 @@ mod tests {
     fn load_failure_does_not_unload_or_request_shutdown_and_cleanup_failure_is_explicit() {
         let scratch = Scratch::new();
         let prepared = scratch.prepared(HostInit::Systemd);
-        let mut runner = MockRunner::new([out(0, "0\n"), out(1, "")]);
+        let mut runner = MockRunner::new([out(0, "0\n"), out(1, ""), out(0, "0\n")]);
         assert!(
             execute_with_facts(&mut runner, &prepared, 1024_u64.pow(3), HostInit::Systemd).is_err()
         );
-        assert_eq!(runner.calls().len(), 2);
+        assert_eq!(runner.calls().len(), 3);
+        let mut runner = MockRunner::new([out(0, "0\n"), out(1, ""), out(0, "1\n")]);
+        assert!(matches!(
+            execute_with_facts(&mut runner, &prepared, 1024_u64.pow(3), HostInit::Systemd),
+            Err(HandoffError::ArmedImage(_))
+        ));
+        assert_eq!(runner.calls().len(), 3);
+        assert_eq!(runner.calls()[2].program, "cat");
         let mut runner = MockRunner::new([
             out(0, "0\n"),
             out(0, ""),

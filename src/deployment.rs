@@ -61,7 +61,7 @@ pub fn parse_interface_address(value: &str, v6: bool) -> Result<(IpAddr, u8), De
     Ok((address, bits))
 }
 
-fn valid_unicast(address: IpAddr, v6: bool) -> bool {
+pub(crate) fn valid_unicast(address: IpAddr, v6: bool) -> bool {
     address.is_ipv6() == v6
         && !address.is_unspecified()
         && !address.is_loopback()

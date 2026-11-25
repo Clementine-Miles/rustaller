@@ -1,4 +1,4 @@
-use super::fields::{Field, TCP_FIELDS};
+use super::fields::{ADDRESS_FIELDS, Field, TCP_FIELDS};
 use super::state::{
     Authentication, CHOICES, Draft, Page, Route, Wizard, boot_label, hold_label, optional_label,
     valid_public_key_source, valid_username, yes_no,
@@ -104,6 +104,9 @@ impl Wizard {
                 add(*field);
             }
             add(Field::Mtu);
+            for field in ADDRESS_FIELDS {
+                add(*field);
+            }
             add(Field::BootSize);
             add(Field::RootSize);
             if draft.root_filesystem.as_str() == "btrfs" {
@@ -119,6 +122,15 @@ impl Wizard {
         }
 
         if self.is_automatic() {
+            for (enabled, option) in [
+                (draft.explicit_dhcp4, "--dhcp4"),
+                (draft.explicit_dhcp6, "--dhcp6"),
+                (draft.explicit_ra, "--ipv6-ra"),
+            ] {
+                if enabled {
+                    args.push(option.into());
+                }
+            }
             let dns = effective_dns(draft)?;
             for server in &dns.servers {
                 args.push(format!("--dns={server}"));
@@ -287,6 +299,7 @@ impl Wizard {
                         "Keep existing behavior"
                     }
                 ),
+                format!("Address policy: {}", if draft.get(Field::NetworkMac).is_empty() { "Inherit verified source policy" } else { "Explicit Ethernet interface" }),
                 format!("DNS policy: {}", draft.dns_mode.as_str()),
                 format!("Root filesystem: {}", draft.root_filesystem.as_str()),
                 format!("Target bootloader: rustaller-boot {}; FAT32 at /boot",rustaller::targets::boot::VERSION),
@@ -376,6 +389,20 @@ impl Wizard {
                     ),
                 ]);
             }
+        }
+        if self.is_automatic() && !draft.get(Field::NetworkMac).is_empty() {
+            lines.extend([
+                format!("Static IPv4: {}", draft.display(Field::Ipv4Address)),
+                format!("IPv4 gateway: {}", draft.display(Field::Ipv4Gateway)),
+                format!("Static IPv6: {}", draft.display(Field::Ipv6Address)),
+                format!("IPv6 gateway: {}", draft.display(Field::Ipv6Gateway)),
+                format!(
+                    "DHCPv4 / DHCPv6 / IPv6 RA: {} / {} / {}",
+                    yes_no(draft.explicit_dhcp4),
+                    yes_no(draft.explicit_dhcp6),
+                    yes_no(draft.explicit_ra)
+                ),
+            ]);
         }
         if self.is_automatic() && draft.get(Field::Username).trim() != "root" {
             lines.push(format!(

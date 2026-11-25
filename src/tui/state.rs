@@ -52,6 +52,7 @@ pub(super) enum Page {
     Host,
     Installation,
     Network,
+    ExplicitNetwork,
     Dns,
     Tcp,
     IpStack,
@@ -76,6 +77,7 @@ impl Page {
             Self::Host => "Host settings",
             Self::Installation => "Installation profile",
             Self::Network => "Network and DNS",
+            Self::ExplicitNetwork => "Explicit address policy",
             Self::Dns => "DNS settings",
             Self::Tcp => "TCP and congestion control",
             Self::IpStack => "IPv6 and address preference",
@@ -190,6 +192,9 @@ pub(super) enum Action {
     ToggleKeepDocs,
     ToggleKeepCache,
     ToggleSwap,
+    ToggleDhcp4,
+    ToggleDhcp6,
+    ToggleRouterAdvertisements,
     ResetTcp,
     GenerateKey,
     Review,
@@ -385,6 +390,11 @@ impl Wizard {
             Action::ToggleKeepDocs => self.draft_mut().keep_docs = !self.draft().keep_docs,
             Action::ToggleKeepCache => {
                 self.draft_mut().keep_package_cache = !self.draft().keep_package_cache
+            }
+            Action::ToggleDhcp4 => self.draft_mut().explicit_dhcp4 = !self.draft().explicit_dhcp4,
+            Action::ToggleDhcp6 => self.draft_mut().explicit_dhcp6 = !self.draft().explicit_dhcp6,
+            Action::ToggleRouterAdvertisements => {
+                self.draft_mut().explicit_ra = !self.draft().explicit_ra;
             }
             Action::ToggleSwap => {
                 self.draft_mut().swap_enabled = !self.draft().swap_enabled;

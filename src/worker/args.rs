@@ -2,11 +2,12 @@ use std::fmt;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WorkerAction {
+    Reset,
     LiveModules,
     FirstbootFix,
     CachyosFirstboot,
     CleanupOpenRc,
-    InitrdNetwork(super::initrd_network::InitrdNetworkConfig),
+    InitrdNetwork,
     LiveInstall { plan: String, manifest: String },
 }
 
@@ -33,6 +34,7 @@ where
     match args.as_slice() {
         [] => Ok(None),
         [command] if command == "--help" || command == "-h" => Ok(None),
+        [command] if command == "reset" => Ok(Some(WorkerAction::Reset)),
         [command] if command == "live-modules" => Ok(Some(WorkerAction::LiveModules)),
         [command] if command == "firstboot-fix" => Ok(Some(WorkerAction::FirstbootFix)),
         [command] if command == "cachyos-firstboot" => Ok(Some(WorkerAction::CachyosFirstboot)),
@@ -48,26 +50,7 @@ where
                 manifest: manifest.clone(),
             }))
         }
-        [
-            command,
-            mac,
-            ipv4,
-            ipv4_gateway,
-            ipv6,
-            ipv6_gateway,
-            ipv6_extra,
-        ] if command == "initrd-network" => {
-            let config = super::initrd_network::InitrdNetworkConfig::new(
-                mac,
-                ipv4,
-                ipv4_gateway,
-                ipv6,
-                ipv6_gateway,
-                ipv6_extra,
-            )
-            .map_err(|_| WorkerArgsError(args.clone()))?;
-            Ok(Some(WorkerAction::InitrdNetwork(config)))
-        }
+        [command] if command == "initrd-network" => Ok(Some(WorkerAction::InitrdNetwork)),
         _ => Err(WorkerArgsError(args)),
     }
 }

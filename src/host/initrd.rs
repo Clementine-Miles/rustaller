@@ -1,7 +1,6 @@
 use crate::command::{CommandInput, CommandRunner, CommandSpec, OutputMode, PipelineOutput};
 use crate::model::InstallPlan;
 use crate::plan_file::{PlanFileError, PrivatePlanFile};
-use crate::worker::initrd_network::InitrdNetworkConfig;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
@@ -202,7 +201,6 @@ pub fn stage_alpine_initrd(
     initrd_root: &Path,
     plan: &InstallPlan,
     worker_elf: &[u8],
-    network_configs: &[InitrdNetworkConfig],
 ) -> Result<InitrdPayloadPaths, InitrdError> {
     ensure_real_directory(initrd_root, false)?;
     let init_path = initrd_root.join("init");
@@ -212,7 +210,7 @@ pub fn stage_alpine_initrd(
     }
     let mode = metadata.permissions().mode() & 0o777;
     let source = fs::read_to_string(&init_path)?;
-    let mut patched = inject_network_bootstrap(&source, network_configs)?;
+    let mut patched = inject_network_bootstrap(&source)?;
     if plan.target == crate::model::Target::Arch {
         patched = inject_arch_live_base(&patched)?;
     }
@@ -301,10 +299,7 @@ fn is_x86_64_elf(bytes: &[u8]) -> bool {
         && bytes[19] == 0
 }
 
-pub fn inject_network_bootstrap(
-    init_script: &str,
-    configs: &[InitrdNetworkConfig],
-) -> Result<String, InitrdError> {
+pub fn inject_network_bootstrap(init_script: &str) -> Result<String, InitrdError> {
     if init_script.contains(START_MARKER) || init_script.contains(END_MARKER) {
         return Err(InitrdError::AlreadyPatched);
     }
@@ -316,7 +311,9 @@ pub fn inject_network_bootstrap(
         return Err(InitrdError::ConfigureIpAnchorNotUnique);
     }
 
-    let hook = render_network_hook(configs);
+    let hook = format!(
+        "        {START_MARKER}\n        [ -z \"$RUSTALLER_NETWORK_ATTEMPTED\" ] || return\n        RUSTALLER_NETWORK_ATTEMPTED=1\n        depmod\n        [ -d /sys/module/ipv6 ] || modprobe ipv6\n        /rustaller-worker initrd-network && MAC_ADDRESS=1\n        return\n        {END_MARKER}\n"
+    );
     let mut output = String::with_capacity(init_script.len() + hook.len());
     let mut inserted = false;
     for line in init_script.split_inclusive('\n') {
@@ -354,35 +351,6 @@ fn inject_arch_live_base(source: &str) -> Result<String, InitrdError> {
         .collect::<Vec<_>>()
         .join("\n")
         + "\n")
-}
-
-fn render_network_hook(configs: &[InitrdNetworkConfig]) -> String {
-    let mut hook = format!(
-        "        {START_MARKER}\n        depmod\n        [ -d /sys/module/ipv6 ] || modprobe ipv6\n"
-    );
-    for config in configs {
-        hook.push_str("        /rustaller-worker initrd-network");
-        for argument in [
-            config.mac_addr(),
-            config.ipv4_addr(),
-            config.ipv4_gateway(),
-            config.ipv6_addr(),
-            config.ipv6_gateway(),
-            config.ipv6_extra_addrs(),
-        ] {
-            hook.push(' ');
-            hook.push_str(&shell_quote(argument));
-        }
-        hook.push('\n');
-    }
-    hook.push_str(&format!(
-        "        MAC_ADDRESS=1\n        return\n        {END_MARKER}\n"
-    ));
-    hook
-}
-
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 #[cfg(test)]

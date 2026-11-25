@@ -4,7 +4,7 @@ use std::fmt;
 
 // Schema 10 removes the Live web port. Reject older bodies before decoding
 // positional fields (including the Gentoo init selection introduced in v9).
-pub const CURRENT_SCHEMA_VERSION: u16 = 10;
+pub const CURRENT_SCHEMA_VERSION: u16 = 11;
 
 pub fn valid_account_name(value: &str) -> bool {
     !value.is_empty()
