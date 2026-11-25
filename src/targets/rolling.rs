@@ -190,11 +190,10 @@ pub(super) fn configure_arch<R: CommandRunner>(
     write_target(root, "etc/locale.gen", b"en_US.UTF-8 UTF-8\n")?;
     write_target(root, "etc/locale.conf", b"LANG=C.UTF-8\n")?;
     chroot_checked(runner, root, ["locale-gen"], "arch-target-locale")?;
-    run_checked(
-        runner,
-        &packages::kernel_install_command_for_plan(plan.plan(), root, &server)?
-            .env("LANG", "C.UTF-8"),
-    )?;
+    let configuration = packages::configuration_for_plan(plan.plan(), Target::Arch)?;
+    let mut args = vec!["pacman", "-Syu", "--noconfirm", &server, "mkinitcpio"];
+    args.extend(configuration.extra_packages);
+    chroot_checked(runner, root, args, "arch-kernel-install")?;
     // The native kernel package's hooks normally do this; the explicit rebuild
     // makes success depend on an actual, guest-portable server initramfs.
     chroot_checked(

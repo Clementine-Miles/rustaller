@@ -1,7 +1,5 @@
 //! Shared package planning and native package-manager policies.
-use crate::command::{
-    CommandError, CommandInput, CommandRunner, CommandSpec, OutputMode, run_checked,
-};
+use crate::command::{CommandError, CommandRunner, run_checked};
 use crate::config::{InstallProfile, RootFilesystem};
 use crate::model::{BootMode, InstallPlan, PlanError, Target};
 use crate::postinstall::ConfigurationPlan;
@@ -159,34 +157,7 @@ pub fn pacstrap_packages(
     packages
 }
 
-/// Install the kernel after locale/firmware setup, as in the preserved flow.
-/// In particular, this does not add the kernel to the earlier pacstrap phase.
-pub fn kernel_install_command_for_plan(
-    plan: &InstallPlan,
-    root: &Path,
-    server: &str,
-) -> Result<CommandSpec, PlanError> {
-    let configuration = configuration_for_plan(plan, Target::Arch)?;
-    let mut args = vec![
-        root.as_os_str().to_owned(),
-        "pacman".into(),
-        "-Syu".into(),
-        "--noconfirm".into(),
-        server.into(),
-        "mkinitcpio".into(),
-    ];
-    args.extend(configuration.extra_packages.into_iter().map(Into::into));
-    Ok(CommandSpec::new("chroot", args)
-        .phase("arch-kernel-install")
-        .stdin(CommandInput::Null)
-        .stdout_mode(OutputMode::Stream)
-        .stderr_mode(OutputMode::Stream))
-}
-
-/// Native repository resolution runs inside the target before the kernel
-/// transaction. It checks the selected package and dependency closure without
-/// installing a second kernel or relying on a hard-coded release availability.
-/// The target adapters must first initialize their authenticated repositories.
+/// Resolve fixed APK and Portage dependencies before changing target packages.
 pub fn verify_kernel_available<R: CommandRunner>(
     runner: &mut R,
     root: &Path,
@@ -223,8 +194,7 @@ pub fn verify_kernel_available<R: CommandRunner>(
     run_checked(
         runner,
         &crate::command::target_command("chroot", args, "target-kernel-availability")
-            .env("LC_ALL", "C")
-            .env("DEBIAN_FRONTEND", "noninteractive"),
+            .env("LC_ALL", "C"),
     )
     .map_err(KernelAvailabilityError::Command)
 }

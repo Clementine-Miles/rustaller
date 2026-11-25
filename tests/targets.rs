@@ -176,7 +176,7 @@ mod debian {
 }
 
 mod target_config {
-    use rustaller::command::{CommandInput, CommandOutput, MockRunner, OutputMode};
+    use rustaller::command::{CommandOutput, MockRunner};
     use rustaller::config::{InstallProfile, RootFilesystem};
     use rustaller::model::{BootMode, InstallPlan, Target};
     use rustaller::targets::{debian, packages};
@@ -235,28 +235,8 @@ mod target_config {
 
         let mut arch = InstallPlan::new(Target::Arch);
         arch.post_install.timezone = Some("Etc/UTC".into());
-        let command = packages::kernel_install_command_for_plan(
-            &arch,
-            Path::new("/os"),
-            "cachyos/linux-cachyos-server",
-        )
-        .unwrap();
-        assert_eq!(command.program, "chroot");
-        assert_eq!(
-            command.args,
-            [
-                "/os",
-                "pacman",
-                "-Syu",
-                "--noconfirm",
-                "cachyos/linux-cachyos-server",
-                "mkinitcpio",
-                "tzdata"
-            ]
-        );
-        assert_eq!(command.stdin, CommandInput::Null);
-        assert_eq!(command.stdout_mode, OutputMode::Stream);
-        assert_eq!(command.stderr_mode, OutputMode::Stream);
+        let packages = packages::package_plan(&arch, BootMode::Bios, &[]).unwrap();
+        assert!(packages.later_packages.iter().any(|name| name == "tzdata"));
 
         let mut gentoo = InstallPlan::new(Target::Gentoo);
         gentoo.post_install.timezone = Some("Etc/UTC".into());
@@ -275,12 +255,9 @@ mod target_config {
         ] {
             let mut plan = InstallPlan::new(target);
             plan.hold = Some(1);
-            let kernel = "cachyos/linux-cachyos-server";
             assert!(packages::configuration_for_plan(&plan, Target::Alpine).is_err());
             assert!(debian::apt_package_list_for_plan(&plan, &[]).is_err());
-            assert!(
-                packages::kernel_install_command_for_plan(&plan, Path::new("/os"), kernel).is_err()
-            );
+            assert!(packages::configuration_for_plan(&plan, Target::Arch).is_err());
             assert!(packages::emerge_package_set_for_plan(&plan, &[]).is_err());
             plan.hold = None;
             assert_eq!(
@@ -292,7 +269,7 @@ mod target_config {
                 target == Target::Debian
             );
             assert_eq!(
-                packages::kernel_install_command_for_plan(&plan, Path::new("/os"), kernel).is_ok(),
+                packages::configuration_for_plan(&plan, Target::Arch).is_ok(),
                 target == Target::Arch
             );
             assert_eq!(
@@ -302,14 +279,7 @@ mod target_config {
         }
         let mut plan = InstallPlan::new(Target::Arch);
         plan.schema_version += 1;
-        assert!(
-            packages::kernel_install_command_for_plan(
-                &plan,
-                Path::new("/os"),
-                "cachyos/linux-cachyos-server"
-            )
-            .is_err()
-        );
+        assert!(packages::configuration_for_plan(&plan, Target::Arch).is_err());
         let mut plan = InstallPlan::new(Target::Debian);
         plan.ssh_port = Some(0);
         assert!(debian::apt_package_list_for_plan(&plan, &[]).is_err());
