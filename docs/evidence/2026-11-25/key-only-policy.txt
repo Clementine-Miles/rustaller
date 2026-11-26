@@ -52,6 +52,18 @@ check using usermod, including PAM, authorized non-root key and sudo, and
 password, keyboard-interactive and direct-root denial. That daemon probe
 ran from the Arch chroot.
 
+The final-bundle UEFI/ext4 rerun authenticated CachyOS v3 repositories,
+completed the full package transaction and booted Arch Linux on
+7.3.6-1-cachyos-server. The installed account passed public-key login,
+sudo, effective daemon policy and key-file ownership and modes. The
+unauthorized key, password, keyboard-interactive and direct root were denied.
+The harness passed a signed native pacman update, mkinitcpio rebuild and
+second reboot. The kernel release stayed at 7.3.6-1-cachyos-server. The
+post-reboot SSH, IPv4 routing, DNS and swapfile checks passed. The automatic
+first-boot service retained its retry marker because the fixture blocked
+direct HTTPS to package mirrors. The harness used its configured CA and
+proxy for the separate successful native update.
+
 Gentoo, UEFI/GPT and ext4
 The final-bundle VM verified the signed latest-stage3 index and DIGESTS
 and the detached signature, identity, byte length and SHA-512 of the
@@ -67,3 +79,8 @@ cargo xtask check passed formatting, strict Clippy and 370 tests.
 cargo xtask bundle verified and bundled the matching static host and worker,
 the native BIOS and UEFI artifacts, and the boot-update helper.
 cargo xtask audit-sources reached the expected official sources and metadata.
+cargo xtask dist built a clean-source preview, and sha256sum -c verified
+the executable, license and build metadata.
+
+The full 16-case matrix and remaining hardware combinations were outside
+this acceptance run.
