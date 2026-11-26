@@ -111,6 +111,9 @@ rebuild/reboot evidence only. Neither upgrade-hook correctness nor a new kernel
 version is inferred from a mock command succeeding. The standalone probe also
 verifies the required kernel package/family and Gentoo OpenRC profile and 64-bit ABI.
 
+The fixed-policy refactor's actual boot, SSH, and update results are recorded in
+the [key-only acceptance evidence](evidence/2026-11-25/key-only-policy.txt).
+
 ### Static dual-stack and reset acceptance
 
 Use the existing disposable source image, checksum and test key from the

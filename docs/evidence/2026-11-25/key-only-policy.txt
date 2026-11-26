@@ -1,0 +1,69 @@
+Rustaller fixed installation policy and key-only SSH acceptance
+
+Baseline aa8fc99. All live tests used disposable QEMU overlays under TCG.
+The development host's disk and boot state were untouched.
+The source checks rejected missing, malformed and unreadable public keys
+without staging an installation.
+
+Alpine 3.24.4, linux-virt 6.18.65-0-virt, BIOS/MBR and XFS
+The authorized root key worked in Alpine Live and after the installed system
+booted. Both SSH daemons rejected an unauthorized key, password and
+keyboard-interactive authentication. Effective configuration and the key-file
+owner and mode matched the plan. The first full harness run reached installed
+SSH, then timed out before its kernel probe. A resumed disposable snapshot
+passed native mkinitfs, boot-update verification, an actual reboot with a
+different boot ID, root SSH, IPv4 routing and DNS.
+
+Alpine 3.24.4, linux-virt 6.18.65-0-virt, UEFI/GPT and ext4
+The held-preparation reset preserved the source boot ID, partition-table ID,
+SSH access and unloaded kexec state. The complete installation booted with
+its non-root administrator on port 2222. Live and installed authentication
+passed the authorized-key, unauthorized-key, password, keyboard-interactive,
+direct-root denial, sudo, and effective OpenSSH policy checks.
+Before the native upgrade and rebuild, the installed system verified an
+IPv6 ULA /64, its default route, AAAA lookup, certificate-verified IPv6 HTTPS
+and public-key SSH to the actual IPv6 target socket. The swapfile was active.
+The harness deadline elapsed during the second reboot. The updated disk
+subsequently booted as a disposable snapshot and passed SSH, sudo,
+boot-update verification, IPv4 DNS, IPv6 address and route, and preserved
+the edited rustaller_vm=preserved command-line argument. IPv6 TLS and the
+IPv6-socket SSH test were run before the rebuild.
+
+Debian 13, linux-image-cloud-amd64 6.12.118-1, UEFI/GPT and ext4
+Alpine Live passed the full non-root SSH policy. Installation completed,
+and the new system entered its cloud kernel before the execution environment
+restarted. A disposable snapshot of that installed disk subsequently booted
+6.12.118+deb13-cloud-amd64 under systemd. Port 2222 accepted the authorized
+administrative key with working sudo and rejected the unauthorized key,
+password, keyboard-interactive and direct root. The root and FAT32 mounts,
+active swapfile, IPv4 route, DNS, native PAM and key-file modes were verified.
+Native update-initramfs and the boot-update verifier succeeded. A different
+boot ID confirmed reboot, followed by the same SSH and network checks.
+
+Arch, official CachyOS server kernel
+The official baseline, v3 and v4 databases verified against the pinned
+release key. All three contained linux-cachyos-server 7.3.5-2 for the
+respective ISA. The baseline package's signed digest and detached package
+signature verified. The UEFI/ext4 VM selected v3 from guest CPUID, installed
+the signed package and built its matching initramfs. The initial run stopped
+at account provisioning because the native chpasswd rejected the unusable
+NP marker. A repaired disposable overlay passed a real Arch OpenSSH socket
+check using usermod, including PAM, authorized non-root key and sudo, and
+password, keyboard-interactive and direct-root denial. That daemon probe
+ran from the Arch chroot.
+
+Gentoo, UEFI/GPT and ext4
+The final-bundle VM verified the signed latest-stage3 index and DIGESTS
+and the detached signature, identity, byte length and SHA-512 of the
+269973320-byte official amd64-nomultilib OpenRC archive 20261122T164601Z.
+After extraction, Portage authenticated its repository snapshot. Native
+commands reported the selected default/linux/amd64/23.0/no-multilib
+profile and ABI_X86=64. Alpine Live passed the full non-root SSH policy.
+The execution environment restarted during the native package transaction.
+Installed Gentoo boot and post-update SSH remain unverified in this run.
+
+Build and static checks
+cargo xtask check passed formatting, strict Clippy and 370 tests.
+cargo xtask bundle verified and bundled the matching static host and worker,
+the native BIOS and UEFI artifacts, and the boot-update helper.
+cargo xtask audit-sources reached the expected official sources and metadata.
